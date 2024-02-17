@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
-// put function declarations here:#include <Arduino_GFX_Library.h>
+// put function declarations here:
+#include <Arduino_GFX_Library.h>
 #include <RotaryEncoder.h>
 #include <ESP32Time.h>
 #include <Wire.h>
@@ -93,46 +94,6 @@ unsigned short grays[13];
 #define bck TFT_BLACK
 char dd[7]={'m','t','w','t','f','s','s'};
 
-void setup() {
-  pinMode(IO_PWM_PIN, OUTPUT); 
-  pinMode(BUTTON, INPUT_PULLUP); 
-  ledcSetup(PWM_CHANNEL, PWM_FREQ, pwm_resolution_bits);  
-  ledcAttachPin(IO_PWM_PIN, PWM_CHANNEL); 
-  ledcWrite(PWM_CHANNEL, 840); 
-
-  rtc.setTime(0,47,13,10,23,2023,0); 
-
-  sprite.createSprite(400,240);
-  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-  gfx->begin();
-  gfx->fillScreen(BLACK);
- 
-
-     int co=220;
-     for(int i=0;i<13;i++)
-     {
-     grays[i]=tft.color565(co, co, co);
-     co=co-20;
-     }
-
-       for(int i=0;i<360;i++)
-  {
-       x[i]=(r*cos(rad*i))+sx;
-       y[i]=(r*sin(rad*i))+sy;
-       px[i]=((r-5)*cos(rad*i))+sx;
-       py[i]=((r-5)*sin(rad*i))+sy;
-
-       lx[i]=((r-24)*cos(rad*i))+sx;
-       ly[i]=((r-24)*sin(rad*i))+sy;
-
-       shx[i]=((r-12)*cos(rad*i))+sx;
-       shy[i]=((r-12)*sin(rad*i))+sy;
-
-      tx[i]=((r+28)*cos(rad*i))+sx;
-      ty[i]=((r+28)*sin(rad*i))+sy;
-  }
-  draw();
-}
 
 void draw()
 {
@@ -225,6 +186,47 @@ void draw()
 
 }
 
+void setup() {
+  pinMode(IO_PWM_PIN, OUTPUT); 
+  pinMode(BUTTON, INPUT_PULLUP); 
+  ledcSetup(PWM_CHANNEL, PWM_FREQ, pwm_resolution_bits);  
+  ledcAttachPin(IO_PWM_PIN, PWM_CHANNEL); 
+  ledcWrite(PWM_CHANNEL, 840); 
+
+  rtc.setTime(0,47,13,10,23,2023,0); 
+
+  sprite.createSprite(400,240);
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  gfx->begin();
+  gfx->fillScreen(BLACK);
+ 
+
+     int co=220;
+     for(int i=0;i<13;i++)
+     {
+     grays[i]=tft.color565(co, co, co);
+     co=co-20;
+     }
+
+       for(int i=0;i<360;i++)
+  {
+       x[i]=(r*cos(rad*i))+sx;
+       y[i]=(r*sin(rad*i))+sy;
+       px[i]=((r-5)*cos(rad*i))+sx;
+       py[i]=((r-5)*sin(rad*i))+sy;
+
+       lx[i]=((r-24)*cos(rad*i))+sx;
+       ly[i]=((r-24)*sin(rad*i))+sy;
+
+       shx[i]=((r-12)*cos(rad*i))+sx;
+       shy[i]=((r-12)*sin(rad*i))+sy;
+
+      tx[i]=((r+28)*cos(rad*i))+sx;
+      ty[i]=((r+28)*sin(rad*i))+sy;
+  }
+  draw();
+}
+
 
 void readEncoder()
  {
@@ -277,20 +279,4 @@ void loop() {
   draw();
   prev=angle;
   } 
- 
-}
-int myFunction(int, int);
-a
-void setup() {
-  // put your setup code here, to run once:
-  int result = myFunction(2, 3);
-}
-
-void loop() {
-  // put your main code here, to run repeatedly:
-}
-
-// put function definitions here:
-int myFunction(int x, int y) {
-  return x + y;
 }
