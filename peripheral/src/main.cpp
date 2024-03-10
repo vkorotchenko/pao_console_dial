@@ -1,32 +1,56 @@
-#include <lvgl.h>
 #include <Arduino_GFX_Library.h>
+#include <RotaryEncoder.h>
+#include <ESP32Time.h>
 #include <Wire.h>
-#include <ui.h>
-#include <WiFi.h>
-
 #include "touch.h"
+#include "bigFont.h"
+#include "midleFont.h"
+#include "smallFont.h"
+#include "valueFont.h"
 
-#define SSID "akorotchenko"
-#define PWD "december21985"
+double rad=0.01745;
+
+float x[360]; //outer point
+float y[360];
+float px[360]; //ineer point
+float py[360];
+float lx[360]; //long line 
+float ly[360];
+float shx[360]; //short line 
+float shy[360];
+float tx[360]; //text
+float ty[360];
+
+int PPgraph[24]={0};
+
+int angle=0;
+int value=0;
+int chosenFont;
+int chosenColor;
+int r=118;
+int sx=-2;
+int sy=120;
+int inc=18;
+int a=0;
+int prev=0;
+String secs="00";
+int second1=0;
+int second2=0;
+bool onOff=0;
+String OO[2]={"OFF","ON"};
+int deb=0;
+
+
+#include <TFT_eSPI.h>
+TFT_eSPI tft = TFT_eSPI();
+TFT_eSprite sprite = TFT_eSprite(&tft);
 
 #define I2C_SDA_PIN 17
 #define I2C_SCL_PIN 18
 #define TOUCH_RST -1 // 38
 #define TOUCH_IRQ -1 // 0
 
-#define TFT_BL 38
-#define BUTTON_PIN 14
-#define ENCODER_CLK 13 // CLK
-#define ENCODER_DT 10  // DT
-
-/*Don't forget to set Sketchbook location in File/Preferencesto the path of your UI project (the parent foder of this INO file)*/
-
-/*Change to your screen resolution*/
-static const uint16_t screenWidth = 480;
-static const uint16_t screenHeight = 480;
-
-static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf[screenWidth * screenHeight / 10];
+ESP32Time rtc(0); 
 
 Arduino_ESP32RGBPanel *bus = new Arduino_ESP32RGBPanel(
     1 /* CS */, 46 /* SCK */, 0 /* SDA */,
@@ -45,287 +69,210 @@ Arduino_ST7701_RGBPanel *gfx = new Arduino_ST7701_RGBPanel(
     10 /* hsync_front_porch */, 8 /* hsync_pulse_width */, 50 /* hsync_back_porch */,
     10 /* vsync_front_porch */, 8 /* vsync_pulse_width */, 20 /* vsync_back_porch */);
 
-int counter = 0;
-int State;
-int old_State;
 
-int move_flag = 0;
-int button_flag = 0;
-int flesh_flag = 1;
-int screen_index = 0;
-int wifi_flag = 0;
+#define PWM_CHANNEL 1
+#define PWM_FREQ 5000//Hz
+#define pwm_resolution_bits 10
+#define IO_PWM_PIN 38
 
-int x = 0, y = 0;
+int n=0;
+int xt = 0, yt = 0;
 
-#define COLOR_NUM 5
-int ColorArray[COLOR_NUM] = {WHITE, BLUE, GREEN, RED, YELLOW};
+#define PIN_IN1 13
+#define PIN_IN2 10
+#define BUTTON 14
 
-//---------------------------------------------------
-void Task_TFT(void *pvParameters)
+RotaryEncoder encoder(PIN_IN1, PIN_IN2, RotaryEncoder::LatchMode::TWO03);
+
+unsigned short grays[13];
+#define red 0xD041
+#define blue 0x0AD0
+#define yellow 0x9381
+#define bck TFT_BLACK
+char dd[7]={'m','t','w','t','f','s','s'};
+
+void draw()
 {
-    while (1)
-    {
-        lv_timer_handler();
-        vTaskDelay(10);
-    }
+
+    
+  
+  sprite.fillSprite(grays[11]);
+  sprite.drawWedgeLine(54,120,80,120,2,2,TFT_RED);
+    for(int j=0;j<24;j++)
+    for(int i=0;i<PPgraph[j];i++)
+    sprite.fillRect(188+(j*6),90-(i*4),4,3,grays[5]);
+  
+  sprite.fillRect(180,136,100,3,grays[7]);
+  sprite.fillRect(186,130,3,34,grays[7]);
+
+
+  sprite.setTextDatum(4);
+  sprite.loadFont(smallFont);
+  sprite.drawString("%",60,108);
+  sprite.unloadFont();
+
+   sprite.loadFont(midleFont);
+
+   for(int i=0;i<120;i++)
+ {
+   a=angle+(i*3);
+   if(a>359)
+   a=(angle+(i*3))-360;
+   
+
+   sprite.drawPixel(x[a],y[a],grays[6]);
+   sprite.setTextColor(grays[2],grays[8]);
+
+   if(i%3==0)
+   sprite.drawWedgeLine(x[a],y[a],x[a]-6,y[a],1,1,grays[5],bck);
+
+   if(i%6==0)
+   sprite.drawWedgeLine(x[a],y[a],x[a]-18,y[a],2,2,grays[4],bck);
+   if(i%12==0){
+   sprite.drawWedgeLine(x[a],y[a],x[a]-30,y[a],2,2,grays[3],bck);
+   sprite.drawString(String((i/6)*5),tx[a],ty[a],2);
+   }
+
 }
+    
 
-void Task_main(void *pvParameters)
-{
-    while (1)
-    {
-        if (digitalRead(BUTTON_PIN) == 0)
-        {
-            USBSerial.println("Button Press");
-            screen_index++;
-            if (screen_index % 3 == 0)
-            {
-                _ui_screen_change(ui_Screen1, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0);
-            }
-            else if (screen_index % 3 == 1)
-            {
-                _ui_screen_change(ui_Screen2, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0);
-            }
 
-            else if (screen_index % 3 == 2)
-            {
-                _ui_screen_change(ui_Screen3, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0);
-            }
+  sprite.setTextDatum(4);
+  sprite.setTextColor(grays[2],grays[8]);
+  
+  for(int i=0;i<7;i++)
+  {
+    sprite.fillSmoothRoundRect(186+(i*30),2,26,26,3,grays[8],bck);
+    sprite.drawString(String(dd[i]),186+((i+1)*30)-17,17);
+  }
+  sprite.unloadFont();
+  sprite.drawWedgeLine(199+(rtc.getDayofWeek()*30),35,199+(rtc.getDayofWeek()*30),40,1,3,grays[3],bck);
+  
+  
+  sprite.setTextDatum(0);
+  sprite.setTextColor(grays[0],bck);
+  sprite.loadFont(bigFont);
+  sprite.drawString(rtc.getTime().substring(0,5),196,150);
+  sprite.unloadFont();
 
-            while (digitalRead(BUTTON_PIN) == 0)
-            {
-                vTaskDelay(100);
-            }
-        }
+   sprite.setTextDatum(0);
+  sprite.setTextColor(grays[1],bck);
+  sprite.loadFont(midleFont);
+  sprite.drawString("October 23",196,104);  ////////////////////////date hard coded
+  sprite.setTextDatum(4);
+  sprite.fillRect(0,145,50,30,grays[9]);
+  sprite.setTextColor(grays[3],grays[9]);
+  sprite.drawString(OO[onOff],25,162); 
+   
+  sprite.unloadFont();
 
-        if (move_flag == 1)
-        {
-            USBSerial.print("Position: ");
-            USBSerial.println(counter);
 
-            lv_arc_set_value(ui_Arc1, (int)counter * 5);
-            lv_arc_set_value(ui_Arc2, (int)counter * 5);
-            lv_arc_set_value(ui_Arc3, (int)counter * 5);
-            move_flag = 0;
-        }
+  sprite.setTextDatum(4);
+  sprite.setTextColor(grays[1],bck);
+  sprite.loadFont(valueFont);
+  sprite.drawString(String((int)(value/10.00)),24,124);
+  sprite.setTextColor(grays[3],bck);
+   sprite.drawString(secs,362,78);   /// /////////////////////////////////seconds
+  sprite.unloadFont();
 
-        vTaskDelay(100);
-    }
-}
+  sprite.setTextColor(grays[7],bck);
+ // sprite.drawString(String(x),150,50,4);
+ // sprite.drawString(String(y),250,50,4);
+  gfx->draw16bitBeRGBBitmap(40,120,(uint16_t*)sprite.getPointer(),400,240);
 
-void encoder_irq()
-{
-    State = digitalRead(ENCODER_CLK);
-    if (State != old_State)
-    {
-        if (digitalRead(ENCODER_DT) == State)
-        {
-            counter++;
-        }
-        else
-        {
-            counter--;
-        }
-    }
-    old_State = State; // the first position was changed
-    move_flag = 1;
-}
-
-//------------------------------------------------------------------------
-void pin_init()
-{
-    pinMode(TFT_BL, OUTPUT);
-    digitalWrite(TFT_BL, HIGH);
-
-    pinMode(ENCODER_CLK, INPUT_PULLUP);
-    pinMode(ENCODER_DT, INPUT_PULLUP);
-    old_State = digitalRead(ENCODER_CLK);
-
-    attachInterrupt(ENCODER_CLK, encoder_irq, CHANGE);
-
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-}
-
-/* Display flushing */
-void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
-{
-    uint32_t w = (area->x2 - area->x1 + 1);
-    uint32_t h = (area->y2 - area->y1 + 1);
-
-#if (LV_COLOR_16_SWAP != 0)
-    gfx->draw16bitBeRGBBitmap(area->x1, area->y1, (uint16_t *)&color_p->full, w, h);
-#else
-    gfx->draw16bitRGBBitmap(area->x1, area->y1, (uint16_t *)&color_p->full, w, h);
-#endif
-
-    lv_disp_flush_ready(disp);
-}
-
-/*Read the touchpad*/
-void my_touchpad_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data)
-{
-    int touchX = 0, touchY = 0;
-
-    if (read_touch(&touchX, &touchY) == 1)
-    {
-        data->state = LV_INDEV_STATE_PR;
-
-        data->point.x = (uint16_t)touchX;
-        data->point.y = (uint16_t)touchY;
-    }
-    else
-    {
-        data->state = LV_INDEV_STATE_REL;
-    }
 }
 
 
+void readEncoder()
+ {
 
-void page_1()
-{
-    String temp = "";
-    gfx->fillScreen(ColorArray[((unsigned)counter / 2 % COLOR_NUM)]);
-    gfx->setTextSize(4);
-    gfx->setTextColor(BLACK);
-    gfx->setCursor(120, 100);
-    gfx->println(F("Makerfabs"));
+  static int pos = 0;
+  encoder.tick();
 
-    gfx->setTextSize(3);
-    gfx->setCursor(30, 160);
-    gfx->println(F("2.1inch TFT with Touch "));
+  int newPos = encoder.getPosition();
+  if (pos != newPos) {
+    
+    if(newPos>pos)
+    angle=angle+inc;
+    if(newPos<pos)
+    angle=angle-inc;
+    
+    pos = newPos;
+  } 
+ if(angle<0)
+    angle=359;
 
-    gfx->setTextSize(4);
-    gfx->setCursor(60, 200);
-    temp = temp + "Encoder: " + counter;
-    gfx->println(temp);
-
-    gfx->setTextSize(3);
-    gfx->setCursor(60, 240);
-    // if (wifi_flag == 1)
-    // {
-    //     gfx->println("Wifi OK!");
-    // }
-    // else
-    // {
-    //     gfx->println("Wifi Connecting..");
-    // }
-    gfx->println("Wifi Support");
-
-    gfx->setTextSize(4);
-    gfx->setCursor(60, 280);
-    temp = "";
-    temp = temp + "Touch X: " + x;
-    gfx->println(temp);
-
-    gfx->setTextSize(4);
-    gfx->setCursor(60, 320);
-    temp = "";
-    temp = temp + "Touch Y: " + y;
-    gfx->println(temp);
-
-    // gfx->fillRect(240, 400, 30, 30, ColorArray[(((unsigned)counter / 2 + 1) % COLOR_NUM)]);
-
-    flesh_flag = 0;
+  if(angle>=360)
+    angle=0;
 }
 
-void test()
-{
-    while (1)
-    {
-        // if (wifi_flag != 1)
-        //     if (WiFi.status() == WL_CONNECTED)
-        //     {
-        //         USBSerial.println(WiFi.localIP());
-        //         wifi_flag = 1;
-        //         flesh_flag = 1;
-        //     }
 
-        if (read_touch(&x, &y) == 1)
-        {
-            USBSerial.print("Touch ");
-            USBSerial.print(x);
-            USBSerial.print("\t");
-            USBSerial.println(y);
+void setup() {
+  pinMode(IO_PWM_PIN, OUTPUT); 
+  pinMode(BUTTON, INPUT_PULLUP); 
+  ledcSetup(PWM_CHANNEL, PWM_FREQ, pwm_resolution_bits);  
+  ledcAttachPin(IO_PWM_PIN, PWM_CHANNEL); 
+  ledcWrite(PWM_CHANNEL, 840); 
 
-            flesh_flag = 1;
-        }
+  rtc.setTime(0,47,13,10,23,2023,0); 
 
-        if (digitalRead(BUTTON_PIN) == 0)
-        {
+  sprite.createSprite(400,240);
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  gfx->begin();
+  gfx->fillScreen(BLACK);
+ 
 
-            USBSerial.println("Button Press");
-            delay(100);
-            if (digitalRead(BUTTON_PIN) == 0)
-                return;
-        }
+     int co=220;
+     for(int i=0;i<13;i++)
+     {
+     grays[i]=tft.color565(co, co, co);
+     co=co-20;
+     }
 
-        if (move_flag == 1)
-        {
-            USBSerial.print("Position: ");
-            USBSerial.println(counter);
-            move_flag = 0;
-            flesh_flag = 1;
-        }
-        if (flesh_flag == 1)
-            page_1();
+       for(int i=0;i<360;i++)
+  {
+       x[i]=(r*cos(rad*i))+sx;
+       y[i]=(r*sin(rad*i))+sy;
+       px[i]=((r-5)*cos(rad*i))+sx;
+       py[i]=((r-5)*sin(rad*i))+sy;
 
-        delay(100);
-    }
-    return;
+       lx[i]=((r-24)*cos(rad*i))+sx;
+       ly[i]=((r-24)*sin(rad*i))+sy;
+
+       shx[i]=((r-12)*cos(rad*i))+sx;
+       shy[i]=((r-12)*sin(rad*i))+sy;
+
+      tx[i]=((r+28)*cos(rad*i))+sx;
+      ty[i]=((r+28)*sin(rad*i))+sy;
+  }
+  draw();
 }
 
-void setup()
-{
-    USBSerial.begin(115200); /* prepare for possible serial debug */
+void loop() {
+   readEncoder();
+  
 
-    // WiFi.mode(WIFI_STA);
-    // WiFi.disconnect();
-    // WiFi.begin(SSID, PWD);
+   for(int i=0;i<24;i++)
+      PPgraph[i]=random(1,12);
 
-    String LVGL_Arduino = "Hello Arduino! ";
-    LVGL_Arduino += String('V') + lv_version_major() + "." + lv_version_minor() + "." + lv_version_patch();
+  if(digitalRead(BUTTON)==0)
+  {
+  if(deb==0) {deb=1; onOff=!onOff; draw();}
+  }else deb=0;
+ 
+  if (read_touch(&xt, &yt) == 1) {if(yt<240)angle=angle-3; else angle=angle+3;}
+  
+ second1=rtc.getSecond();
 
-    USBSerial.println(LVGL_Arduino);
-    USBSerial.println("I am LVGL_Arduino");
+ if(second1<10) secs="0"+String(second1); else secs=String(second1);
 
-    pin_init();
+ if(second1!=second2)
+ {second2=second1; draw();}
 
-    // Init Display
-    gfx->begin();
-
-    test();
-
-    lv_init();
-    lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * screenHeight / 10);
-
-    /*Initialize the display*/
-    static lv_disp_drv_t disp_drv;
-    lv_disp_drv_init(&disp_drv);
-    /*Change the following line to your display resolution*/
-    disp_drv.hor_res = screenWidth;
-    disp_drv.ver_res = screenHeight;
-    disp_drv.flush_cb = my_disp_flush;
-    disp_drv.draw_buf = &draw_buf;
-    lv_disp_drv_register(&disp_drv);
-
-    /*Initialize the (dummy) input device driver*/
-    static lv_indev_drv_t indev_drv;
-    lv_indev_drv_init(&indev_drv);
-    indev_drv.type = LV_INDEV_TYPE_POINTER;
-    indev_drv.read_cb = my_touchpad_read;
-    lv_indev_drv_register(&indev_drv);
-
-    ui_init();
-    lv_arc_set_value(ui_Arc1, (int)counter);
-    lv_arc_set_value(ui_Arc2, (int)counter);
-    lv_arc_set_value(ui_Arc3, (int)counter);
-
-    Serial.println("Setup done");
-
-    xTaskCreatePinnedToCore(Task_TFT, "Task_TFT", 20480, NULL, 3, NULL, 0);
-    xTaskCreatePinnedToCore(Task_main, "Task_main", 40960, NULL, 3, NULL, 1);
-}
-
-void loop()
-{
+  value=map(angle,0,359,1000,0);
+  if(angle!=prev){
+  draw();
+  prev=angle;
+  } 
+ 
 }
