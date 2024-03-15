@@ -8,6 +8,8 @@
 #include "smallFont.h"
 #include "valueFont.h"
 
+#include "global_state.h"
+
 double rad=0.01745;
 
 float x[360]; //outer point
@@ -204,6 +206,8 @@ void readEncoder()
 
   if(angle>=360)
     angle=0;
+
+  State::currentScreen()->onScroll(angle);
 }
 
 
@@ -250,29 +254,17 @@ void setup() {
 
 void loop() {
    readEncoder();
-  
-
-   for(int i=0;i<24;i++)
-      PPgraph[i]=random(1,12);
 
   if(digitalRead(BUTTON)==0)
   {
-  if(deb==0) {deb=1; onOff=!onOff; draw();}
-  }else deb=0;
+    State::getCurrentScreen()->onClick();
+    State::nextScreen();
+  }
  
-  if (read_touch(&xt, &yt) == 1) {if(yt<240)angle=angle-3; else angle=angle+3;}
-  
- second1=rtc.getSecond();
-
- if(second1<10) secs="0"+String(second1); else secs=String(second1);
-
- if(second1!=second2)
- {second2=second1; draw();}
-
-  value=map(angle,0,359,1000,0);
-  if(angle!=prev){
-  draw();
-  prev=angle;
-  } 
+  if (read_touch(&xt, &yt) == 1) {
+    State::getCurrentScreen()->onTouch(&xt, &yt);
+  }
+ 
+  State::getCurrentScreen()->display(sprite.getPointer(), &gfx);
  
 }

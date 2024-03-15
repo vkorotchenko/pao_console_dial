@@ -1,10 +1,10 @@
 
-#ifndef SPOTIFY_SCREEN_H_
-#define SPOTIFY_SCREEN_H_
+#ifndef CHARGE_SCREEN_H_
+#define CHARGE_SCREEN_H_
 
 #include "screen.h"
 
-class SpotifyScreen :public Screen {
+class ChargeScreen :public Screen {
     public:
     virtual void onClick() ;
     virtual void onTouch(int x, int y);
@@ -14,4 +14,4 @@ class SpotifyScreen :public Screen {
     protected:
 };
 
-#endif /* SPOTIFY_SCREEN_H_ */
+#endif /* CHARGE_SCREEN_H_ */
