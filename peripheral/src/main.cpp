@@ -10,6 +10,8 @@
 
 #include "global_state.h"
 
+State* state = new State();
+
 double rad=0.01745;
 
 float x[360]; //outer point
@@ -201,13 +203,14 @@ void readEncoder()
     
     pos = newPos;
   } 
- if(angle<0)
-    angle=359;
-
-  if(angle>=360)
+  if(angle<0){
+      angle=359;
+  }
+  if(angle>=360){
     angle=0;
+  }
 
-  State::currentScreen()->onScroll(angle);
+  state->getCurrentScreen()->onScroll(angle);
 }
 
 
@@ -257,14 +260,14 @@ void loop() {
 
   if(digitalRead(BUTTON)==0)
   {
-    State::getCurrentScreen()->onClick();
-    State::nextScreen();
+    state->getCurrentScreen()->onClick();
+    state->nextScreen();
   }
  
   if (read_touch(&xt, &yt) == 1) {
-    State::getCurrentScreen()->onTouch(&xt, &yt);
+    state->getCurrentScreen()->onTouch(xt, yt);
   }
  
-  State::getCurrentScreen()->display(sprite.getPointer(), &gfx);
+  state->getCurrentScreen()->display(&sprite, gfx);
  
 }

@@ -2,6 +2,8 @@
 #define GLOABAL_STATE_H_
 
 #include <Arduino.h>
+
+#include "screens/screen.h"
 #include "screens/data_screen.h"
 #include "screens/gear_screen.h"
 #include "screens/loading_screen.h"
@@ -20,26 +22,15 @@ public:
         PARK = 3,
     };
     
-    enum ScreenType
-    {
-        PRELOAD = 0,
-        CHARGE = 1,
-        CAN_DATA = 2,
-        SPOTIFY = 3,
-        SPEEDOMETER = 4,
-        SETTINGS = 5,
-        GEARS = 6,
-    };
-    
-    Gear getGear()
+    Gear getGear();
     void setGear(Gear newGear);
     void setup();
     void nextScreen();
-    Screen getCurrentScreen();
+    Screen* getCurrentScreen();
 
 private:
-    Screen currentScreen;
-    Gear gear;
+    Screen* currentScreen;
+    State::Gear gear;
 };
 
 #endif /* GLOABAL_STATE_H_ */

@@ -1,52 +1,51 @@
 #include "global_state.h"
 
-GearScreen gears = new GearScreen();
-SpeedometerScreen speedometer = new SpeedometerScreen();
-LoadingScreen loading = new LoadingScreen();
-SpotifyScreen spotify = new SpotifyScreen();
-DataScreen canData = new DataScreen();
-ChargeScreen charge = new ChargeScreen();
-SettingsScreen settings = new SettingsScreen();
-
+GearScreen gears;
+SpeedometerScreen speedometer;
+LoadingScreen loading;
+SpotifyScreen spotify;
+DataScreen canData;
+ChargeScreen charge;
+SettingsScreen settings;
 
 void State::setup() {
     gear = Gear::PARK;
-    currentScreen = loading;
+    currentScreen = &loading;
 };
 
 void State::nextScreen()
 {
-    ScreenType currentType = currentScreen.type(); // TODO check if we want to change this to pointer
+    Screen::ScreenType currentType = currentScreen->getType();
     switch(currentType) {
-        case ScreenType::PRELOAD:
-            currentScreen = gears;
+        case Screen::ScreenType::PRELOAD:
+            currentScreen = &gears;
             break;
-        case ScreenType::GEARS:
-            currentScreen = speedometer;
+        case Screen::ScreenType::GEARS:
+            currentScreen = &speedometer;
             break;
-        case ScreenType::SPEEDOMETER:
-            currentScreen = spotify;
+        case Screen::ScreenType::SPEEDOMETER:
+            currentScreen = &spotify;
             break;
-        case ScreenType::SPOTIFY:
-            currentScreen = canData;
+        case Screen::ScreenType::SPOTIFY:
+            currentScreen = &canData;
             break;
-        case ScreenType::CAN_DATA:
-            currentScreen = charge;
+        case Screen::ScreenType::CAN_DATA:
+            currentScreen = &charge;
             break;
-        case ScreenType::CHARGE:
-            currentScreen = settings;
+        case Screen::ScreenType::CHARGE:
+            currentScreen = &settings;
             break;
-        case ScreenType::SETTINGS:
-            currentScreen = gears;
+        case Screen::ScreenType::SETTINGS:
+            currentScreen = &gears;
             break;
         default:
             // this should never happen 
-            currentScreen = loading;
+            currentScreen = &loading;
     }
 }
-Screen State::getCurrentScreen()
+Screen* State::getCurrentScreen()
 {
-    return &currentScreen;
+    return currentScreen;
 };
 
 void State::setGear(Gear newGear)
@@ -54,7 +53,7 @@ void State::setGear(Gear newGear)
     gear = newGear;
 }
 
-Gear State::getGear()
+State::Gear State::getGear()
 {
     return gear;
 }
