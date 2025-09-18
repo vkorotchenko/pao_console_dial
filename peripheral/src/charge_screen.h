@@ -3,18 +3,21 @@
 #define CHARGE_SCREEN_H_
 
 
+#include "screen.h"
 #include <Arduino_GFX_Library.h>
 #include <TFT_eSPI.h>
-#include "screen.h"
 
-class ChargeScreen : public Screen {
 
+class ChargeScreen :public screen {
     public:
-    ChargeScreen() : Screen{Screen::ScreenType::CHARGE}{};
-    void onClick() ;
-    void onTouch(int x, int y);
+    ChargeScreen() {};
+    bool onClick(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) ;
+    void onTouch(int x, int y, TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
     void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
-    void onScroll(int x);
+    void onScroll(int x, TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
+
+    private :
+        ScreenTypes::ScreenType type = ScreenTypes::ScreenType::CHARGE;
 };
 
 #endif /* CHARGE_SCREEN_H_ */

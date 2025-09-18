@@ -6,6 +6,11 @@
 #include "global_state.h"
 #include "gear_screen.h"
 #include "loading_screen.h"
+#include "data_screen.h"
+#include "charge_screen.h"
+#include "settings_screen.h"
+#include "speedo_screen.h"
+#include "spotify_screen.h"
 #include "screenType.h"
 
 class GlobalState {

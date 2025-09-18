@@ -1,23 +1,23 @@
 #include "speedo_screen.h"
-
-void SpeedometerScreen::onClick(){
-    return;
+bool SpeedometerScreen::onClick(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
+{
+  return false;
 }
 
-void SpeedometerScreen::onTouch(int x, int y) {
+void SpeedometerScreen::onTouch(int x, int y, TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
+ {
+    sprite->drawString("S", x, y);
     return;
 };
 
 void SpeedometerScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
-  
-  sprite->fillSprite(strtol("c1251c", NULL, 16));
-//   sprite->loadFont(midleFont);
-//   sprite->setTextColor(grays[2],grays[8]);
+
+  sprite->fillSprite(strtol("cc75cc", NULL, 16));
   sprite->drawString("SPEEDO SCREEN", 200, 100);
 
-  gfx->draw16bitBeRGBBitmap(40,120,(uint16_t*)sprite,400,240);
+  gfx->draw16bitBeRGBBitmap(40,120,(uint16_t*)sprite->getPointer(),400,240);
 };
 
-void SpeedometerScreen::onScroll(int x) {
+void SpeedometerScreen::onScroll(int x, TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
     return;
 };

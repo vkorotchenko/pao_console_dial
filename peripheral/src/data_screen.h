@@ -6,15 +6,16 @@
 #include <Arduino_GFX_Library.h>
 #include <TFT_eSPI.h>
 
-class DataScreen : public Screen {
+class DataScreen :public screen {
     public:
-
-    DataScreen() : Screen{Screen::ScreenType::CAN_DATA} {};
-
-    void onClick() ;
-    void onTouch(int x, int y);
+    DataScreen() {};
+    bool onClick(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) ;
+    void onTouch(int x, int y, TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
     void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
-    void onScroll(int x);    
+    void onScroll(int x, TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
+
+    private :
+        ScreenTypes::ScreenType type = ScreenTypes::ScreenType::CAN_DATA;
 };
 
 #endif /* DATA_SCREEN_H_ */

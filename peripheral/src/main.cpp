@@ -156,7 +156,10 @@ void loop() {
   if (reading == LOW && lastButtonState == HIGH && (millis() - lastDebounceTime) > debounceDelay) {
     buttonState = reading;
     lastDebounceTime = millis();
-    state->getNextScreen();
+    bool isBlocking = state->getCurrentScreen()->onClick(&sprite, gfx);
+    if(!isBlocking){
+      state->getNextScreen();
+    }
   }
  
   // if (read_touch(&xt, &yt) == 1) {
