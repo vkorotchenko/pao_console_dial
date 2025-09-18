@@ -1,11 +1,12 @@
 #include "gear_screen.h"
 void GearScreen::onClick()
 {
+  // screen::onClick();
 }
 
-void GearScreen::onTouch(int x, int y) {
-    return;
-};
+// void GearScreen::onTouch(int x, int y) {
+//     return;
+// };
 
 void GearScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
   
@@ -17,6 +18,6 @@ void GearScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
   gfx->draw16bitBeRGBBitmap(40,120,(uint16_t*)sprite->getPointer(),400,240);
 };
 
-void Screen::onScroll(int x) {
-    return;
-};
+// void Screen::onScroll(int x) {
+//     return;
+// };

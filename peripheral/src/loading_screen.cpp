@@ -1,11 +1,13 @@
 #include "loading_screen.h"
+
 void LoadingScreen::onClick()
 {
+  // this->onClick();
 }
 
-void LoadingScreen::onTouch(int x, int y) {
-    return;
-};
+// void LoadingScreen::onTouch(int x, int y) {
+//     return;
+// };
 
 void LoadingScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
   
@@ -17,6 +19,6 @@ void LoadingScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
   gfx->draw16bitBeRGBBitmap(40,120,(uint16_t*)sprite->getPointer(),400,240);
 };
 
-void LoadingScreen::onScroll(int x) {
-    return;
-};
+// void LoadingScreen::onScroll(int x) {
+//     return;
+// };

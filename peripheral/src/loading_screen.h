@@ -6,12 +6,16 @@
 #include <Arduino_GFX_Library.h>
 #include <TFT_eSPI.h>
 
-class LoadingScreen : public Screen {
+class LoadingScreen : public screen {
     public:
+    LoadingScreen() {};
     void onClick() ;
-    void onTouch(int x, int y);
+    // void onTouch(int x, int y);
     void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
-    void onScroll(int x);
+    // void onScroll(int x);
+    private :
+        ScreenTypes::ScreenType type = ScreenTypes::ScreenType::PRELOAD;
+
     
 };
 

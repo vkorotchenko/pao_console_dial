@@ -1,6 +1,7 @@
 #include <Arduino_GFX_Library.h>
 #include <RotaryEncoder.h>
 #include <ESP32Time.h>
+#include <Arduino.h>
 #include <Wire.h>
 #include "touch.h"
 #include "bigFont.h"
@@ -10,7 +11,14 @@
 
 #include "global_state.h"
 
-State* state = new State();
+GlobalState* state = new GlobalState(); 
+
+
+int buttonState= HIGH;
+int lastButtonState = HIGH;
+
+unsigned long lastDebounceTime = 0;
+unsigned long debounceDelay = 500;
 
 double rad=0.01745;
 
@@ -118,7 +126,7 @@ void readEncoder()
     angle=0;
   }
 
-  state->getCurrentScreen()->onScroll(angle);
+  // state->getCurrentScreen()->onScroll(angle);
 }
 
 
@@ -134,21 +142,27 @@ void setup() {
   sprite.createSprite(400,240);
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   gfx->begin();
-  gfx->fillScreen(BLACK);
+  gfx->fillScreen(MAROON);
+  state->setup();
+
 }
 
 void loop() {
-   readEncoder();
 
-  if(digitalRead(BUTTON)==0)
-  {
-    state->nextScreen();
+  //  readEncoder();
+
+  //read button with debounce
+  int reading = digitalRead(BUTTON);
+  if (reading == LOW && lastButtonState == HIGH && (millis() - lastDebounceTime) > debounceDelay) {
+    buttonState = reading;
+    lastDebounceTime = millis();
+    state->getNextScreen();
   }
  
-  if (read_touch(&xt, &yt) == 1) {
-    state->getCurrentScreen()->onTouch(xt, yt);
-  }
- 
+  // if (read_touch(&xt, &yt) == 1) {
+  //   // state->getCurrentScreen()->onTouch(xt, yt);
+  // }
+
   state->getCurrentScreen()->display(&sprite, gfx);
  
 }

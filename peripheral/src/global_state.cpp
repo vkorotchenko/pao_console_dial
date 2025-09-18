@@ -1,24 +1,27 @@
 #include "global_state.h"
 
-GearScreen gears;
-LoadingScreen loading;
+screen * gears = new GearScreen;
+screen * loading = new LoadingScreen;
 
-Screen* currentScreen;
 
-void State::setup() {
-    gear = Gear::PARK;
-    currentScreen = &loading;
+void GlobalState::setup() {
+    // gear = Gears::Gear::PARK;
+    gears->setup(ScreenTypes::ScreenType::GEARS);
+    loading->setup(ScreenTypes::ScreenType::PRELOAD);
+    currentScreen = loading;
 }
 
-void State::getNextScreen()
+void GlobalState::getNextScreen()
 {
-    Screen::ScreenType currentType = currentScreen->getType();
+
+    ScreenTypes::ScreenType currentType = currentScreen->getType();
+
     switch(currentType) {
-        case Screen::ScreenType::PRELOAD:
-            currentScreen = &gears;
+        case ScreenTypes::ScreenType::PRELOAD:
+            currentScreen = gears;
             break;
-        case Screen::ScreenType::GEARS:
-            currentScreen = &loading;
+        case ScreenTypes::ScreenType::GEARS:
+            currentScreen = loading;
             break;
         // case Screen::ScreenType::CAN_DATA:
         //     currentScreen = &charge;
@@ -30,22 +33,7 @@ void State::getNextScreen()
         //     currentScreen = &gears;
         //     break;
         default:
-            // this should never happen 
-            currentScreen = &loading;
+            // this should never happen
+            currentScreen = loading;
     }
-}
-Screen* State::getCurrentScreen()
-{
-            // this should never happen 
-            currentScreen = &loading;
-    
-}
-
-{
-    gear = newGear;
-}
-
-State::Gear State::getGear()
-{
-    return gear;
 }
