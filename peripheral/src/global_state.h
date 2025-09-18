@@ -3,14 +3,14 @@
 
 #include <Arduino.h>
 
-#include "screens/screen.h"
-#include "screens/data_screen.h"
-#include "screens/gear_screen.h"
-#include "screens/loading_screen.h"
-#include "screens/settings_screen.h"
-#include "screens/speedo_screen.h"
-#include "screens/spotify_screen.h"
-#include "screens/charge_screen.h"
+#include "screen.h"
+#include "data_screen.h"
+#include "gear_screen.h"
+#include "loading_screen.h"
+#include "settings_screen.h"
+#include "speedo_screen.h"
+#include "spotify_screen.h"
+#include "charge_screen.h"
 
 class State {
 public:
@@ -25,12 +25,12 @@ public:
     Gear getGear();
     void setGear(Gear newGear);
     void setup();
-    void nextScreen();
+    void getNextScreen();
     Screen* getCurrentScreen();
 
 private:
-    Screen* currentScreen;
-    State::Gear gear;
+    Screen *currentScreen;
+    Screen *nextScreen;    State::Gear gear;
 };
 
 #endif /* GLOABAL_STATE_H_ */

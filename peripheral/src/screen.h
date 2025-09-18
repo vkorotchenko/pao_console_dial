@@ -1,7 +1,7 @@
 #ifndef PAO_SCREEN_H_
 #define PAO_SCREEN_H_
 
-#include "../global_state.h"
+#include "global_state.h"
 #include <Arduino_GFX_Library.h>
 #include <TFT_eSPI.h>
 

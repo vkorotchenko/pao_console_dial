@@ -95,98 +95,6 @@ unsigned short grays[13];
 #define bck TFT_BLACK
 char dd[7]={'m','t','w','t','f','s','s'};
 
-void draw()
-{
-
-    
-  
-  sprite.fillSprite(grays[11]);
-  sprite.drawWedgeLine(54,120,80,120,2,2,TFT_RED);
-    for(int j=0;j<24;j++)
-    for(int i=0;i<PPgraph[j];i++)
-    sprite.fillRect(188+(j*6),90-(i*4),4,3,grays[5]);
-  
-  sprite.fillRect(180,136,100,3,grays[7]);
-  sprite.fillRect(186,130,3,34,grays[7]);
-
-
-  sprite.setTextDatum(4);
-  sprite.loadFont(smallFont);
-  sprite.drawString("%",60,108);
-  sprite.unloadFont();
-
-   sprite.loadFont(midleFont);
-
-   for(int i=0;i<120;i++)
- {
-   a=angle+(i*3);
-   if(a>359)
-   a=(angle+(i*3))-360;
-   
-
-   sprite.drawPixel(x[a],y[a],grays[6]);
-   sprite.setTextColor(grays[2],grays[8]);
-
-   if(i%3==0)
-   sprite.drawWedgeLine(x[a],y[a],x[a]-6,y[a],1,1,grays[5],bck);
-
-   if(i%6==0)
-   sprite.drawWedgeLine(x[a],y[a],x[a]-18,y[a],2,2,grays[4],bck);
-   if(i%12==0){
-   sprite.drawWedgeLine(x[a],y[a],x[a]-30,y[a],2,2,grays[3],bck);
-   sprite.drawString(String((i/6)*5),tx[a],ty[a],2);
-   }
-
-}
-    
-
-
-  sprite.setTextDatum(4);
-  sprite.setTextColor(grays[2],grays[8]);
-  
-  for(int i=0;i<7;i++)
-  {
-    sprite.fillSmoothRoundRect(186+(i*30),2,26,26,3,grays[8],bck);
-    sprite.drawString(String(dd[i]),186+((i+1)*30)-17,17);
-  }
-  sprite.unloadFont();
-  sprite.drawWedgeLine(199+(rtc.getDayofWeek()*30),35,199+(rtc.getDayofWeek()*30),40,1,3,grays[3],bck);
-  
-  
-  sprite.setTextDatum(0);
-  sprite.setTextColor(grays[0],bck);
-  sprite.loadFont(bigFont);
-  sprite.drawString(rtc.getTime().substring(0,5),196,150);
-  sprite.unloadFont();
-
-   sprite.setTextDatum(0);
-  sprite.setTextColor(grays[1],bck);
-  sprite.loadFont(midleFont);
-  sprite.drawString("October 23",196,104);  ////////////////////////date hard coded
-  sprite.setTextDatum(4);
-  sprite.fillRect(0,145,50,30,grays[9]);
-  sprite.setTextColor(grays[3],grays[9]);
-  sprite.drawString(OO[onOff],25,162); 
-   
-  sprite.unloadFont();
-
-
-  sprite.setTextDatum(4);
-  sprite.setTextColor(grays[1],bck);
-  sprite.loadFont(valueFont);
-  sprite.drawString(String((int)(value/10.00)),24,124);
-  sprite.setTextColor(grays[3],bck);
-   sprite.drawString(secs,362,78);   /// /////////////////////////////////seconds
-  sprite.unloadFont();
-
-  sprite.setTextColor(grays[7],bck);
- // sprite.drawString(String(x),150,50,4);
- // sprite.drawString(String(y),250,50,4);
-  gfx->draw16bitBeRGBBitmap(40,120,(uint16_t*)sprite.getPointer(),400,240);
-
-}
-
-
 void readEncoder()
  {
 
@@ -227,32 +135,6 @@ void setup() {
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   gfx->begin();
   gfx->fillScreen(BLACK);
- 
-
-     int co=220;
-     for(int i=0;i<13;i++)
-     {
-     grays[i]=tft.color565(co, co, co);
-     co=co-20;
-     }
-
-       for(int i=0;i<360;i++)
-  {
-       x[i]=(r*cos(rad*i))+sx;
-       y[i]=(r*sin(rad*i))+sy;
-       px[i]=((r-5)*cos(rad*i))+sx;
-       py[i]=((r-5)*sin(rad*i))+sy;
-
-       lx[i]=((r-24)*cos(rad*i))+sx;
-       ly[i]=((r-24)*sin(rad*i))+sy;
-
-       shx[i]=((r-12)*cos(rad*i))+sx;
-       shy[i]=((r-12)*sin(rad*i))+sy;
-
-      tx[i]=((r+28)*cos(rad*i))+sx;
-      ty[i]=((r+28)*sin(rad*i))+sy;
-  }
-  draw();
 }
 
 void loop() {
@@ -260,7 +142,6 @@ void loop() {
 
   if(digitalRead(BUTTON)==0)
   {
-    state->getCurrentScreen()->onClick();
     state->nextScreen();
   }
  
