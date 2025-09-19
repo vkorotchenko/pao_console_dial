@@ -3,8 +3,6 @@
 #define DATA_SCREEN_H_
 
 #include "screen.h"
-#include <Arduino_GFX_Library.h>
-#include <TFT_eSPI.h>
 
 class DataScreen :public screen {
     public:

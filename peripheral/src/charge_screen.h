@@ -2,11 +2,7 @@
 #ifndef CHARGE_SCREEN_H_
 #define CHARGE_SCREEN_H_
 
-
 #include "screen.h"
-#include <Arduino_GFX_Library.h>
-#include <TFT_eSPI.h>
-
 
 class ChargeScreen :public screen {
     public:

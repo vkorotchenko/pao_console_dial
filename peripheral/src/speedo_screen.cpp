@@ -6,7 +6,7 @@ bool SpeedometerScreen::onClick(TFT_eSprite *sprite)
 
 void SpeedometerScreen::onTouch(int x, int y, TFT_eSprite *sprite)
  {
-    sprite->drawString("S", x, y);
+    sprite->drawString("S", x+TOUCH_X_OFFSET, y+TOUCH_Y_OFFSET);
     return;
 };
 

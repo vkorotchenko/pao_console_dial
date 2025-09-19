@@ -4,8 +4,6 @@
 
 #include "screen.h"
 #include "pao_logo.h"
-#include <Arduino_GFX_Library.h>
-#include <TFT_eSPI.h>
 
 class LoadingScreen : public screen {
     public:

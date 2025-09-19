@@ -2,11 +2,7 @@
 #ifndef SPOTIFY_SCREEN_H_
 #define SPOTIFY_SCREEN_H_
 
-
 #include "screen.h"
-#include <Arduino_GFX_Library.h>
-#include <TFT_eSPI.h>
-
 
 class SpotifyScreen :public screen {
     public:

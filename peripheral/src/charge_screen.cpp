@@ -18,7 +18,7 @@ void ChargeScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
 
   sprite->fillSprite(TFT_BLACK);
   gfx->fillScreen(TFT_BLACK);
-  
+
   sprite->drawString("CHARGE SCREEN", 200, 100);
 
 };

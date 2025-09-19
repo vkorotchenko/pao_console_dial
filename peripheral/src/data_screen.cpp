@@ -6,7 +6,7 @@ bool DataScreen::onClick(TFT_eSprite *sprite)
 
 void DataScreen::onTouch(int x, int y, TFT_eSprite *sprite)
  {
-    sprite->drawString("D", x, y);
+    sprite->drawString("D", x+TOUCH_X_OFFSET, y+TOUCH_Y_OFFSET );
     return;
 };
 

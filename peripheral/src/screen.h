@@ -16,8 +16,11 @@ class screen {
     virtual void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) = 0;
     virtual void onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) = 0;
     ScreenTypes::ScreenType getType() {return type;};
+    
     protected:
     ScreenTypes::ScreenType type;
+    int TOUCH_X_OFFSET = -50;
+    int TOUCH_Y_OFFSET = -130;
 
 };
 

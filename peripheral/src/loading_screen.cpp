@@ -6,7 +6,6 @@ bool LoadingScreen::onClick(TFT_eSprite *sprite)
 }
 
 void LoadingScreen::onTouch(int x, int y, TFT_eSprite *sprite) {
-    sprite->drawString("L", x, y);
     return;
 };
 
@@ -16,12 +15,11 @@ void LoadingScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
 
 void LoadingScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
 
-  sprite->fillSprite(TFT_BLACK);
-  gfx->fillScreen(TFT_BLACK);
+  // sprite->fillSprite(TFT_SKYBLUE);
+  gfx->fillScreen(TFT_SKYBLUE);
   
-  sprite->drawBitmap(0, -140, pao_logo, 420, 420, TFT_SKYBLUE);
+  sprite->drawBitmap(-15, -130, pao_logo, 420, 420, TFT_SKYBLUE);
 
-  sprite->drawString("LOADING SCREEN", 100, 150);
 
 };
 

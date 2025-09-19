@@ -11,7 +11,7 @@
 
 #include "global_state.h"
 
-GlobalState* state = new GlobalState(); 
+GlobalState& state = GlobalState::getInstance();
 
 
 int buttonState= HIGH;
@@ -101,7 +101,6 @@ unsigned short grays[13];
 #define blue 0x0AD0
 #define yellow 0x9381
 #define bck TFT_BLACK
-char dd[7]={'m','t','w','t','f','s','s'};
 
 void readEncoder()
  {
@@ -126,7 +125,7 @@ void readEncoder()
     angle=0;
   }
 
-  state->getCurrentScreen()->onScroll(angle, &sprite);
+  state.getCurrentScreen()->onScroll(angle, &sprite);
 }
 
 
@@ -141,11 +140,11 @@ void setup() {
 
   sprite.createSprite(400,400);
   tft.fillScreen(TFT_BLACK);
-  sprite.fillSprite(MAROON);
+  sprite.loadFont(midleFont);
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   gfx->begin();
-  state->setup();
-  state->getCurrentScreen()->onLoad(&sprite, gfx);
+  state.setup();
+  state.getCurrentScreen()->onLoad(&sprite, gfx);
 }
 
 void loop() {
@@ -157,18 +156,20 @@ void loop() {
   if (reading == LOW && lastButtonState == HIGH && (millis() - lastDebounceTime) > debounceDelay) {
     buttonState = reading;
     lastDebounceTime = millis();
-    bool isBlocking = state->getCurrentScreen()->onClick(&sprite);
+    bool isBlocking = state.getCurrentScreen()->onClick(&sprite);
     if(!isBlocking){
-      state->getNextScreen();
-      state->getCurrentScreen()->onLoad(&sprite, gfx);
+      state.getNextScreen();
+      state.getCurrentScreen()->onLoad(&sprite, gfx);
     }
   }
  
   if (read_touch(&xt, &yt) == 1) {
-   state->getCurrentScreen()->onTouch(xt, yt, &sprite);
+   state.getCurrentScreen()->onTouch(xt, yt, &sprite);
+  } else {
+    state.getCurrentScreen()->onTouch(-1, -1, &sprite);
   }
 
-  state->getCurrentScreen()->display(&sprite, gfx);
+  state.getCurrentScreen()->display(&sprite, gfx);
   gfx->draw16bitBeRGBBitmap(40,120,(uint16_t*)sprite.getPointer(),400,240);
  
 }

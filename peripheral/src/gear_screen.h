@@ -2,11 +2,10 @@
 #define GEAR_SCREEN_H_
 
 #include "screen.h"
-#include <Arduino_GFX_Library.h>
-#include <TFT_eSPI.h>
+#include "gear.h"
 
 
-class GearScreen :public screen {
+class GearScreen : public screen {
     public:
     GearScreen() {};
     bool onClick(TFT_eSprite *sprite) ;
@@ -14,6 +13,7 @@ class GearScreen :public screen {
     void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
     void onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
     void onScroll(int x, TFT_eSprite *sprite);
+    void draw(TFT_eSprite *sprite);
 
     private :
         ScreenTypes::ScreenType type = ScreenTypes::ScreenType::GEARS;
