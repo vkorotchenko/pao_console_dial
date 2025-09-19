@@ -16,12 +16,12 @@
     //    byte colPins[COLS] = {25, 33}; //connect to the column pinouts of the keypad 
     //    Keypad keypad = Keypad( makeKeymap(keys), rowPins, colPins, ROWS, COLS );
 
-bool SpotifyScreen::onClick(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
+bool SpotifyScreen::onClick(TFT_eSprite *sprite)
 {
   return false;
 }
 
-void SpotifyScreen::onTouch(int x, int y, TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
+void SpotifyScreen::onTouch(int x, int y, TFT_eSprite *sprite)
  {
     sprite->drawString("G", x, y);
     return;
@@ -29,12 +29,16 @@ void SpotifyScreen::onTouch(int x, int y, TFT_eSprite *sprite, Arduino_ST7701_RG
 
 void SpotifyScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
 
-  sprite->fillSprite(strtol("cc75cc", NULL, 16));
+};
+void SpotifyScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
+
+  sprite->fillSprite(TFT_GREEN);
+  gfx->fillScreen(TFT_GREEN);
+  
   sprite->drawString("SPOTIFY SCREEN", 200, 100);
 
-  gfx->draw16bitBeRGBBitmap(40,120,(uint16_t*)sprite->getPointer(),400,240);
 };
 
-void SpotifyScreen::onScroll(int x, TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
+void SpotifyScreen::onScroll(int x, TFT_eSprite *sprite) {
     return;
 };

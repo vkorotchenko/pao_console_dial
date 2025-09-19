@@ -18,7 +18,7 @@ void GlobalState::setup() {
     settings->setup(ScreenTypes::ScreenType::SETTINGS);
     speedo->setup(ScreenTypes::ScreenType::SPEEDOMETER);
     spotify->setup(ScreenTypes::ScreenType::SPOTIFY);
-    
+
     currentScreen = loading;
 }
 

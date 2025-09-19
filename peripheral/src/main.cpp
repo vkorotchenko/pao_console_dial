@@ -126,7 +126,7 @@ void readEncoder()
     angle=0;
   }
 
-  // state->getCurrentScreen()->onScroll(angle);
+  state->getCurrentScreen()->onScroll(angle, &sprite);
 }
 
 
@@ -139,33 +139,36 @@ void setup() {
 
   rtc.setTime(0,47,13,10,23,2023,0); 
 
-  sprite.createSprite(400,240);
+  sprite.createSprite(400,400);
+  tft.fillScreen(TFT_BLACK);
+  sprite.fillSprite(MAROON);
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   gfx->begin();
-  gfx->fillScreen(MAROON);
   state->setup();
-
+  state->getCurrentScreen()->onLoad(&sprite, gfx);
 }
 
 void loop() {
 
-  //  readEncoder();
+   readEncoder();
 
   //read button with debounce
   int reading = digitalRead(BUTTON);
   if (reading == LOW && lastButtonState == HIGH && (millis() - lastDebounceTime) > debounceDelay) {
     buttonState = reading;
     lastDebounceTime = millis();
-    bool isBlocking = state->getCurrentScreen()->onClick(&sprite, gfx);
+    bool isBlocking = state->getCurrentScreen()->onClick(&sprite);
     if(!isBlocking){
       state->getNextScreen();
+      state->getCurrentScreen()->onLoad(&sprite, gfx);
     }
   }
  
-  // if (read_touch(&xt, &yt) == 1) {
-  //   // state->getCurrentScreen()->onTouch(xt, yt);
-  // }
+  if (read_touch(&xt, &yt) == 1) {
+   state->getCurrentScreen()->onTouch(xt, yt, &sprite);
+  }
 
   state->getCurrentScreen()->display(&sprite, gfx);
+  gfx->draw16bitBeRGBBitmap(40,120,(uint16_t*)sprite.getPointer(),400,240);
  
 }

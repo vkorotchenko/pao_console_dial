@@ -10,10 +10,11 @@ class screen {
     public:
 
     virtual void setup(ScreenTypes::ScreenType type) { this->type = type; };
-    virtual bool onClick(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) = 0;
-    virtual void onTouch(int x, int y, TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) = 0;
-    virtual void onScroll(int x, TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) = 0;
+    virtual bool onClick(TFT_eSprite *sprite) = 0;
+    virtual void onTouch(int x, int y, TFT_eSprite *sprite) = 0;
+    virtual void onScroll(int x, TFT_eSprite *sprite) = 0;
     virtual void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) = 0;
+    virtual void onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) = 0;
     ScreenTypes::ScreenType getType() {return type;};
     protected:
     ScreenTypes::ScreenType type;
