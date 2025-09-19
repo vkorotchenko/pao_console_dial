@@ -19,7 +19,7 @@ void GlobalState::setup() {
     speedo->setup(ScreenTypes::ScreenType::SPEEDOMETER);
     spotify->setup(ScreenTypes::ScreenType::SPOTIFY);
 
-    currentScreen = loading;
+    currentScreen = spotify; //loading
 }
 
 void GlobalState::getNextScreen()
