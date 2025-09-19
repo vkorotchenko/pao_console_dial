@@ -27,12 +27,13 @@ bool SpeedometerScreen::onClick(TFT_eSprite *sprite)
 }
 
 void SpeedometerScreen::onTouch(int x, int y, TFT_eSprite *sprite)
- {
-    return;
+{
+  return;
 };
 
-void SpeedometerScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
-    GlobalState& state = GlobalState::getInstance();
+void SpeedometerScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
+{
+  GlobalState &state = GlobalState::getInstance();
 
   // speed
 
@@ -51,25 +52,25 @@ void SpeedometerScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gf
   sprite->setTextSize(RPM_FONT_SIZE);
   sprite->setCursor(X_RPM + RPM_X_OFFSET, Y_RPM + RPM_Y_OFFSET);
   sprite->print(state.getRpm());
-
 };
 
-void SpeedometerScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
+void SpeedometerScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
+{
 
   sprite->fillSprite(TFT_BLACK);
   gfx->fillScreen(TFT_BLACK);
-  
+
   // speed
   sprite->drawString("KM/H", X_SPEED, Y_SPEED);
 
-  //battery
+  // battery
   sprite->drawString("Battery (%)", X_BATTERY, Y_BATTERY);
 
   // rpm
   sprite->drawString("RPM", X_RPM, Y_RPM);
-
 };
 
-void SpeedometerScreen::onScroll(int x, TFT_eSprite *sprite) {
-    return;
+void SpeedometerScreen::onScroll(int x, TFT_eSprite *sprite)
+{
+  return;
 };

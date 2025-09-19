@@ -5,24 +5,25 @@ bool LoadingScreen::onClick(TFT_eSprite *sprite)
   return false;
 }
 
-void LoadingScreen::onTouch(int x, int y, TFT_eSprite *sprite) {
-    return;
+void LoadingScreen::onTouch(int x, int y, TFT_eSprite *sprite)
+{
+  return;
 };
 
 void LoadingScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
 
 };
 
-void LoadingScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
+void LoadingScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
+{
 
   // sprite->fillSprite(TFT_SKYBLUE);
   gfx->fillScreen(TFT_SKYBLUE);
-  
+
   sprite->drawBitmap(-15, -130, pao_logo, 420, 420, TFT_SKYBLUE);
-
-
 };
 
-void LoadingScreen::onScroll(int x, TFT_eSprite *sprite) {
-    return;
+void LoadingScreen::onScroll(int x, TFT_eSprite *sprite)
+{
+  return;
 };

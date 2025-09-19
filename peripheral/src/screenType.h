@@ -1,10 +1,11 @@
 #ifndef SCREENTYPE_ENUM_H_
 #define SCREENTYPE_ENUM_H_
 
-class ScreenTypes {
+class ScreenTypes
+{
 public:
-
-    enum ScreenType {
+    enum ScreenType
+    {
         PRELOAD = 0,
         CHARGE = 1,
         CAN_DATA = 2,
@@ -16,4 +17,3 @@ public:
 };
 
 #endif /* SCREENTYPE_ENUM_H_ */
-
