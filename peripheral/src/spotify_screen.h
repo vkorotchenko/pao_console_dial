@@ -9,7 +9,7 @@ class SpotifyScreen : public screen
 {
 public:
     SpotifyScreen() {};
-    void setup(ScreenTypes::ScreenType type);
+    void setup(ScreenTypes::ScreenType type) override;
     bool onClick(TFT_eSprite *sprite);
     void onTouch(int x, int y, TFT_eSprite *sprite);
     void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);

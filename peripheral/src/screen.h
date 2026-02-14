@@ -20,7 +20,8 @@ protected:
     ScreenTypes::ScreenType type;
     int TOUCH_X_OFFSET = -50;
     int TOUCH_Y_OFFSET = -130;
-    int SCROLL_THRESHOLD = 5;
+
+    string SCROLL_THRESHOLD = 5;
 };
 
 #endif /* PAO_SCREEN_H_ */
