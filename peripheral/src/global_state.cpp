@@ -22,6 +22,25 @@ void GlobalState::setup()
     currentScreen = loading;
 }
 
+// Charge state helper functions (shared by charge_screen and data_screen)
+uint16_t getChargeStateColor(int chargeState) {
+    switch(chargeState) {
+        case 0: return TFT_RED;      // Not Charging
+        case 1: return TFT_GREEN;    // Charging
+        case 2: return TFT_SKYBLUE;  // Complete
+        default: return TFT_WHITE;
+    }
+}
+
+const char* getChargeStateString(int chargeState) {
+    switch(chargeState) {
+        case 0: return "Not Charging";
+        case 1: return "Charging";
+        case 2: return "Complete";
+        default: return "Unknown";
+    }
+}
+
 void GlobalState::getNextScreen()
 {
 

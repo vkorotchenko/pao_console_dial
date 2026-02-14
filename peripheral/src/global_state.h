@@ -33,6 +33,19 @@ private:
     int rpm = 0;
     int batteryLevel = 0;
 
+    // Charge screen data
+    int chargePercentage = 0;
+    int chargeState = 0;  // 0=Not Charging, 1=Charging, 2=Complete
+    float requestedAmps = 0.0f;
+    float currentVoltage = 0.0f;
+    float targetVoltage = 0.0f;
+
+    // Settings data
+    int displayBrightness = 100;      // 0-100%
+    bool useMetricUnits = true;       // true=KM/H, false=MPH
+    int chargeAlertThreshold = 20;    // 0-100%
+    int screenTimeout = 60;           // 0-300 seconds, 0=never
+
 public:
     GlobalState(const GlobalState &obj) = delete;
 
@@ -50,9 +63,42 @@ public:
     int getBatteryLevel() { return batteryLevel; }
     void setBatteryLevel(int newBatteryLevel) { batteryLevel = newBatteryLevel; }
 
+    // Charge screen page
+    int getChargePercentage() { return chargePercentage; }
+    void setChargePercentage(int newPercentage) { chargePercentage = newPercentage; }
+
+    int getChargeState() { return chargeState; }
+    void setChargeState(int newState) { chargeState = newState; }
+
+    float getRequestedAmps() { return requestedAmps; }
+    void setRequestedAmps(float newAmps) { requestedAmps = newAmps; }
+
+    float getCurrentVoltage() { return currentVoltage; }
+    void setCurrentVoltage(float newVoltage) { currentVoltage = newVoltage; }
+
+    float getTargetVoltage() { return targetVoltage; }
+    void setTargetVoltage(float newVoltage) { targetVoltage = newVoltage; }
+
+    // Settings page
+    int getDisplayBrightness() { return displayBrightness; }
+    void setDisplayBrightness(int value) { displayBrightness = value; }
+
+    bool getUseMetricUnits() { return useMetricUnits; }
+    void setUseMetricUnits(bool value) { useMetricUnits = value; }
+
+    int getChargeAlertThreshold() { return chargeAlertThreshold; }
+    void setChargeAlertThreshold(int value) { chargeAlertThreshold = value; }
+
+    int getScreenTimeout() { return screenTimeout; }
+    void setScreenTimeout(int value) { screenTimeout = value; }
+
     void setup();
     void getNextScreen();
     screen *getCurrentScreen() { return currentScreen; }
 };
+
+// Charge state helper functions (shared by charge_screen and data_screen)
+uint16_t getChargeStateColor(int chargeState);
+const char* getChargeStateString(int chargeState);
 
 #endif /* GLOABAL_STATE_H_ */

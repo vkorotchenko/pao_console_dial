@@ -138,7 +138,7 @@ void setup()
 
   rtc.setTime(0, 47, 13, 10, 23, 2023, 0);
 
-  sprite.createSprite(400, 400);
+  sprite.createSprite(480, 480);
   tft.fillScreen(TFT_BLACK);
   sprite.loadFont(midleFont);
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
@@ -176,5 +176,5 @@ void loop()
   }
 
   state.getCurrentScreen()->display(&sprite, gfx);
-  gfx->draw16bitBeRGBBitmap(40, 120, (uint16_t *)sprite.getPointer(), 400, 240);
+  gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)sprite.getPointer(), 480, 480);
 }

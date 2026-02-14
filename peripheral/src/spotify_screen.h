@@ -3,7 +3,15 @@
 #define SPOTIFY_SCREEN_H_
 
 #include <BleKeyboard.h>
+#include <PNGdec.h>
 #include "screen.h"
+
+// Spotify image assets (PNG format)
+#include "spotify_logo.h"
+#include "play_pause.h"
+#include "mute.h"
+#include "next.h"
+#include "prev.h"
 
 class SpotifyScreen : public screen
 {

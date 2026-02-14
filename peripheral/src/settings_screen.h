@@ -16,6 +16,16 @@ public:
 
 private:
     ScreenTypes::ScreenType type = ScreenTypes::ScreenType::SETTINGS;
+
+    // Carousel navigation state (same as data_screen)
+    int currentIndex = 0;           // Currently focused setting (0-3)
+    int lastScrollValue = 0;        // Last encoder angle for delta calculation
+    int scrollAccumulator = 0;      // Accumulated scroll movement
+    const int SCROLL_THRESHOLD = 18; // 18° = ~5 encoder clicks (responsive)
+
+    // Edit mode state (NEW for settings screen)
+    bool isEditMode = false;        // Are we currently editing a value?
+    int editValue = 0;              // Temporary value being edited
 };
 
 #endif /* SETTING_SCREEN_H_ */
