@@ -81,6 +81,12 @@ void GlobalState::getNextScreen()
         currentScreen = gears;
         break;
     case ScreenTypes::ScreenType::GEARS:
+        currentScreen = spotify;
+        break;
+    case ScreenTypes::ScreenType::SPOTIFY:
+        currentScreen = speedo;
+        break;
+    case ScreenTypes::ScreenType::SPEEDOMETER:
         currentScreen = data;
         break;
     case ScreenTypes::ScreenType::CAN_DATA:
@@ -90,16 +96,10 @@ void GlobalState::getNextScreen()
         currentScreen = settings;
         break;
     case ScreenTypes::ScreenType::SETTINGS:
-        currentScreen = speedo;
-        break;
-    case ScreenTypes::ScreenType::SPEEDOMETER:
-        currentScreen = spotify;
-        break;
-    case ScreenTypes::ScreenType::SPOTIFY:
-        currentScreen = gears;
+        currentScreen = gears;  // Loop back to gears
         break;
     default:
-        // this should never happen
-        currentScreen = loading;
+        // Fallback to gears instead of loading to prevent getting stuck
+        currentScreen = gears;
     }
 }

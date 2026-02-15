@@ -50,12 +50,12 @@ void ChargeScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
 
   // Clear entire sprite to prevent artifacts from previous renders
   sprite->fillSprite(TFT_BLACK);
+  sprite->loadFont(midleFont);
+  sprite->setTextSize(1);
+  sprite->setTextColor(TFT_DARKGREY, TFT_BLACK);
 
   // Redraw static elements that were on onLoad
-  sprite->setTextDatum(TC_DATUM);
-  sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  sprite->setTextSize(2);
-  sprite->drawString("CHARGE", 240, 40);
+  drawTitle(sprite, "CHARGE");
   sprite->drawString("Requested Amps", X_REQUESTED_AMPS - 20, Y_REQUESTED_AMPS - 60);
   sprite->drawString("Current Voltage", X_CURRENT_VOLTAGE - 20, Y_CURRENT_VOLTAGE - 60);
   sprite->drawString("Target Voltage", X_TARGET_VOLTAGE - 20, Y_TARGET_VOLTAGE - 60);
@@ -106,11 +106,8 @@ void ChargeScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
   sprite->fillSprite(TFT_BLACK);
   gfx->fillScreen(TFT_BLACK);
 
-  // Standard title format (center-aligned)
-  sprite->setTextDatum(TC_DATUM);  // Top Center alignment
-  sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-  sprite->setTextSize(2);
-  sprite->drawString("CHARGE", 240, 40);
+  // Draw title using helper method
+  drawTitle(sprite, "CHARGE");
 
   // Static labels (center-aligned, 20px left of values, 10px higher)
   sprite->setTextDatum(TC_DATUM);

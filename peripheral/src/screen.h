@@ -18,10 +18,18 @@ public:
 
 protected:
     ScreenTypes::ScreenType type;
-    int TOUCH_X_OFFSET = -50;
-    int TOUCH_Y_OFFSET = -130;
+    int TOUCH_X_OFFSET = -10;
+    int TOUCH_Y_OFFSET = -10;
 
     String SCROLL_THRESHOLD = "5";
+
+    // Helper method to draw title in standard format
+    void drawTitle(TFT_eSprite* sprite, const char* title) {
+        sprite->setTextDatum(TC_DATUM);
+        sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        sprite->setTextSize(2);
+        sprite->drawString(title, 240, 40);
+    }
 };
 
 #endif /* PAO_SCREEN_H_ */

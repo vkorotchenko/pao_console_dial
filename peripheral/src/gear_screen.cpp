@@ -65,30 +65,21 @@ String GearScreen::getItemValue(int index) {
 }
 
 uint16_t GearScreen::getValueColor(int index) {
-    // Highlight both selected and confirmed gears in sky blue
-    if (confirmedIndex == index || selectedIndex == index) return TFT_SKYBLUE;
+    // Confirmed gear: light blue, Selected gear: orange
+    if (confirmedIndex == index) return TFT_SKYBLUE;
+    if (selectedIndex == index) return TFT_ORANGE;
     return TFT_WHITE;
 }
 
 uint16_t GearScreen::getPreviewValueColor(int index) {
-    // Highlight selected/confirmed gears in sky blue even in preview panels
-    if (confirmedIndex == index || selectedIndex == index) return TFT_SKYBLUE;
+    // Confirmed gear: light blue, Selected gear: orange (in preview panels)
+    if (confirmedIndex == index) return TFT_SKYBLUE;
+    if (selectedIndex == index) return TFT_ORANGE;
     return TFT_SILVER;
 }
 
 void GearScreen::drawCenterExtra(TFT_eSprite* sprite, int index) {
-    // Calculate circle center (centered on the gear letter at CENTER_Y = 265)
-    int circleX = 240;  // CENTER_X from carousel.h
-    int circleY = 265;  // CENTER_Y - properly centered on text
-    int radius = 70;
-
-    // Draw sky blue circle ONLY for selected (not confirmed)
-    if (selectedIndex == index && confirmedIndex != index) {
-        // Draw 6 concentric circles for thick sky blue outline
-        for (int i = 0; i < 6; i++) {
-            sprite->drawCircle(circleX, circleY, radius + i, TFT_SKYBLUE);
-        }
-    }
+    // No circle - selection is shown by orange text color
 }
 
 void GearScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
