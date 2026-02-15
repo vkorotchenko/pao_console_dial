@@ -9,14 +9,14 @@ class LoadingScreen : public screen
 {
 public:
     LoadingScreen() {};
-    bool onClick(TFT_eSprite *sprite);
-    void onTouch(int x, int y, TFT_eSprite *sprite);
-    void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
-    void onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
-    void onScroll(int x, TFT_eSprite *sprite);
+    bool onClick(TFT_eSprite *sprite) override;
+    void onTouch(int x, int y, TFT_eSprite *sprite) override;
+    void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) override;
+    void onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) override;
+    void onScroll(int x, TFT_eSprite *sprite) override;
 
 private:
-    ScreenTypes::ScreenType type = ScreenTypes::ScreenType::PRELOAD;
+    // Note: type is inherited from base screen class
 };
 
 #endif /* LOADING_SCREEN_H_ */

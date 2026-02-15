@@ -59,7 +59,8 @@ public:
       bool isFaulted;
       bool isWarning;
       bool isReady;
-      
+      bool preChargeReady;  // Pre-charge contactor ready status from CAN 0x607
+
       int configSpeedMax;
       int configTorqueMax;
       int configSpeedSlewRate;

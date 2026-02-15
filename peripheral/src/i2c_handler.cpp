@@ -71,6 +71,7 @@ void I2CHandler::parseI2CState(uint8_t* buffer)
     state.setGpsAltitude(gpsAlt);
     state.setGpsSatellites(gpsSats);
     state.setGpsFixAvailable(statusFlags & 0x10);
+    state.setPreChargeReady(statusFlags & 0x20);
 
     // Battery level calculation (could use voltage)
     int batteryPercent = map(voltage, 3000, 4200, 0, 100);  // adjust ranges

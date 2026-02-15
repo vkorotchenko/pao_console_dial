@@ -28,6 +28,7 @@ private:
     void handle_235(CAN_FRAME *frame, State::Data *data);
     void handle_236(CAN_FRAME *frame, State::Data *data);
     void handle_609(CAN_FRAME *frame, State::Data *data);
+    void handle_607(CAN_FRAME *frame, State::Data *data);
 };
 
 

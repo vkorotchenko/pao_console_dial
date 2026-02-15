@@ -58,6 +58,7 @@ private:
     bool isFaulted = false;
     bool isWarning = false;
     bool isReady = false;
+    bool preChargeReady = false;
 
     // GPS data
     float gpsLatitude = 0.0f;
@@ -158,6 +159,9 @@ public:
 
     bool getIsReady() { return isReady; }
     void setIsReady(bool value) { isReady = value; }
+
+    bool getPreChargeReady() { return preChargeReady; }
+    void setPreChargeReady(bool value) { preChargeReady = value; }
 
     // GPS data getters/setters
     float getGpsLatitude() { return gpsLatitude; }
