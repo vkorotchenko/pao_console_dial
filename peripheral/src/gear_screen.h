@@ -1,27 +1,13 @@
 #ifndef GEAR_SCREEN_H_
 #define GEAR_SCREEN_H_
 
-#include "screen.h"
+#include "carousel.h"
 #include "gear.h"
 
-class GearScreen : public screen
+class GearScreen : public Carousel<4>
 {
-public:
-    GearScreen() {};
-    bool onClick(TFT_eSprite *sprite);
-    void onTouch(int x, int y, TFT_eSprite *sprite);
-    void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
-    void onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
-    void onScroll(int x, TFT_eSprite *sprite);
-
 private:
     ScreenTypes::ScreenType type = ScreenTypes::ScreenType::GEARS;
-
-    // Carousel navigation state
-    int currentIndex = 0;           // Currently focused gear (0-3: P, R, N, D)
-    int lastScrollValue = 0;        // Last encoder angle for delta calculation
-    int scrollAccumulator = 0;      // Accumulated scroll movement
-    const int SCROLL_THRESHOLD = 36; // 36° = 2 encoder clicks
 
     // Selection state
     int selectedIndex = -1;         // Selected but not confirmed (-1 = none)
@@ -30,6 +16,21 @@ private:
     // Touch debouncing
     unsigned long lastTouchTime = 0;
     const unsigned long TOUCH_DEBOUNCE = 300; // 300ms
+
+protected:
+    // Implement required virtual methods
+    const char* getItemLabel(int index) override;
+    String getItemValue(int index) override;
+    uint16_t getValueColor(int index) override;
+    uint16_t getPreviewValueColor(int index) override;
+    const char* getTitle() override { return "GEAR SELECT"; }
+    void drawCenterExtra(TFT_eSprite* sprite, int index) override;
+
+public:
+    GearScreen() {};
+    void onTouch(int x, int y, TFT_eSprite *sprite) override;
+    bool onClick(TFT_eSprite *sprite) override;
+    void onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) override;
 };
 
 #endif /* GEAR_SCREEN_H_ */

@@ -8,12 +8,12 @@ int X_PROGRESS_BAR = 100;     // Progress bar left edge (moved 20px left)
 int Y_PROGRESS_BAR = 140;     // Progress bar top edge
 int PROGRESS_BAR_WIDTH = 300; // Total width
 int PROGRESS_BAR_HEIGHT = 40; // Total height
-int X_REQUESTED_AMPS = 150;   // Moved 30px right
+int X_REQUESTED_AMPS = 170;   // Moved 20px right
 int Y_REQUESTED_AMPS = 320;
-int X_CURRENT_VOLTAGE = 370;  // Moved 30px right
+int X_CURRENT_VOLTAGE = 390;  // Moved 20px right
 int Y_CURRENT_VOLTAGE = 320;
-int X_TARGET_VOLTAGE = 270;   // Moved 30px right
-int Y_TARGET_VOLTAGE = 400;
+int X_TARGET_VOLTAGE = 290;   // Moved 20px right
+int Y_TARGET_VOLTAGE = 410;   // Moved 10px down
 
 // Font sizes
 int CHARGE_PERCENT_FONT_SIZE = 24;
@@ -25,11 +25,11 @@ int CHARGE_PERCENT_X_OFFSET = -60;
 int CHARGE_PERCENT_Y_OFFSET = -60;
 int CHARGE_STATE_X_OFFSET = -80;
 int CHARGE_STATE_Y_OFFSET = -40;
-int REQUESTED_AMPS_X_OFFSET = -40;
+int REQUESTED_AMPS_X_OFFSET = -60;
 int REQUESTED_AMPS_Y_OFFSET = -30;
-int CURRENT_VOLTAGE_X_OFFSET = -40;
+int CURRENT_VOLTAGE_X_OFFSET = -60;
 int CURRENT_VOLTAGE_Y_OFFSET = -30;
-int TARGET_VOLTAGE_X_OFFSET = -40;
+int TARGET_VOLTAGE_X_OFFSET = -60;
 int TARGET_VOLTAGE_Y_OFFSET = -30;
 
 // Helper functions moved to global_state.cpp (shared with data_screen)
@@ -48,11 +48,17 @@ void ChargeScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
 {
   GlobalState &state = GlobalState::getInstance();
 
-  // Clear dynamic content areas to prevent ghosting
-  sprite->fillRect(X_PROGRESS_BAR - 5, Y_PROGRESS_BAR - 5, PROGRESS_BAR_WIDTH + 10, PROGRESS_BAR_HEIGHT + 10, TFT_BLACK);
-  sprite->fillRect(X_REQUESTED_AMPS - 60, Y_REQUESTED_AMPS - 20, 120, 50, TFT_BLACK);
-  sprite->fillRect(X_CURRENT_VOLTAGE - 60, Y_CURRENT_VOLTAGE - 20, 120, 50, TFT_BLACK);
-  sprite->fillRect(X_TARGET_VOLTAGE - 60, Y_TARGET_VOLTAGE - 20, 120, 50, TFT_BLACK);
+  // Clear entire sprite to prevent artifacts from previous renders
+  sprite->fillSprite(TFT_BLACK);
+
+  // Redraw static elements that were on onLoad
+  sprite->setTextDatum(TC_DATUM);
+  sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  sprite->setTextSize(2);
+  sprite->drawString("CHARGE", 240, 40);
+  sprite->drawString("Requested Amps", X_REQUESTED_AMPS - 20, Y_REQUESTED_AMPS - 60);
+  sprite->drawString("Current Voltage", X_CURRENT_VOLTAGE - 20, Y_CURRENT_VOLTAGE - 60);
+  sprite->drawString("Target Voltage", X_TARGET_VOLTAGE - 20, Y_TARGET_VOLTAGE - 60);
 
   // Draw progress bar for charge percentage
   int chargePercent = state.getChargePercentage();
@@ -69,11 +75,12 @@ void ChargeScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
   }
 
   // Draw percentage text centered in the bar
+  sprite->setTextDatum(TC_DATUM);  // Top Center alignment for proper centering
   sprite->setTextColor(TFT_WHITE, TFT_BLACK);
   sprite->setTextSize(2);
   char percentStr[8];
   sprintf(percentStr, "%d%%", chargePercent);
-  sprite->drawString(percentStr, X_PROGRESS_BAR + (PROGRESS_BAR_WIDTH / 2) - 20, Y_PROGRESS_BAR + 10);
+  sprite->drawString(percentStr, X_PROGRESS_BAR + (PROGRESS_BAR_WIDTH / 2), Y_PROGRESS_BAR + 10);
 
   // Requested amps (left side)
   sprite->loadFont(midleFont);
@@ -99,15 +106,17 @@ void ChargeScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
   sprite->fillSprite(TFT_BLACK);
   gfx->fillScreen(TFT_BLACK);
 
-  // Standard title format
+  // Standard title format (center-aligned)
+  sprite->setTextDatum(TC_DATUM);  // Top Center alignment
   sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
   sprite->setTextSize(2);
-  sprite->drawString("CHARGE", 200, 40);
+  sprite->drawString("CHARGE", 240, 40);
 
-  // Static labels (removed STATUS label)
-  sprite->drawString("Requested Amps", X_REQUESTED_AMPS - 60, Y_REQUESTED_AMPS - 50);
-  sprite->drawString("Current Voltage", X_CURRENT_VOLTAGE - 70, Y_CURRENT_VOLTAGE - 50);
-  sprite->drawString("Target Voltage", X_TARGET_VOLTAGE - 60, Y_TARGET_VOLTAGE - 50);
+  // Static labels (center-aligned, 20px left of values, 10px higher)
+  sprite->setTextDatum(TC_DATUM);
+  sprite->drawString("Requested Amps", X_REQUESTED_AMPS - 20, Y_REQUESTED_AMPS - 60);
+  sprite->drawString("Current Voltage", X_CURRENT_VOLTAGE - 20, Y_CURRENT_VOLTAGE - 60);
+  sprite->drawString("Target Voltage", X_TARGET_VOLTAGE - 20, Y_TARGET_VOLTAGE - 60);
 };
 
 void ChargeScreen::onScroll(int x, TFT_eSprite *sprite)

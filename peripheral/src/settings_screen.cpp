@@ -102,135 +102,79 @@ void SettingsScreen::onTouch(int x, int y, TFT_eSprite *sprite) {
 }
 
 void SettingsScreen::onScroll(int x, TFT_eSprite *sprite) {
-    // Calculate delta from last position (same as data_screen)
-    int delta = x - lastScrollValue;
-    lastScrollValue = x;
-
-    // Handle encoder wraparound (359->0 or 0->359)
-    if (delta > 180) delta -= 360;
-    if (delta < -180) delta += 360;
-
     if (!isEditMode) {
-        // NOT EDITING - Navigate between settings (carousel mode)
-        scrollAccumulator += delta;
-
-        if (scrollAccumulator >= SCROLL_THRESHOLD) {
-            currentIndex = (currentIndex + 1) % 4;  // Next setting, wrap around
-            scrollAccumulator = 0;
-        }
-        else if (scrollAccumulator <= -SCROLL_THRESHOLD) {
-            currentIndex = (currentIndex - 1 + 4) % 4;  // Prev setting, wrap around
-            scrollAccumulator = 0;
-        }
+        // NOT EDITING - Use base class carousel navigation
+        Carousel<4>::onScroll(x, sprite);
     }
     else {
-        // EDITING - Adjust value (no accumulator, direct response)
+        // EDITING - Use accumulator with lockout for consistent behavior
+        int delta = x - lastScrollValue;
+        lastScrollValue = x;
+
+        // Handle encoder wraparound (359->0 or 0->359)
+        if (delta > 180) delta -= 360;
+        if (delta < -180) delta += 360;
+
+        // Accumulate scroll movement
+        scrollAccumulator += delta;
+
+        // Clamp accumulator to single click range
+        const int THRESHOLD = 15;
+        const int MAX_ACCUM = 22;
+        const int RESET_THRESHOLD = 8;
+        if (scrollAccumulator > MAX_ACCUM) scrollAccumulator = MAX_ACCUM;
+        if (scrollAccumulator < -MAX_ACCUM) scrollAccumulator = -MAX_ACCUM;
+
+        // Clear lockout when accumulator drops below reset threshold
+        if (abs(scrollAccumulator) < RESET_THRESHOLD) {
+            scrollLockout = false;
+        }
+
         const SettingItem &setting = SETTINGS[currentIndex];
 
-        if (delta > 0) {
-            // Rotate right - INCREASE value
+        // Increment value when threshold reached (with lockout to prevent double-trigger)
+        if (scrollAccumulator >= THRESHOLD && !scrollLockout) {
             editValue += setting.stepSize;
             if (editValue > setting.maxValue) {
                 editValue = setting.maxValue;  // Clamp to max
             }
+            scrollAccumulator = 0;
+            scrollLockout = true;
         }
-        else if (delta < 0) {
-            // Rotate left - DECREASE value
+        else if (scrollAccumulator <= -THRESHOLD && !scrollLockout) {
             editValue -= setting.stepSize;
             if (editValue < setting.minValue) {
                 editValue = setting.minValue;  // Clamp to min
             }
+            scrollAccumulator = 0;
+            scrollLockout = true;
         }
     }
 }
 
-void SettingsScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
-    // Clear all dynamic content areas to prevent ghosting
-    sprite->fillRect(50, 100, 100, 200, TFT_BLACK);   // Left preview
-    sprite->fillRect(150, 80, 180, 240, TFT_BLACK);   // Center area
-    sprite->fillRect(330, 100, 100, 200, TFT_BLACK);  // Right preview
-
-    // Calculate indices with wrapping (4 settings)
-    int prevIndex = (currentIndex - 1 + 4) % 4;
-    int nextIndex = (currentIndex + 1) % 4;
-
-    // Get values to display
-    int prevValue = getCurrentValue(prevIndex);
-    int centerValue = isEditMode ? editValue : getCurrentValue(currentIndex);
-    int nextValue = getCurrentValue(nextIndex);
-
-    // Draw LEFT preview (label + value + unit)
-    sprite->setTextColor(TFT_DARKGREY, TFT_BLACK);
-    sprite->setTextSize(1);
-    sprite->drawString(SETTINGS[prevIndex].label, 100, 140);
-
-    sprite->loadFont(midleFont);
-    sprite->setTextSize(10);
-    sprite->setTextColor(TFT_SILVER, TFT_BLACK);
-    sprite->setCursor(100 - 30, 240 - 25);
-    sprite->print(getValueString(prevIndex, prevValue));
-    sprite->unloadFont();
-
-    sprite->setTextSize(1);
-    sprite->setTextColor(TFT_DARKGREY, TFT_BLACK);
-    sprite->drawString(SETTINGS[prevIndex].unit, 100, 280);
-
-    // Draw CENTER focus (label + LARGE value + unit)
-    sprite->setTextSize(2);
-    sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    sprite->drawString(SETTINGS[currentIndex].label, 240 - 30, 120);
-
-    // Draw edit mode indicator
-    if (isEditMode) {
-        sprite->setTextColor(TFT_GREEN, TFT_BLACK);
-        sprite->drawString("[EDIT]", 240 - 20, 90);
-    }
-
-    sprite->loadFont(bigFont);
-    sprite->setTextSize(22);
-    sprite->setTextColor(getValueColor(isEditMode), TFT_BLACK);  // GREEN if editing, WHITE otherwise
-    sprite->setCursor(240 - 50, 240 - 55);
-    sprite->print(getValueString(currentIndex, centerValue));
-    sprite->unloadFont();
-
-    sprite->setTextSize(2);
-    sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    sprite->drawString(SETTINGS[currentIndex].unit, 240 - 10, 300);
-
-    // Draw RIGHT preview (label + value + unit)
-    sprite->setTextSize(1);
-    sprite->setTextColor(TFT_DARKGREY, TFT_BLACK);
-    sprite->drawString(SETTINGS[nextIndex].label, 380, 140);
-
-    sprite->loadFont(midleFont);
-    sprite->setTextSize(10);
-    sprite->setTextColor(TFT_SILVER, TFT_BLACK);
-    sprite->setCursor(380 - 30, 240 - 25);
-    sprite->print(getValueString(nextIndex, nextValue));
-    sprite->unloadFont();
-
-    sprite->setTextSize(1);
-    sprite->setTextColor(TFT_DARKGREY, TFT_BLACK);
-    sprite->drawString(SETTINGS[nextIndex].unit, 380, 280);
+// Implement virtual methods from Carousel base class
+const char* SettingsScreen::getItemLabel(int index) {
+    return SETTINGS[index].label;
 }
 
-void SettingsScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
-    sprite->fillSprite(TFT_BLACK);
-    gfx->fillScreen(TFT_BLACK);
+String SettingsScreen::getItemValue(int index) {
+    int value = isEditMode && index == currentIndex ? editValue : getCurrentValue(index);
+    return getValueString(index, value);
+}
 
-    // Standard title format
-    sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    sprite->setTextSize(2);
-    sprite->drawString("SETTINGS", 200, 40);
+const char* SettingsScreen::getItemUnit(int index) {
+    return SETTINGS[index].unit;
+}
 
-    // Draw arrows flanking center (indicate scroll direction)
-    sprite->drawString("<<<", 200, 230);
-    sprite->drawString(">>>", 280, 230);
+uint16_t SettingsScreen::getValueColor(int index) {
+    return isEditMode && index == currentIndex ? TFT_GREEN : TFT_WHITE;
+}
 
-    // Initialize state
-    lastScrollValue = 0;
-    scrollAccumulator = 0;
-    currentIndex = 0;
-    isEditMode = false;  // Always start in navigation mode
-    editValue = 0;
+void SettingsScreen::drawCenterExtra(TFT_eSprite* sprite, int index) {
+    if (isEditMode) {
+        sprite->setTextDatum(TC_DATUM);  // Top Center alignment
+        sprite->setTextSize(1);
+        sprite->setTextColor(TFT_GREEN, TFT_BLACK);
+        sprite->drawString("[EDIT]", 240, 90);  // Centered at x=240
+    }
 }

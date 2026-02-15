@@ -2,26 +2,26 @@
 #ifndef DATA_SCREEN_H_
 #define DATA_SCREEN_H_
 
-#include "screen.h"
+#include "carousel.h"
 
-class DataScreen : public screen
+class DataScreen : public Carousel<13>
 {
-public:
-    DataScreen() {};
-    bool onClick(TFT_eSprite *sprite);
-    void onTouch(int x, int y, TFT_eSprite *sprite);
-    void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
-    void onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
-    void onScroll(int x, TFT_eSprite *sprite);
-
 private:
     ScreenTypes::ScreenType type = ScreenTypes::ScreenType::CAN_DATA;
 
-    // Carousel navigation state
-    int currentIndex = 0;           // Currently focused item (0-8)
-    int lastScrollValue = 0;        // Last encoder angle for delta calculation
-    int scrollAccumulator = 0;      // Accumulated scroll movement
-    const int SCROLL_THRESHOLD = 36; // 36° = 2 encoder clicks (reduced sensitivity)
+protected:
+    // Implement required virtual methods
+    const char* getItemLabel(int index) override;
+    String getItemValue(int index) override;
+    const char* getItemUnit(int index) override;
+    uint16_t getValueColor(int index) override;
+    const char* getTitle() override { return "DATA CAROUSEL"; }
+
+public:
+    DataScreen() {};
+    // Only need to override if special behavior needed
+    bool onClick(TFT_eSprite *sprite) override;
+    void onTouch(int x, int y, TFT_eSprite *sprite) override;
 };
 
 #endif /* DATA_SCREEN_H_ */
