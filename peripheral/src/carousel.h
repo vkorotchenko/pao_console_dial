@@ -15,6 +15,17 @@ protected:
     int lastScrollValue = 0;
     int scrollAccumulator = 0;
     bool scrollLockout = false;  // Prevents double-triggering from single click
+    bool isFirstScroll = true;   // Ignore first scroll after load to prevent unwanted animation
+
+    // Animation state
+    float animationProgress = 0.0f;      // 0.0 = start, 1.0 = complete
+    int animationDirection = 0;          // -1 = left, 1 = right, 0 = at rest
+    bool isAnimating = false;            // True during time-based animation
+    unsigned long animationStartTime = 0;  // millis() when animation started
+    int targetIndex = 0;                 // Index to transition to
+
+    // Animation configuration
+    unsigned long animationDuration = 250;  // Animation duration in milliseconds (configurable)
 
     // Carousel configuration
     // 24-position encoder: each click registers 12-18° due to mechanical variance
@@ -54,6 +65,11 @@ protected:
     // Panel rendering methods
     void drawPreviewPanel(TFT_eSprite* sprite, int index, int xPos, int yPos);
     void drawCenterPanel(TFT_eSprite* sprite, int index);
+
+    // Animation rendering methods
+    void renderAnimatedPanels(TFT_eSprite* sprite);
+    void drawInterpolatedPanel(TFT_eSprite* sprite, int index, int xPos, int yPos,
+                              int textSize, uint16_t valueColor);
 
 public:
     // Implemented in base class (common behavior)
