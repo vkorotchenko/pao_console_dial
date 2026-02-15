@@ -10,12 +10,14 @@
 class I2CHandler
 {
 public:
-    void setup();
+    void setup(State::Data *data);
     void process(State::Data *data);
 
 protected:
-private:  
+private:
+    static State::Data* statePtr;
     static void handleOnRequest();
+    static void handleOnReceive(int numBytes);
 };
 
 

@@ -61,10 +61,20 @@ void CanHandler::process(State::Data *data) {
             case 0x235:
                 CanHandler::handle_235(&frame, data);
                 break;   
-            case 0x236: 
+            case 0x236:
                 CanHandler::handle_236(&frame, data);
                 break;
+            case 0x609:
+                CanHandler::handle_609(&frame, data);
+                break;
         }
+    }
+
+    // Detect gear changes and send CAN message
+    static State::Gear lastGear = State::Gear::NEUTRAL;
+    if (data->selectedGear != lastGear) {
+        sendGearChange(data->selectedGear);
+        lastGear = data->selectedGear;
     }
 }
 
@@ -201,4 +211,43 @@ void CanHandler::handle_235(CAN_FRAME *frame, State::Data *data)
 void CanHandler::handle_236(CAN_FRAME *frame, State::Data *data)
 {
     //u_int8_t selectedGear = frame->data.bytes[5];
+}
+
+void CanHandler::sendGearChange(State::Gear gear) {
+    unsigned char buf[8] = {0};
+
+    // Encode last 3 bits: [park][reverse][drive]
+    switch (gear) {
+        case State::Gear::NEUTRAL:
+            buf[7] = 0x00;  // 000
+            break;
+        case State::Gear::DRIVE:
+            buf[7] = 0x01;  // 001
+            break;
+        case State::Gear::REVERSE:
+            buf[7] = 0x02;  // 010
+            break;
+        case State::Gear::PARK:
+            buf[7] = 0x04;  // 100
+            break;
+    }
+
+    CAN.sendMsgBuf(0x606, 0, 8, buf);
+
+    Serial.print("CAN: Sending 0x606, gear=");
+    Serial.print(buf[7], HEX);
+    Serial.print(" (");
+    switch (gear) {
+        case State::Gear::NEUTRAL: Serial.print("NEUTRAL"); break;
+        case State::Gear::DRIVE: Serial.print("DRIVE"); break;
+        case State::Gear::REVERSE: Serial.print("REVERSE"); break;
+        case State::Gear::PARK: Serial.print("PARK"); break;
+    }
+    Serial.println(")");
+}
+
+void CanHandler::handle_609(CAN_FRAME *frame, State::Data *data) {
+    // Process confirmation message from 0x609
+    // Could store confirmation status if needed
+    Serial.println("CAN: Received 0x609 confirmation");
 }

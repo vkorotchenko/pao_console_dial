@@ -90,6 +90,16 @@ void GPSHandler::loop(State::Data *data){ // read data from the GPS in the 'main
       Serial.print("Altitude: "); Serial.println(GPS.altitude);
       Serial.print("Satellites: "); Serial.println((int)GPS.satellites);
       Serial.print("Antenna status: "); Serial.println((int)GPS.antenna);
+
+      // Store GPS data in state
+      data->gpsLatitude = GPS.latitude;
+      data->gpsLongitude = GPS.longitude;
+      data->gpsSpeed = GPS.speed;
+      data->gpsAltitude = GPS.altitude;
+      data->gpsSatellites = GPS.satellites;
+      data->gpsFixAvailable = true;
+    } else {
+      data->gpsFixAvailable = false;
     }
   }
 }

@@ -47,6 +47,26 @@ private:
     int chargeAlertThreshold = 20;    // 0-100%
     int screenTimeout = 60;           // 0-300 seconds, 0=never
 
+    // CAN motor controller data
+    int motorTemp = 0;
+    int inverterTemp = 0;
+    int torque = 0;
+    int dcVoltage = 0;
+    int dcCurrent = 0;
+    int motorState = 0;  // 0=DISABLED, 1=STANDBY, 2=ENABLE, 3=POWERDOWN
+    bool isRunning = false;
+    bool isFaulted = false;
+    bool isWarning = false;
+    bool isReady = false;
+
+    // GPS data
+    float gpsLatitude = 0.0f;
+    float gpsLongitude = 0.0f;
+    float gpsSpeed = 0.0f;
+    float gpsAltitude = 0.0f;
+    int gpsSatellites = 0;
+    bool gpsFixAvailable = false;
+
     // EEPROM persistence
     Preferences preferences;
 
@@ -107,6 +127,56 @@ public:
         screenTimeout = value;
         saveSettings();
     }
+
+    // CAN motor controller data getters/setters
+    int getMotorTemp() { return motorTemp; }
+    void setMotorTemp(int temp) { motorTemp = temp; }
+
+    int getInverterTemp() { return inverterTemp; }
+    void setInverterTemp(int temp) { inverterTemp = temp; }
+
+    int getTorque() { return torque; }
+    void setTorque(int value) { torque = value; }
+
+    int getDcVoltage() { return dcVoltage; }
+    void setDcVoltage(int voltage) { dcVoltage = voltage; }
+
+    int getDcCurrent() { return dcCurrent; }
+    void setDcCurrent(int current) { dcCurrent = current; }
+
+    int getMotorState() { return motorState; }
+    void setMotorState(int state) { motorState = state; }
+
+    bool getIsRunning() { return isRunning; }
+    void setIsRunning(bool value) { isRunning = value; }
+
+    bool getIsFaulted() { return isFaulted; }
+    void setIsFaulted(bool value) { isFaulted = value; }
+
+    bool getIsWarning() { return isWarning; }
+    void setIsWarning(bool value) { isWarning = value; }
+
+    bool getIsReady() { return isReady; }
+    void setIsReady(bool value) { isReady = value; }
+
+    // GPS data getters/setters
+    float getGpsLatitude() { return gpsLatitude; }
+    void setGpsLatitude(float lat) { gpsLatitude = lat; }
+
+    float getGpsLongitude() { return gpsLongitude; }
+    void setGpsLongitude(float lon) { gpsLongitude = lon; }
+
+    float getGpsSpeed() { return gpsSpeed; }
+    void setGpsSpeed(float speed) { gpsSpeed = speed; }
+
+    float getGpsAltitude() { return gpsAltitude; }
+    void setGpsAltitude(float alt) { gpsAltitude = alt; }
+
+    int getGpsSatellites() { return gpsSatellites; }
+    void setGpsSatellites(int sats) { gpsSatellites = sats; }
+
+    bool getGpsFixAvailable() { return gpsFixAvailable; }
+    void setGpsFixAvailable(bool available) { gpsFixAvailable = available; }
 
     // EEPROM persistence methods
     void saveSettings();

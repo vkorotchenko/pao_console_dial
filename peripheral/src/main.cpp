@@ -2,7 +2,6 @@
 #include <RotaryEncoder.h>
 #include <ESP32Time.h>
 #include <Arduino.h>
-#include <Wire.h>
 #include "touch.h"
 #include "bigFont.h"
 #include "midleFont.h"
@@ -10,8 +9,10 @@
 #include "valueFont.h"
 
 #include "global_state.h"
+#include "i2c_handler.h"
 
 GlobalState &state = GlobalState::getInstance();
+I2CHandler i2cHandler;
 
 int buttonState = HIGH;
 int lastButtonState = HIGH;
@@ -141,7 +142,7 @@ void setup()
   sprite.createSprite(540, 540);
   tft.fillScreen(TFT_BLACK);
   sprite.loadFont(midleFont);
-  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  i2cHandler.setup(I2C_SDA_PIN, I2C_SCL_PIN);
   gfx->begin();
   state.setup();
   state.getCurrentScreen()->onLoad(&sprite, gfx);
@@ -174,6 +175,9 @@ void loop()
   {
     state.getCurrentScreen()->onTouch(-1, -1, &sprite);
   }
+
+  // Periodic I2C data exchange with controller
+  i2cHandler.process();
 
   state.getCurrentScreen()->display(&sprite, gfx);
   gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)sprite.getPointer(), 540, 540);

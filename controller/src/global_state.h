@@ -80,6 +80,14 @@ public:
       int configRegenTaperLower;
       int configRegenTaperUpper;
 
+      // GPS data
+      float gpsLatitude;
+      float gpsLongitude;
+      float gpsSpeed;        // knots
+      float gpsAltitude;     // meters
+      uint8_t gpsSatellites;
+      bool gpsFixAvailable;
+
       Gear selectedGear;
     };
 
