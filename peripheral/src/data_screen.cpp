@@ -35,6 +35,19 @@ String getGearString(Gears::Gear gear) {
     }
 }
 
+// Get unit string with dynamic handling for speed (metric/imperial)
+const char* getUnitString(int index) {
+    GlobalState &state = GlobalState::getInstance();
+
+    // Special case for speed (index 0) - use metric setting
+    if (index == 0) {
+        return state.getUseMetricUnits() ? "KM/H" : "MPH";
+    }
+
+    // For all other items, use default unit from array
+    return DATA_ITEMS[index].unit;
+}
+
 String getValueString(int index) {
     GlobalState &state = GlobalState::getInstance();
 
@@ -98,7 +111,7 @@ void DataScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
     sprite->unloadFont();
     sprite->setTextSize(1);
     sprite->setTextColor(TFT_DARKGREY, TFT_BLACK);
-    sprite->drawString(DATA_ITEMS[prevIndex].unit, 100, 280);
+    sprite->drawString(getUnitString(prevIndex), 100, 280);
 
     // Draw CENTER focus (label + LARGE value + unit)
     sprite->setTextSize(2);
@@ -114,7 +127,7 @@ void DataScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
     sprite->unloadFont();
     sprite->setTextSize(2);
     sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    sprite->drawString(DATA_ITEMS[currentIndex].unit, 240 - 10, 300);
+    sprite->drawString(getUnitString(currentIndex), 240 - 10, 300);
 
     // Draw RIGHT preview (label + value + unit)
     sprite->setTextSize(1);
@@ -130,7 +143,7 @@ void DataScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
     sprite->unloadFont();
     sprite->setTextSize(1);
     sprite->setTextColor(TFT_DARKGREY, TFT_BLACK);
-    sprite->drawString(DATA_ITEMS[nextIndex].unit, 380, 280);
+    sprite->drawString(getUnitString(nextIndex), 380, 280);
 }
 
 void DataScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
@@ -138,10 +151,10 @@ void DataScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
     sprite->fillSprite(TFT_BLACK);
     gfx->fillScreen(TFT_BLACK);
 
-    // Draw static elements
+    // Standard title format
     sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
     sprite->setTextSize(2);
-    sprite->drawString("DATA CAROUSEL", 160, 10);
+    sprite->drawString("DATA CAROUSEL", 200, 40);
 
     // Draw arrows flanking center
     sprite->drawString("<<<", 200, 230);

@@ -17,7 +17,8 @@ void LoadingScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
 void LoadingScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
 {
 
-  // sprite->fillSprite(TFT_SKYBLUE);
+  // sprite->fillSprite(TFT_SKYBLUE); 
+  sprite->fillSprite(TFT_BLACK);
   gfx->fillScreen(TFT_SKYBLUE);
 
   sprite->drawBitmap(30, 30, pao_logo, 420, 420, TFT_SKYBLUE);

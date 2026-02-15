@@ -10,6 +10,9 @@ screen *spotify = new SpotifyScreen;
 
 void GlobalState::setup()
 {
+    // Load settings from EEPROM
+    loadSettings();
+
     // gear = Gears::Gear::PARK;
     gears->setup(ScreenTypes::ScreenType::GEARS);
     loading->setup(ScreenTypes::ScreenType::PRELOAD);
@@ -20,6 +23,32 @@ void GlobalState::setup()
     spotify->setup(ScreenTypes::ScreenType::SPOTIFY);
 
     currentScreen = loading;
+}
+
+// EEPROM persistence implementation
+void GlobalState::saveSettings()
+{
+    preferences.begin("pao-settings", false);  // false = read/write mode
+
+    preferences.putInt("brightness", displayBrightness);
+    preferences.putBool("metric", useMetricUnits);
+    preferences.putInt("chargeAlert", chargeAlertThreshold);
+    preferences.putInt("timeout", screenTimeout);
+
+    preferences.end();
+}
+
+void GlobalState::loadSettings()
+{
+    preferences.begin("pao-settings", true);  // true = read-only mode
+
+    // Load with default values if not found
+    displayBrightness = preferences.getInt("brightness", 100);
+    useMetricUnits = preferences.getBool("metric", true);
+    chargeAlertThreshold = preferences.getInt("chargeAlert", 20);
+    screenTimeout = preferences.getInt("timeout", 60);
+
+    preferences.end();
 }
 
 // Charge state helper functions (shared by charge_screen and data_screen)

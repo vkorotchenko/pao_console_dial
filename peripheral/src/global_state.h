@@ -6,6 +6,7 @@
 
 #include <Arduino_GFX_Library.h>
 #include <TFT_eSPI.h>
+#include <Preferences.h>
 
 #include "gear_screen.h"
 #include "loading_screen.h"
@@ -46,6 +47,9 @@ private:
     int chargeAlertThreshold = 20;    // 0-100%
     int screenTimeout = 60;           // 0-300 seconds, 0=never
 
+    // EEPROM persistence
+    Preferences preferences;
+
 public:
     GlobalState(const GlobalState &obj) = delete;
 
@@ -79,18 +83,34 @@ public:
     float getTargetVoltage() { return targetVoltage; }
     void setTargetVoltage(float newVoltage) { targetVoltage = newVoltage; }
 
-    // Settings page
+    // Settings page (with EEPROM persistence)
     int getDisplayBrightness() { return displayBrightness; }
-    void setDisplayBrightness(int value) { displayBrightness = value; }
+    void setDisplayBrightness(int value) {
+        displayBrightness = value;
+        saveSettings();
+    }
 
     bool getUseMetricUnits() { return useMetricUnits; }
-    void setUseMetricUnits(bool value) { useMetricUnits = value; }
+    void setUseMetricUnits(bool value) {
+        useMetricUnits = value;
+        saveSettings();
+    }
 
     int getChargeAlertThreshold() { return chargeAlertThreshold; }
-    void setChargeAlertThreshold(int value) { chargeAlertThreshold = value; }
+    void setChargeAlertThreshold(int value) {
+        chargeAlertThreshold = value;
+        saveSettings();
+    }
 
     int getScreenTimeout() { return screenTimeout; }
-    void setScreenTimeout(int value) { screenTimeout = value; }
+    void setScreenTimeout(int value) {
+        screenTimeout = value;
+        saveSettings();
+    }
+
+    // EEPROM persistence methods
+    void saveSettings();
+    void loadSettings();
 
     void setup();
     void getNextScreen();

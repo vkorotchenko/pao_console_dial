@@ -21,11 +21,15 @@ private:
     int currentIndex = 0;           // Currently focused setting (0-3)
     int lastScrollValue = 0;        // Last encoder angle for delta calculation
     int scrollAccumulator = 0;      // Accumulated scroll movement
-    const int SCROLL_THRESHOLD = 18; // 18° = ~5 encoder clicks (responsive)
+    const int SCROLL_THRESHOLD = 36; // 36° = 2 encoder clicks (reduced sensitivity)
 
     // Edit mode state (NEW for settings screen)
     bool isEditMode = false;        // Are we currently editing a value?
     int editValue = 0;              // Temporary value being edited
+
+    // Touch debouncing
+    unsigned long lastTouchTime = 0;       // Last touch timestamp in milliseconds
+    const unsigned long TOUCH_DEBOUNCE = 300; // 300ms debounce delay
 };
 
 #endif /* SETTING_SCREEN_H_ */

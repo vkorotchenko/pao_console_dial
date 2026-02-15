@@ -73,7 +73,7 @@ Arduino_ESP32RGBPanel *bus = new Arduino_ESP32RGBPanel(
 // Uncomment for 2.1" round display
 Arduino_ST7701_RGBPanel *gfx = new Arduino_ST7701_RGBPanel(
     bus, GFX_NOT_DEFINED /* RST */, 0 /* rotation */,
-    false /* IPS */, 480 /* width */, 480 /* height */,
+    false /* IPS */, 540 /* width */, 540 /* height */,
     st7701_type5_init_operations, sizeof(st7701_type5_init_operations),
     true /* BGR */,
     10 /* hsync_front_porch */, 8 /* hsync_pulse_width */, 50 /* hsync_back_porch */,
@@ -138,7 +138,7 @@ void setup()
 
   rtc.setTime(0, 47, 13, 10, 23, 2023, 0);
 
-  sprite.createSprite(480, 480);
+  sprite.createSprite(540, 540);
   tft.fillScreen(TFT_BLACK);
   sprite.loadFont(midleFont);
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
@@ -176,5 +176,5 @@ void loop()
   }
 
   state.getCurrentScreen()->display(&sprite, gfx);
-  gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)sprite.getPointer(), 480, 480);
+  gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)sprite.getPointer(), 540, 540);
 }

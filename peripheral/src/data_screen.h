@@ -21,7 +21,7 @@ private:
     int currentIndex = 0;           // Currently focused item (0-8)
     int lastScrollValue = 0;        // Last encoder angle for delta calculation
     int scrollAccumulator = 0;      // Accumulated scroll movement
-    const int SCROLL_THRESHOLD = 18; // 18° = ~5 encoder clicks (faster response)
+    const int SCROLL_THRESHOLD = 36; // 36° = 2 encoder clicks (reduced sensitivity)
 };
 
 #endif /* DATA_SCREEN_H_ */

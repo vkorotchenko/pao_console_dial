@@ -71,6 +71,23 @@ uint16_t getValueColor(bool inEditMode) {
 }
 
 bool SettingsScreen::onClick(TFT_eSprite *sprite) {
+    return false;  
+}
+
+void SettingsScreen::onTouch(int x, int y, TFT_eSprite *sprite) {
+    // Only toggle on valid touch (not on touch release)
+    if (x < 0 || y < 0) {
+        return;  // Ignore touch release events
+    }
+
+    // Debounce - ignore touches that are too close together
+    unsigned long currentTime = millis();
+    if (currentTime - lastTouchTime < TOUCH_DEBOUNCE) {
+        return;  // Too soon, ignore this touch
+    }
+    lastTouchTime = currentTime;
+
+    // Toggle between edit and navigation mode on any screen touch
     if (!isEditMode) {
         // ENTER edit mode
         isEditMode = true;
@@ -82,12 +99,6 @@ bool SettingsScreen::onClick(TFT_eSprite *sprite) {
         saveValue(currentIndex, editValue);  // Save to GlobalState
         isEditMode = false;
     }
-
-    return true;  // Consume the click - prevent screen switching while in settings
-}
-
-void SettingsScreen::onTouch(int x, int y, TFT_eSprite *sprite) {
-    return;  // No touchscreen interaction for settings
 }
 
 void SettingsScreen::onScroll(int x, TFT_eSprite *sprite) {
@@ -207,10 +218,10 @@ void SettingsScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
     sprite->fillSprite(TFT_BLACK);
     gfx->fillScreen(TFT_BLACK);
 
-    // Draw static elements
+    // Standard title format
     sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
     sprite->setTextSize(2);
-    sprite->drawString("SETTINGS", 190, 10);
+    sprite->drawString("SETTINGS", 200, 40);
 
     // Draw arrows flanking center (indicate scroll direction)
     sprite->drawString("<<<", 200, 230);

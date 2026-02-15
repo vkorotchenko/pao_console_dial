@@ -71,14 +71,16 @@ bool drawPNG(const unsigned char *pngData, int32_t dataSize, int x, int y, TFT_e
     return false;
 }
 
-int NEXT_SONG_BUTTON_X = 300;
-int NEXT_SONG_BUTTON_Y = 130;
-int PREV_SONG_BUTTON_X = 100;
-int PREV_SONG_BUTTON_Y = 130;
-int PLAY_PAUSE_BUTTON_X = 200;
-int PLAY_PAUSE_BUTTON_Y = 75;
-int MUTE_BUTTON_X = 200;
-int MUTE_BUTTON_Y = 185;
+// Button positions - diamond pattern centered on screen (540x540)
+// Center point: (270, 270)
+int PLAY_PAUSE_BUTTON_X = 270;
+int PLAY_PAUSE_BUTTON_Y = 170;
+int PREV_SONG_BUTTON_X = 170;
+int PREV_SONG_BUTTON_Y = 270;
+int NEXT_SONG_BUTTON_X = 370;
+int NEXT_SONG_BUTTON_Y = 270;
+int MUTE_BUTTON_X = 270;
+int MUTE_BUTTON_Y = 370;
 
 int SPOTIFY_BUTTON_RADIUS = 50;
 
@@ -139,40 +141,22 @@ void SpotifyScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
 void SpotifyScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
 {
     // Clear screen
-    sprite->fillSprite(TFT_BLACK);
-    gfx->fillScreen(TFT_BLACK);
+    sprite->fillSprite(TFT_GREENYELLOW);
+    gfx->fillScreen(TFT_GREENYELLOW);
 
-    // Draw Spotify logo as background to sprite (centered on 480x480 screen)
-    // Assuming logo will be scaled/positioned to fit nicely
-    int logo_x = 40;  // Center a ~400px logo: (480-400)/2 = 40
-    int logo_y = 40;
-    drawPNG(spotify_logo, sizeof(spotify_logo), logo_x, logo_y, sprite, nullptr);
+    // Draw title
+    sprite->setTextColor(TFT_BLACK, TFT_BLACK);
+    sprite->setTextSize(2);
+    sprite->drawString("SPOTIFY", 200, 40);
 
-    // Draw button icons (100x100 pixels each, centered on touch zones)
-    // Icon positions: center - 50 to center icon on touch point
+    // Draw bitmap icons (100x100 each, centered on button positions)
+    // Note: play_pause and mute are bitmap format, next/prev are PNG (fallback to circles)
 
-    // Play/Pause button (center: 200, 75) -> top-left: (150, 25)
-    drawPNG(play_pause_icon, sizeof(play_pause_icon),
-            PLAY_PAUSE_BUTTON_X - 50, PLAY_PAUSE_BUTTON_Y - 50,
-            sprite, nullptr);
+    // Play/Pause icon (top center) - BITMAP
+    sprite->drawBitmap(PLAY_PAUSE_BUTTON_X - 64, PLAY_PAUSE_BUTTON_Y - 64,
+                       play_pause_icon, 128, 128,
+                       TFT_BLACK, TFT_GREENYELLOW);
 
-    // Previous button (center: 100, 130) -> top-left: (50, 80)
-    drawPNG(prev_icon, sizeof(prev_icon),
-            PREV_SONG_BUTTON_X - 50, PREV_SONG_BUTTON_Y - 50,
-            sprite, nullptr);
-
-    // Next button (center: 300, 130) -> top-left: (250, 80)
-    drawPNG(next_icon, sizeof(next_icon),
-            NEXT_SONG_BUTTON_X - 50, NEXT_SONG_BUTTON_Y - 50,
-            sprite, nullptr);
-
-    // Mute button (center: 200, 185) -> top-left: (150, 135)
-    drawPNG(mute_icon, sizeof(mute_icon),
-            MUTE_BUTTON_X - 50, MUTE_BUTTON_Y - 50,
-            sprite, nullptr);
-
-    // Push sprite to display
-    sprite->pushSprite(0, 0);
 };
 
 void SpotifyScreen::onScroll(int x, TFT_eSprite *sprite)
