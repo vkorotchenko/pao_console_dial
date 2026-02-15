@@ -14,9 +14,10 @@ class CanHandler
 public:
     void setup();
     void process(State::Data *data);
+    void sendGearChange(State::Gear gear);
 
 protected:
-private:  
+private:
     void handle_651(CAN_FRAME *frame, State::Data *data);
     void handle_23A(CAN_FRAME *frame, State::Data *data);
     void handle_23B(CAN_FRAME *frame, State::Data *data);
@@ -26,6 +27,8 @@ private:
     void handle_234(CAN_FRAME *frame, State::Data *data);
     void handle_235(CAN_FRAME *frame, State::Data *data);
     void handle_236(CAN_FRAME *frame, State::Data *data);
+    void handle_609(CAN_FRAME *frame, State::Data *data);
+    void handle_607(CAN_FRAME *frame, State::Data *data);
 };
 
 

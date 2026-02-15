@@ -1,59 +1,105 @@
 #include "global_state.h"
 
-GearScreen gears;
-SpeedometerScreen speedometer;
-LoadingScreen loading;
-SpotifyScreen spotify;
-DataScreen canData;
-ChargeScreen charge;
-SettingsScreen settings;
+screen *gears = new GearScreen;
+screen *loading = new LoadingScreen;
+screen *data = new DataScreen;
+screen *charge = new ChargeScreen;
+screen *settings = new SettingsScreen;
+screen *speedo = new SpeedometerScreen;
+screen *spotify = new SpotifyScreen;
 
-void State::setup() {
-    gear = Gear::PARK;
-    currentScreen = &loading;
-};
-
-void State::nextScreen()
+void GlobalState::setup()
 {
-    Screen::ScreenType currentType = currentScreen->getType();
-    switch(currentType) {
-        case Screen::ScreenType::PRELOAD:
-            currentScreen = &gears;
-            break;
-        case Screen::ScreenType::GEARS:
-            currentScreen = &speedometer;
-            break;
-        case Screen::ScreenType::SPEEDOMETER:
-            currentScreen = &spotify;
-            break;
-        case Screen::ScreenType::SPOTIFY:
-            currentScreen = &canData;
-            break;
-        case Screen::ScreenType::CAN_DATA:
-            currentScreen = &charge;
-            break;
-        case Screen::ScreenType::CHARGE:
-            currentScreen = &settings;
-            break;
-        case Screen::ScreenType::SETTINGS:
-            currentScreen = &gears;
-            break;
-        default:
-            // this should never happen 
-            currentScreen = &loading;
+    // Load settings from EEPROM
+    loadSettings();
+
+    // gear = Gears::Gear::PARK;
+    gears->setup(ScreenTypes::ScreenType::GEARS);
+    loading->setup(ScreenTypes::ScreenType::PRELOAD);
+    data->setup(ScreenTypes::ScreenType::CAN_DATA);
+    charge->setup(ScreenTypes::ScreenType::CHARGE);
+    settings->setup(ScreenTypes::ScreenType::SETTINGS);
+    speedo->setup(ScreenTypes::ScreenType::SPEEDOMETER);
+    spotify->setup(ScreenTypes::ScreenType::SPOTIFY);
+
+    currentScreen = loading;
+}
+
+// EEPROM persistence implementation
+void GlobalState::saveSettings()
+{
+    preferences.begin("pao-settings", false);  // false = read/write mode
+
+    preferences.putInt("brightness", displayBrightness);
+    preferences.putBool("metric", useMetricUnits);
+    preferences.putInt("chargeAlert", chargeAlertThreshold);
+    preferences.putInt("timeout", screenTimeout);
+
+    preferences.end();
+}
+
+void GlobalState::loadSettings()
+{
+    preferences.begin("pao-settings", true);  // true = read-only mode
+
+    // Load with default values if not found
+    displayBrightness = preferences.getInt("brightness", 100);
+    useMetricUnits = preferences.getBool("metric", true);
+    chargeAlertThreshold = preferences.getInt("chargeAlert", 20);
+    screenTimeout = preferences.getInt("timeout", 60);
+
+    preferences.end();
+}
+
+// Charge state helper functions (shared by charge_screen and data_screen)
+uint16_t getChargeStateColor(int chargeState) {
+    switch(chargeState) {
+        case 0: return TFT_RED;      // Not Charging
+        case 1: return TFT_GREEN;    // Charging
+        case 2: return TFT_SKYBLUE;  // Complete
+        default: return TFT_WHITE;
     }
 }
-Screen* State::getCurrentScreen()
-{
-    return currentScreen;
-};
 
-void State::setGear(Gear newGear)
-{
-    gear = newGear;
+const char* getChargeStateString(int chargeState) {
+    switch(chargeState) {
+        case 0: return "Not Charging";
+        case 1: return "Charging";
+        case 2: return "Complete";
+        default: return "Unknown";
+    }
 }
 
-State::Gear State::getGear()
+void GlobalState::getNextScreen()
 {
-    return gear;
+
+    ScreenTypes::ScreenType currentType = currentScreen->getType();
+
+    switch (currentType)
+    {
+    case ScreenTypes::ScreenType::PRELOAD:
+        currentScreen = gears;
+        break;
+    case ScreenTypes::ScreenType::GEARS:
+        currentScreen = spotify;
+        break;
+    case ScreenTypes::ScreenType::SPOTIFY:
+        currentScreen = speedo;
+        break;
+    case ScreenTypes::ScreenType::SPEEDOMETER:
+        currentScreen = data;
+        break;
+    case ScreenTypes::ScreenType::CAN_DATA:
+        currentScreen = charge;
+        break;
+    case ScreenTypes::ScreenType::CHARGE:
+        currentScreen = settings;
+        break;
+    case ScreenTypes::ScreenType::SETTINGS:
+        currentScreen = gears;  // Loop back to gears
+        break;
+    default:
+        // Fallback to gears instead of loading to prevent getting stuck
+        currentScreen = gears;
+    }
 }

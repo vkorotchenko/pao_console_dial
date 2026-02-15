@@ -61,10 +61,23 @@ void CanHandler::process(State::Data *data) {
             case 0x235:
                 CanHandler::handle_235(&frame, data);
                 break;   
-            case 0x236: 
+            case 0x236:
                 CanHandler::handle_236(&frame, data);
                 break;
+            case 0x609:
+                CanHandler::handle_609(&frame, data);
+                break;
+            case 0x607:
+                CanHandler::handle_607(&frame, data);
+                break;
         }
+    }
+
+    // Detect gear changes and send CAN message
+    static State::Gear lastGear = State::Gear::NEUTRAL;
+    if (data->selectedGear != lastGear) {
+        sendGearChange(data->selectedGear);
+        lastGear = data->selectedGear;
     }
 }
 
@@ -201,4 +214,66 @@ void CanHandler::handle_235(CAN_FRAME *frame, State::Data *data)
 void CanHandler::handle_236(CAN_FRAME *frame, State::Data *data)
 {
     //u_int8_t selectedGear = frame->data.bytes[5];
+}
+
+void CanHandler::sendGearChange(State::Gear gear) {
+    unsigned char buf[8] = {0};  // Initialize all bytes to 0x00
+
+    switch (gear) {
+        case State::Gear::NEUTRAL:
+            // All bytes already 0x00 from initialization
+            break;
+
+        case State::Gear::DRIVE:
+            buf[7] = 0x88;  // 8th byte (last digit) = high
+            buf[6] = 0xFF;  // 7th byte = low
+            break;
+
+        case State::Gear::REVERSE:
+            buf[7] = 0xFF;  // 8th byte = low (swapped with drive)
+            buf[6] = 0x88;  // 7th byte = high (swapped with drive)
+            break;
+
+        case State::Gear::PARK:
+            buf[5] = 0xFF;  // 6th byte = high
+            // bytes 6 and 7 remain 0x00
+            break;
+    }
+
+    CAN.sendMsgBuf(0x606, 0, 8, buf);
+
+    // Debug output with all relevant bytes
+    Serial.print("CAN: Sending 0x606, bytes[5-7]: ");
+    Serial.print(buf[5], HEX);
+    Serial.print(" ");
+    Serial.print(buf[6], HEX);
+    Serial.print(" ");
+    Serial.print(buf[7], HEX);
+    Serial.print(" (");
+    switch (gear) {
+        case State::Gear::NEUTRAL: Serial.print("NEUTRAL"); break;
+        case State::Gear::DRIVE: Serial.print("DRIVE"); break;
+        case State::Gear::REVERSE: Serial.print("REVERSE"); break;
+        case State::Gear::PARK: Serial.print("PARK"); break;
+    }
+    Serial.println(")");
+}
+
+void CanHandler::handle_609(CAN_FRAME *frame, State::Data *data) {
+    // Process confirmation message from 0x609
+    // Could store confirmation status if needed
+    Serial.println("CAN: Received 0x609 confirmation");
+}
+
+void CanHandler::handle_607(CAN_FRAME *frame, State::Data *data) {
+    // Byte[1] represents pre-charge contactor ready status
+    // 0x88 = HIGH/Ready, 0xFF = LOW/Not Ready
+    uint8_t preChargeStatus = frame->data.bytes[1];
+
+    // Set ready if byte is 0x88 (HIGH)
+    data->preChargeReady = (preChargeStatus == 0x88);
+
+    // Debug output
+    Serial.print("CAN: Received 0x607, pre-charge ready: ");
+    Serial.println(data->preChargeReady ? "YES (0x88)" : "NO (0xFF)");
 }

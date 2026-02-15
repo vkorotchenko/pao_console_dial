@@ -59,7 +59,8 @@ public:
       bool isFaulted;
       bool isWarning;
       bool isReady;
-      
+      bool preChargeReady;  // Pre-charge contactor ready status from CAN 0x607
+
       int configSpeedMax;
       int configTorqueMax;
       int configSpeedSlewRate;
@@ -79,6 +80,14 @@ public:
       int configReverseIn;
       int configRegenTaperLower;
       int configRegenTaperUpper;
+
+      // GPS data
+      float gpsLatitude;
+      float gpsLongitude;
+      float gpsSpeed;        // knots
+      float gpsAltitude;     // meters
+      uint8_t gpsSatellites;
+      bool gpsFixAvailable;
 
       Gear selectedGear;
     };

@@ -13,9 +13,9 @@ State globalState;
 IOHandler ioHandler;
 
 void setup() {
-  gpsHandler.setup(); 
+  gpsHandler.setup();
   canHandler.setup();
-  i2cHandler.setup();
+  i2cHandler.setup(&globalState.data);
   ioHandler.setup();
 }
 
