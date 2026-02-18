@@ -72,39 +72,35 @@ void SpotifyScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
 };
 void SpotifyScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
 {
-    // Clear screen
-    sprite->fillSprite(TFT_GREENYELLOW);
-    gfx->fillScreen(TFT_GREENYELLOW);
-
-    sprite->drawBitmap(30, 30, spotify_logo, 480, 480, TFT_GREENYELLOW, TFT_LIGHTGREY);    
+    // Clear screen with black background
+    sprite->fillSprite(TFT_BLACK);
+    gfx->fillScreen(TFT_BLACK);
 
     // Draw title using helper method
     drawTitle(sprite, "SPOTIFY");
 
-                                     
-    sprite->drawBitmap(30, 30, spotify_logo, 480, 480, TFT_GREENYELLOW, TFT_LIGHTGREY);    
-
     // Draw bitmap icons (128x128 each, centered on button positions)
+    // Sky blue icons on black background
 
     // Play/Pause icon (top center)
     sprite->drawBitmap(PLAY_PAUSE_BUTTON_X - 64, PLAY_PAUSE_BUTTON_Y - 64,
                        play_pause_icon, 128, 128,
-                       TFT_BLACK, TFT_GREENYELLOW);
+                       TFT_SKYBLUE, TFT_BLACK);
 
     // Previous Song icon (left)
     sprite->drawBitmap(PREV_SONG_BUTTON_X - 64, PREV_SONG_BUTTON_Y - 64,
                        prev_icon, 128, 128,
-                       TFT_BLACK, TFT_GREENYELLOW);
+                       TFT_SKYBLUE, TFT_BLACK);
 
     // Next Song icon (right)
     sprite->drawBitmap(NEXT_SONG_BUTTON_X - 64, NEXT_SONG_BUTTON_Y - 64,
                        next_icon, 128, 128,
-                       TFT_BLACK, TFT_GREENYELLOW);
+                       TFT_SKYBLUE, TFT_BLACK);
 
     // Mute icon (bottom)
     sprite->drawBitmap(MUTE_BUTTON_X - 64, MUTE_BUTTON_Y - 64,
                        mute_icon, 128, 128,
-                       TFT_BLACK, TFT_GREENYELLOW);
+                       TFT_SKYBLUE, TFT_BLACK);
 
 };
 
