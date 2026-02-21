@@ -15,12 +15,8 @@ uint32_t timer = millis();
 void GPSHandler::setup(){
   //while (!Serial);  // uncomment to have the sketch wait until Serial is ready
 
-  // connect at 115200 so we can read the GPS fast enough and echo without dropping chars
-  // also spit it out
-  Serial.begin(115200);
-  Serial.println("Adafruit GPS library basic parsing test!");
-
   // 9600 NMEA is the default baud rate for Adafruit MTK GPS's- some use 4800
+  Serial.println("Adafruit GPS library basic parsing test!");
   GPS.begin(9600);
   // uncomment this line to turn on RMC (recommended minimum) and GGA (fix data) including altitude
   GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
@@ -98,8 +94,32 @@ void GPSHandler::loop(State::Data *data){ // read data from the GPS in the 'main
       data->gpsAltitude = GPS.altitude;
       data->gpsSatellites = GPS.satellites;
       data->gpsFixAvailable = true;
+
+      // Store GPS date/time
+      data->gpsHour = GPS.hour;
+      data->gpsMinute = GPS.minute;
+      data->gpsSecond = GPS.seconds;
+      data->gpsDay = GPS.day;
+      data->gpsMonth = GPS.month;
+      data->gpsYear = GPS.year;
+
+      // Update timestamp to track data freshness
+      data->lastGpsUpdateTime = millis();
     } else {
+      // No fix - reset coordinates to defaults
+      data->gpsLatitude = 0.0f;
+      data->gpsLongitude = 0.0f;
+      data->gpsSpeed = 0.0f;
+      data->gpsAltitude = 0.0f;
+      data->gpsSatellites = 0;
       data->gpsFixAvailable = false;
+      data->gpsHour = 0;
+      data->gpsMinute = 0;
+      data->gpsSecond = 0;
+      data->gpsDay = 0;
+      data->gpsMonth = 0;
+      data->gpsYear = 0;
+      // Don't update lastGpsUpdateTime - let it age out for staleness detection
     }
   }
 }

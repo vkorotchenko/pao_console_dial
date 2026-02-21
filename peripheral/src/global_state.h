@@ -46,6 +46,7 @@ private:
     bool useMetricUnits = true;       // true=KM/H, false=MPH
     int chargeAlertThreshold = 20;    // 0-100%
     int screenTimeout = 60;           // 0-300 seconds, 0=never
+    bool timeFormat24Hr = true;       // true=24hr, false=12hr
 
     // CAN motor controller data
     int motorTemp = 0;
@@ -67,6 +68,12 @@ private:
     float gpsAltitude = 0.0f;
     int gpsSatellites = 0;
     bool gpsFixAvailable = false;
+    uint8_t gpsHour = 0;
+    uint8_t gpsMinute = 0;
+    uint8_t gpsSecond = 0;
+    uint8_t gpsDay = 0;
+    uint8_t gpsMonth = 0;
+    uint8_t gpsYear = 0;
 
     // EEPROM persistence
     Preferences preferences;
@@ -129,6 +136,12 @@ public:
         saveSettings();
     }
 
+    bool getTimeFormat24Hr() { return timeFormat24Hr; }
+    void setTimeFormat24Hr(bool value) {
+        timeFormat24Hr = value;
+        saveSettings();
+    }
+
     // CAN motor controller data getters/setters
     int getMotorTemp() { return motorTemp; }
     void setMotorTemp(int temp) { motorTemp = temp; }
@@ -181,6 +194,24 @@ public:
 
     bool getGpsFixAvailable() { return gpsFixAvailable; }
     void setGpsFixAvailable(bool available) { gpsFixAvailable = available; }
+
+    uint8_t getGpsHour() { return gpsHour; }
+    void setGpsHour(uint8_t hour) { gpsHour = hour; }
+
+    uint8_t getGpsMinute() { return gpsMinute; }
+    void setGpsMinute(uint8_t minute) { gpsMinute = minute; }
+
+    uint8_t getGpsSecond() { return gpsSecond; }
+    void setGpsSecond(uint8_t second) { gpsSecond = second; }
+
+    uint8_t getGpsDay() { return gpsDay; }
+    void setGpsDay(uint8_t day) { gpsDay = day; }
+
+    uint8_t getGpsMonth() { return gpsMonth; }
+    void setGpsMonth(uint8_t month) { gpsMonth = month; }
+
+    uint8_t getGpsYear() { return gpsYear; }
+    void setGpsYear(uint8_t year) { gpsYear = year; }
 
     // EEPROM persistence methods
     void saveSettings();

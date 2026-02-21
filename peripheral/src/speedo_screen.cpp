@@ -1,5 +1,6 @@
 #include "speedo_screen.h"
 #include "global_state.h"
+#include "banner_utils.h"
 
 // Dial positions (3 dials across, evenly spaced)
 const int DIAL_Y = 200;           // Vertical center for all dials
@@ -62,7 +63,11 @@ void SpeedometerScreen::drawSemiCircularDial(
     const char* label,
     const char* unit)
 {
+    GlobalState &state = GlobalState::getInstance();
     int innerRadius = radius - DIAL_THICKNESS;
+
+    // Check for stale CAN data
+    bool isStale = (state.getDcVoltage() == 0);
 
     // Constrain value to valid range
     if (value < 0) value = 0;
@@ -83,31 +88,37 @@ void SpeedometerScreen::drawSemiCircularDial(
     if (valueAngle < DIAL_START_ANGLE) valueAngle = DIAL_START_ANGLE;
     if (valueAngle > DIAL_END_ANGLE) valueAngle = DIAL_END_ANGLE;
 
-    // 3. Draw foreground arc (colored, current value)
-    uint16_t color = getDialColor(value, maxValue);
-    if (valueAngle > DIAL_START_ANGLE) {
-        sprite->drawArc(centerX, centerY, radius, innerRadius,
-                        DIAL_START_ANGLE, valueAngle,
-                        color, TFT_BLACK, true);
+    // 3. Draw foreground arc (colored, current value) - only if not stale
+    if (!isStale && maxValue > 0) {
+        uint16_t color = getDialColor(value, maxValue);
+        if (valueAngle > DIAL_START_ANGLE) {
+            sprite->drawArc(centerX, centerY, radius, innerRadius,
+                            DIAL_START_ANGLE, valueAngle,
+                            color, TFT_BLACK, true);
+        }
     }
 
-    // 4. Draw label above dial
+    // 4. Draw label above dial (grey if stale)
     sprite->setTextDatum(TC_DATUM);
     sprite->setTextSize(1);
-    sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    sprite->setTextColor(isStale ? TFT_DARKGREY : TFT_LIGHTGREY, TFT_BLACK);
     sprite->drawString(label, centerX, centerY - radius - 15);
 
-    // 5. Draw value text (large, centered)
+    // 5. Draw value text (large, centered) - show "--" if stale
     sprite->setTextSize(2);
-    sprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    sprite->setTextColor(isStale ? TFT_DARKGREY : TFT_WHITE, TFT_BLACK);
     char valueStr[16];
-    sprintf(valueStr, "%d", value);
+    if (isStale) {
+        sprintf(valueStr, "--");
+    } else {
+        sprintf(valueStr, "%d", value);
+    }
     sprite->drawString(valueStr, centerX, centerY - 10);
 
-    // 6. Draw unit below value (if provided)
+    // 6. Draw unit below value (if provided, grey if stale)
     if (unit != nullptr && strlen(unit) > 0) {
         sprite->setTextSize(1);
-        sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        sprite->setTextColor(isStale ? TFT_DARKGREY : TFT_LIGHTGREY, TFT_BLACK);
         sprite->drawString(unit, centerX, centerY + 15);
     }
 }
@@ -155,11 +166,8 @@ void SpeedometerScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gf
     // Clear entire sprite to prevent artifacts
     sprite->fillSprite(TFT_BLACK);
 
-    // Draw title
-    sprite->setTextDatum(TC_DATUM);
-    sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    sprite->setTextSize(2);
-    sprite->drawString("SPEEDOMETER", 250, 40);
+    // Draw banner
+    drawBanner(sprite, state);
 
     // Get current values from global state
     int currentSpeed = state.getSpeed();
@@ -189,5 +197,9 @@ void SpeedometerScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx
     sprite->fillSprite(TFT_BLACK);
     gfx->fillScreen(TFT_BLACK);
 
-    // Title and all elements are drawn in display() since we clear every frame
+    // Get current values from global state for banner
+    GlobalState &state = GlobalState::getInstance();
+    drawBanner(sprite, state);
+
+    // All elements are drawn in display() since we clear every frame
 }

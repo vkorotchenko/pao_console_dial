@@ -52,6 +52,14 @@ void I2CHandler::parseI2CState(uint8_t* buffer)
     memcpy(&gpsAlt, &buffer[28], 4);
     uint8_t gpsSats = buffer[32];
 
+    // GPS date/time (bytes 33-38)
+    uint8_t gpsHour = buffer[33];
+    uint8_t gpsMinute = buffer[34];
+    uint8_t gpsSecond = buffer[35];
+    uint8_t gpsDay = buffer[36];
+    uint8_t gpsMonth = buffer[37];
+    uint8_t gpsYear = buffer[38];
+
     // Update GlobalState (triggers screen re-render)
     state.setSpeed(resSpeed);
     state.setRpm(resSpeed);  // or calculate RPM if different
@@ -72,6 +80,12 @@ void I2CHandler::parseI2CState(uint8_t* buffer)
     state.setGpsSatellites(gpsSats);
     state.setGpsFixAvailable(statusFlags & 0x10);
     state.setPreChargeReady(statusFlags & 0x20);
+    state.setGpsHour(gpsHour);
+    state.setGpsMinute(gpsMinute);
+    state.setGpsSecond(gpsSecond);
+    state.setGpsDay(gpsDay);
+    state.setGpsMonth(gpsMonth);
+    state.setGpsYear(gpsYear);
 
     // Battery level calculation (could use voltage)
     int batteryPercent = map(voltage, 3000, 4200, 0, 100);  // adjust ranges

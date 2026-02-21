@@ -4,7 +4,7 @@
 
 #include "carousel.h"
 
-class SettingsScreen : public Carousel<4>
+class SettingsScreen : public Carousel<5>
 {
 private:
     ScreenTypes::ScreenType type = ScreenTypes::ScreenType::SETTINGS;

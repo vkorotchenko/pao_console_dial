@@ -89,13 +89,35 @@ public:
       uint8_t gpsSatellites;
       bool gpsFixAvailable;
 
+      // GPS date/time (UTC)
+      uint8_t gpsHour;       // 0-23
+      uint8_t gpsMinute;     // 0-59
+      uint8_t gpsSecond;     // 0-59
+      uint8_t gpsDay;        // 1-31
+      uint8_t gpsMonth;      // 1-12
+      uint8_t gpsYear;       // 0-99 (years since 2000)
+
       Gear selectedGear;
+
+      // Timestamp tracking for staleness detection
+      unsigned long lastCanMessageTime;  // Timestamp of last CAN message receipt
+      unsigned long lastGpsUpdateTime;   // Timestamp of last GPS fix
     };
 
     Screen screen;
     Data data;
 
+    // Staleness timeout constants (in milliseconds)
+    static const unsigned long CAN_TIMEOUT_MS = 5000;   // 5 second timeout
+    static const unsigned long GPS_TIMEOUT_MS = 10000;  // 10 second timeout
+
     void setup();
+
+    // Staleness detection methods
+    bool isCanDataStale();
+    bool isGpsDataStale();
+    void resetCanData();    // Reset CAN fields to defaults
+    void resetGpsData();    // Reset GPS fields to defaults
 
 private:
 };

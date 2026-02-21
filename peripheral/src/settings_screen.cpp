@@ -13,11 +13,12 @@ struct SettingItem {
     int stepSize;           // Increment/decrement step
 };
 
-const SettingItem SETTINGS[4] = {
+const SettingItem SETTINGS[5] = {
     {"BRIGHTNESS", "%",  0, 0, 100,   1},   // 0: Display Brightness
     {"UNITS",      "",   1, 0, 1,     1},   // 1: Speed Units (0=MPH, 1=KM/H)
     {"CHG ALERT",  "%",  0, 0, 100,   5},   // 2: Charge Alert Threshold
     {"TIMEOUT",    "s",  0, 0, 300,  15},   // 3: Screen Timeout
+    {"TIME FMT",   "",   1, 0, 1,     1},   // 4: Time Format (0=12hr, 1=24hr)
 };
 
 // Get current value for a setting index
@@ -29,6 +30,7 @@ int getCurrentValue(int index) {
         case 1: return state.getUseMetricUnits() ? 1 : 0;  // Convert bool to int
         case 2: return state.getChargeAlertThreshold();
         case 3: return state.getScreenTimeout();
+        case 4: return state.getTimeFormat24Hr() ? 1 : 0;  // Convert bool to int
         default: return 0;
     }
 }
@@ -42,6 +44,7 @@ void saveValue(int index, int value) {
         case 1: state.setUseMetricUnits(value == 1); break;  // Convert int to bool
         case 2: state.setChargeAlertThreshold(value); break;
         case 3: state.setScreenTimeout(value); break;
+        case 4: state.setTimeFormat24Hr(value == 1); break;  // Convert int to bool
     }
 }
 
@@ -53,6 +56,9 @@ String getValueString(int index, int value) {
         // Boolean setting - show text instead of number
         if (index == 1) {  // Units setting
             return (value == 1) ? "KM/H" : "MPH";
+        }
+        if (index == 4) {  // Time format setting
+            return (value == 1) ? "24 HR" : "12 HR";
         }
         return (value == 1) ? "ON" : "OFF";
     }
@@ -104,7 +110,7 @@ void SettingsScreen::onTouch(int x, int y, TFT_eSprite *sprite) {
 void SettingsScreen::onScroll(int x, TFT_eSprite *sprite) {
     if (!isEditMode) {
         // NOT EDITING - Use base class carousel navigation
-        Carousel<4>::onScroll(x, sprite);
+        Carousel<5>::onScroll(x, sprite);
     }
     else {
         // EDITING - Use accumulator with lockout for consistent behavior

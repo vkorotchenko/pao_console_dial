@@ -13,6 +13,8 @@ State globalState;
 IOHandler ioHandler;
 
 void setup() {
+  Serial.begin(115200);
+  globalState.setup();  // Initialize all data fields to defaults
   gpsHandler.setup();
   canHandler.setup();
   i2cHandler.setup(&globalState.data);
@@ -20,8 +22,24 @@ void setup() {
 }
 
 void loop() {
-  gpsHandler.loop(&globalState.data); 
+  gpsHandler.loop(&globalState.data);
   canHandler.process(&globalState.data);
   i2cHandler.process(&globalState.data);
   ioHandler.process(&globalState.data);
+
+  // Periodic staleness checking (every 1 second)
+  static unsigned long lastStalenessCheck = 0;
+  if (millis() - lastStalenessCheck > 1000) {
+    lastStalenessCheck = millis();
+
+    if (globalState.isCanDataStale()) {
+      Serial.println("CAN data stale - resetting to defaults");
+      globalState.resetCanData();
+    }
+
+    if (globalState.isGpsDataStale()) {
+      Serial.println("GPS data stale - resetting to defaults");
+      globalState.resetGpsData();
+    }
+  }
 }

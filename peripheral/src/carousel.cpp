@@ -2,6 +2,8 @@
 #include "bigFont.h"
 #include "midleFont.h"
 #include "text_utils.h"
+#include "banner_utils.h"
+#include "global_state.h"
 
 // Maximum text widths for overflow prevention
 // Increased to allow 3-4 characters in preview, 8-10 in center
@@ -100,11 +102,9 @@ void Carousel<ITEM_COUNT>::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel 
     // Clear entire sprite to prevent artifacts from previous renders
     sprite->fillSprite(TFT_BLACK);
 
-    // Redraw static elements that were on onLoad
-    sprite->setTextDatum(TC_DATUM);
-    sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    sprite->setTextSize(2);
-    sprite->drawString(getTitle(), 240, 40);
+    // Draw banner
+    GlobalState &state = GlobalState::getInstance();
+    drawBanner(sprite, state);
 
     if (!isAnimating) {
         // Static rendering: 3 panels at fixed positions
@@ -187,11 +187,9 @@ void Carousel<ITEM_COUNT>::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *
     sprite->fillSprite(TFT_BLACK);
     gfx->fillScreen(TFT_BLACK);
 
-    // Draw title (center-aligned)
-    sprite->setTextDatum(TC_DATUM);  // Top Center alignment
-    sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    sprite->setTextSize(2);
-    sprite->drawString(getTitle(), 240, 40);  // Centered at x=240
+    // Draw banner
+    GlobalState &state = GlobalState::getInstance();
+    drawBanner(sprite, state);
 
     // Initialize state
     lastScrollValue = 0;
@@ -323,5 +321,6 @@ void Carousel<ITEM_COUNT>::drawInterpolatedPanel(TFT_eSprite* sprite, int index,
 }
 
 // Explicit template instantiations for the three carousels we use
-template class Carousel<4>;   // GearScreen and SettingsScreen
+template class Carousel<4>;   // GearScreen
+template class Carousel<5>;   // SettingsScreen
 template class Carousel<13>;  // DataScreen

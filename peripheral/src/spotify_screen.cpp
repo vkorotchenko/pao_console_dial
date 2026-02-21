@@ -1,4 +1,6 @@
 #include "spotify_screen.h"
+#include "global_state.h"
+#include "banner_utils.h"
 
 // Button positions - diamond pattern (540x540 screen)
 // Center point: (240, 270), spacing: 120px from center
@@ -76,8 +78,9 @@ void SpotifyScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
     sprite->fillSprite(TFT_BLACK);
     gfx->fillScreen(TFT_BLACK);
 
-    // Draw title using helper method
-    drawTitle(sprite, "SPOTIFY");
+    // Draw banner
+    GlobalState &state = GlobalState::getInstance();
+    drawBanner(sprite, state);
 
     // Draw bitmap icons (128x128 each, centered on button positions)
     // Sky blue icons on black background

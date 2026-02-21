@@ -10,7 +10,6 @@ void I2CHandler::setup(State::Data *data)
 {
     statePtr = data;
     Wire.begin(7);  // I2C slave address 7
-    Serial.begin(9600);
     Wire.onRequest(handleOnRequest);
     Wire.onReceive(handleOnReceive);
     Serial.println("I2C: Slave initialized on address 7");
@@ -63,7 +62,16 @@ void I2CHandler::handleOnRequest() {
     memcpy(&buffer[28], &statePtr->gpsAltitude, 4);
     buffer[32] = statePtr->gpsSatellites;
 
-    // Bytes 33-46 reserved (already zeroed)
+    // GPS date/time (bytes 33-38)
+    buffer[33] = statePtr->gpsHour;
+    buffer[34] = statePtr->gpsMinute;
+    buffer[35] = statePtr->gpsSecond;
+    buffer[36] = statePtr->gpsDay;
+    buffer[37] = statePtr->gpsMonth;
+    buffer[38] = statePtr->gpsYear;
+    buffer[39] = 0;  // Reserved
+
+    // Bytes 40-46 reserved (already zeroed)
 
     // Calculate checksum
     uint8_t checksum = 0;

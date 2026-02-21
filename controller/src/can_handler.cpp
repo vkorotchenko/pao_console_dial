@@ -36,7 +36,7 @@ void CanHandler::process(State::Data *data) {
         frame.extended = (bool)CAN.isExtendedFrame();
         frame.rtr = CAN.isRemoteRequest();
 
-        switch (frame.id) { 
+        switch (frame.id) {
             case 0x650:
                 CanHandler::handle_650(&frame, data);
                 break;
@@ -48,19 +48,19 @@ void CanHandler::process(State::Data *data) {
                 break;
             case 0x23B:
                 CanHandler::handle_23B(&frame, data);
-                break;   
+                break;
             case 0x232:
                 CanHandler::handle_232(&frame, data);
                 break;
             case 0x233:
                 CanHandler::handle_233(&frame, data);
-                break;   
+                break;
             case 0x234:
                 CanHandler::handle_234(&frame, data);
                 break;
             case 0x235:
                 CanHandler::handle_235(&frame, data);
-                break;   
+                break;
             case 0x236:
                 CanHandler::handle_236(&frame, data);
                 break;
@@ -71,6 +71,9 @@ void CanHandler::process(State::Data *data) {
                 CanHandler::handle_607(&frame, data);
                 break;
         }
+
+        // Update timestamp to track data freshness
+        data->lastCanMessageTime = millis();
     }
 
     // Detect gear changes and send CAN message
@@ -240,7 +243,7 @@ void CanHandler::sendGearChange(State::Gear gear) {
             break;
     }
 
-    CAN.sendMsgBuf(0x606, 0, 8, buf);
+    CAN.sendMsgBuf(0, 0x606, 0, 0, 8, buf);
 
     // Debug output with all relevant bytes
     Serial.print("CAN: Sending 0x606, bytes[5-7]: ");

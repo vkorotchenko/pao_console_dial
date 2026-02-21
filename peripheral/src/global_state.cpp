@@ -34,6 +34,7 @@ void GlobalState::saveSettings()
     preferences.putBool("metric", useMetricUnits);
     preferences.putInt("chargeAlert", chargeAlertThreshold);
     preferences.putInt("timeout", screenTimeout);
+    preferences.putBool("time24hr", timeFormat24Hr);
 
     preferences.end();
 }
@@ -47,6 +48,7 @@ void GlobalState::loadSettings()
     useMetricUnits = preferences.getBool("metric", true);
     chargeAlertThreshold = preferences.getInt("chargeAlert", 20);
     screenTimeout = preferences.getInt("timeout", 60);
+    timeFormat24Hr = preferences.getBool("time24hr", true);  // default 24hr
 
     preferences.end();
 }
