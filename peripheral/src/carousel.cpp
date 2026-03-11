@@ -129,7 +129,10 @@ void Carousel<ITEM_COUNT>::onScroll(int x, TFT_eSprite *sprite) {
     }
 
     // Block scroll input while animation is in progress (debounce)
+    // Still update lastScrollValue so movement during animation is discarded,
+    // not carried forward as a stale delta once animation completes.
     if (isAnimating) {
+        lastScrollValue = x;
         return;
     }
 

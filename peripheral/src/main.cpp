@@ -102,31 +102,16 @@ unsigned short grays[13];
 
 void readEncoder()
 {
-
   static int pos = 0;
   encoder.tick();
 
   int newPos = encoder.getPosition();
   if (pos != newPos)
   {
-
-    if (newPos > pos)
-      angle = angle + inc;
-    if (newPos < pos)
-      angle = angle - inc;
-
+    angle += (newPos > pos) ? inc : -inc;
     pos = newPos;
+    state.getCurrentScreen()->onScroll(angle, &sprite);
   }
-  if (angle < 0)
-  {
-    angle = 359;
-  }
-  if (angle >= 360)
-  {
-    angle = 0;
-  }
-
-  state.getCurrentScreen()->onScroll(angle, &sprite);
 }
 
 void setup()
