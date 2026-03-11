@@ -36,8 +36,8 @@ void SpotifyScreen::onTouch(int x, int y, TFT_eSprite *sprite)
 {
     if (!bleKeyboard.isConnected()) return;
 
-    int lastX = x + TOUCH_X_OFFSET;
-    int lastY = y + TOUCH_Y_OFFSET;
+    int lastX = x + GlobalState::getInstance().getTouchXOffset();
+    int lastY = y + GlobalState::getInstance().getTouchYOffset();
 
     if (lastX > NEXT_SONG_BUTTON_X - SPOTIFY_BUTTON_RADIUS &&
         lastX < NEXT_SONG_BUTTON_X + SPOTIFY_BUTTON_RADIUS &&

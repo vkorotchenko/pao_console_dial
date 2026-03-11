@@ -160,7 +160,8 @@ void Carousel<ITEM_COUNT>::onScroll(int x, TFT_eSprite *sprite) {
 
     // Check if threshold reached to START animation
     // Lockout prevents same physical click from triggering twice
-    if (scrollAccumulator >= SCROLL_THRESHOLD && !scrollLockout) {
+    int dynThreshold = GlobalState::getInstance().getScrollThreshold();
+    if (scrollAccumulator >= dynThreshold && !scrollLockout) {
         // Start animation to next item
         animationDirection = 1;  // Scrolling right
         targetIndex = getNextIndex();
@@ -170,7 +171,7 @@ void Carousel<ITEM_COUNT>::onScroll(int x, TFT_eSprite *sprite) {
         scrollLockout = true;
         scrollAccumulator = 0;
     }
-    else if (scrollAccumulator <= -SCROLL_THRESHOLD && !scrollLockout) {
+    else if (scrollAccumulator <= -dynThreshold && !scrollLockout) {
         // Start animation to previous item
         animationDirection = -1;  // Scrolling left
         targetIndex = getPrevIndex();
@@ -322,5 +323,5 @@ void Carousel<ITEM_COUNT>::drawInterpolatedPanel(TFT_eSprite* sprite, int index,
 
 // Explicit template instantiations for the three carousels we use
 template class Carousel<4>;   // GearScreen
-template class Carousel<5>;   // SettingsScreen
+template class Carousel<7>;   // SettingsScreen
 template class Carousel<13>;  // DataScreen

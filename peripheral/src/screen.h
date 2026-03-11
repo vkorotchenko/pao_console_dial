@@ -18,10 +18,6 @@ public:
 
 protected:
     ScreenTypes::ScreenType type;
-    int TOUCH_X_OFFSET = -10;
-    int TOUCH_Y_OFFSET = -10;
-
-    String SCROLL_THRESHOLD = "5";
 
     // Helper method to draw title in standard format
     void drawTitle(TFT_eSprite* sprite, const char* title) {

@@ -48,6 +48,11 @@ private:
     int screenTimeout = 60;           // 0-300 seconds, 0=never
     bool timeFormat24Hr = true;       // true=24hr, false=12hr
 
+    // Calibration data
+    int touchXOffset    = -10;        // touch X correction (pixels)
+    int touchYOffset    = -10;        // touch Y correction (pixels)
+    int scrollThreshold = 15;         // encoder degrees per carousel click
+
     // CAN motor controller data
     int motorTemp = 0;
     int inverterTemp = 0;
@@ -141,6 +146,15 @@ public:
         timeFormat24Hr = value;
         saveSettings();
     }
+
+    int getTouchXOffset() { return touchXOffset; }
+    void setTouchXOffset(int value) { touchXOffset = value; saveSettings(); }
+
+    int getTouchYOffset() { return touchYOffset; }
+    void setTouchYOffset(int value) { touchYOffset = value; saveSettings(); }
+
+    int getScrollThreshold() { return scrollThreshold; }
+    void setScrollThreshold(int value) { scrollThreshold = value; saveSettings(); }
 
     // CAN motor controller data getters/setters
     int getMotorTemp() { return motorTemp; }

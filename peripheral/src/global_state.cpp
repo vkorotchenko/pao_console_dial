@@ -35,6 +35,9 @@ void GlobalState::saveSettings()
     preferences.putInt("chargeAlert", chargeAlertThreshold);
     preferences.putInt("timeout", screenTimeout);
     preferences.putBool("time24hr", timeFormat24Hr);
+    preferences.putInt("tox", touchXOffset);
+    preferences.putInt("toy", touchYOffset);
+    preferences.putInt("sth", scrollThreshold);
 
     preferences.end();
 }
@@ -48,7 +51,10 @@ void GlobalState::loadSettings()
     useMetricUnits = preferences.getBool("metric", true);
     chargeAlertThreshold = preferences.getInt("chargeAlert", 20);
     screenTimeout = preferences.getInt("timeout", 60);
-    timeFormat24Hr = preferences.getBool("time24hr", true);  // default 24hr
+    timeFormat24Hr = preferences.getBool("time24hr", true);
+    touchXOffset    = preferences.getInt("tox", -10);
+    touchYOffset    = preferences.getInt("toy", -10);
+    scrollThreshold = preferences.getInt("sth", 15);
 
     preferences.end();
 }
