@@ -178,9 +178,10 @@ uint16_t SettingsScreen::getValueColor(int index) {
 
 void SettingsScreen::drawCenterExtra(TFT_eSprite* sprite, int index) {
     if (isEditMode) {
-        sprite->setTextDatum(TC_DATUM);  // Top Center alignment
+        sprite->unloadFont();
+        sprite->setTextDatum(TC_DATUM);
         sprite->setTextSize(1);
         sprite->setTextColor(TFT_GREEN, TFT_BLACK);
-        sprite->drawString("[EDIT]", 240, 90);  // Centered at x=240
+        sprite->drawString("[EDIT]", CENTER_X, CENTER_Y + 55);
     }
 }

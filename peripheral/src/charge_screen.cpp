@@ -6,7 +6,7 @@
 
 // Position constants
 int X_PROGRESS_BAR = 100;     // Progress bar left edge (moved 20px left)
-int Y_PROGRESS_BAR = 140;     // Progress bar top edge
+int Y_PROGRESS_BAR = 170;     // Progress bar top edge
 int PROGRESS_BAR_WIDTH = 300; // Total width
 int PROGRESS_BAR_HEIGHT = 40; // Total height
 int X_REQUESTED_AMPS = 170;   // Moved 20px right

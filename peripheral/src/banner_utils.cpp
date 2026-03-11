@@ -32,43 +32,44 @@ void drawStatusIcon(TFT_eSprite* sprite, int x, int y, int size, uint16_t color,
 }
 
 void drawBanner(TFT_eSprite* sprite, GlobalState& state) {
-    // Only show banner if GPS fix is available
-    if (!state.getGpsFixAvailable()) {
-        return;
-    }
+    // Ensure default font is active (custom fonts from previous renders may still be loaded)
+    sprite->unloadFont();
 
-    // Format date and time
-    String dateStr = formatDate(state.getGpsDay(), state.getGpsMonth(), state.getUseMetricUnits());
-    String timeStr = formatTime(state.getGpsHour(), state.getGpsMinute(), state.getTimeFormat24Hr());
+    // Format date and time (show placeholders if no GPS fix)
+    String dateStr, timeStr;
+    if (state.getGpsFixAvailable()) {
+        dateStr = formatDate(state.getGpsDay(), state.getGpsMonth(), state.getUseMetricUnits());
+        timeStr = formatTime(state.getGpsHour(), state.getGpsMinute(), state.getTimeFormat24Hr());
+    } else {
+        dateStr = "--/--";
+        timeStr = "--:--";
+    }
 
     // Draw date (left)
     sprite->setTextDatum(TL_DATUM);
     sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    sprite->setTextSize(1);
-    sprite->drawString(dateStr, DATE_X, 5);
+    sprite->setTextSize(3);
+    sprite->drawString(dateStr, DATE_X, BANNER_Y);
 
-    // Draw time (right)
-    sprite->setTextDatum(TR_DATUM);
-    sprite->drawString(timeStr, TIME_X, 5);
+    // Draw time (left-aligned, after icons)
+    sprite->setTextDatum(TL_DATUM);
+    sprite->drawString(timeStr, TIME_X, BANNER_Y);
 
-    // Draw status icons (center)
-    int iconX = ICON_START_X;
-
+    // Single status icon — colour indicates priority state
+    uint16_t statusColor;
+    char statusSymbol;
     if (state.getIsFaulted()) {
-        drawStatusIcon(sprite, iconX, ICON_Y, ICON_SIZE, TFT_RED, 'X');
+        statusColor = TFT_RED;    statusSymbol = 'X';
+    } else if (state.getIsWarning()) {
+        statusColor = TFT_YELLOW; statusSymbol = '!';
+    } else if (state.getIsRunning()) {
+        statusColor = TFT_GREEN;  statusSymbol = '>';
+    } else {
+        statusColor = TFT_DARKGREY; statusSymbol = '>';
     }
-    iconX += ICON_SPACING;
+    drawStatusIcon(sprite, ICON_START_X, ICON_Y, ICON_SIZE, statusColor, statusSymbol);
 
-    if (state.getIsWarning()) {
-        drawStatusIcon(sprite, iconX, ICON_Y, ICON_SIZE, TFT_YELLOW, '!');
-    }
-    iconX += ICON_SPACING;
-
-    if (state.getIsRunning()) {
-        drawStatusIcon(sprite, iconX, ICON_Y, ICON_SIZE, TFT_GREEN, '>');
-    }
-    iconX += ICON_SPACING;
-
-    // GPS fix icon (always show when banner visible)
-    drawStatusIcon(sprite, iconX, ICON_Y, ICON_SIZE, TFT_GREEN, 'S');
+    // GPS fix icon: green when fix available, red when no fix
+    drawStatusIcon(sprite, ICON_START_X + ICON_SPACING, ICON_Y, ICON_SIZE,
+                   state.getGpsFixAvailable() ? TFT_GREEN : TFT_RED, 'S');
 }

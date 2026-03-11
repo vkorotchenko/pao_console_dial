@@ -2,16 +2,16 @@
 #include "global_state.h"
 #include "banner_utils.h"
 
-// Button positions - diamond pattern (540x540 screen)
-// Center point: (240, 270), spacing: 120px from center
+// Button positions — prev/play/next inline, mute centred below
+// Visual centre of this display is x=240 (consistent with carousel CENTER_X)
 int PLAY_PAUSE_BUTTON_X = 240;
-int PLAY_PAUSE_BUTTON_Y = 150;   // 120px above center
-int PREV_SONG_BUTTON_X = 120;    // 120px left of center
-int PREV_SONG_BUTTON_Y = 270;
-int NEXT_SONG_BUTTON_X = 360;    // 120px right of center
-int NEXT_SONG_BUTTON_Y = 270;
+int PLAY_PAUSE_BUTTON_Y = 245;   // lowered 15px
+int PREV_SONG_BUTTON_X = 95;     // spread wider (was 120)
+int PREV_SONG_BUTTON_Y = 245;    // lowered 15px
+int NEXT_SONG_BUTTON_X = 385;    // spread wider (was 360)
+int NEXT_SONG_BUTTON_Y = 245;    // lowered 15px
 int MUTE_BUTTON_X = 240;
-int MUTE_BUTTON_Y = 390;         // 120px below center
+int MUTE_BUTTON_Y = 405;         // lowered 15px
 
 int SPOTIFY_BUTTON_RADIUS = 64;
 
@@ -34,6 +34,8 @@ bool SpotifyScreen::onClick(TFT_eSprite *sprite)
 
 void SpotifyScreen::onTouch(int x, int y, TFT_eSprite *sprite)
 {
+    if (!bleKeyboard.isConnected()) return;
+
     int lastX = x + TOUCH_X_OFFSET;
     int lastY = y + TOUCH_Y_OFFSET;
 
@@ -109,15 +111,27 @@ void SpotifyScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
 
 void SpotifyScreen::onScroll(int x, TFT_eSprite *sprite)
 {
+    if (!bleKeyboard.isConnected()) return;
 
     int delta = x - lastScrollX;
     lastScrollX = x;
+
+    // Handle encoder wraparound (359->0 or 0->359)
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+
+    if (delta == 0) return;
+
+    // Rate-limit volume keys to avoid flooding the BLE notification queue
+    unsigned long now = millis();
+    if (now - lastVolumeKeyTime < VOLUME_RATE_LIMIT_MS) return;
+    lastVolumeKeyTime = now;
 
     if (delta > 0)
     {
         bleKeyboard.write(KEY_MEDIA_VOLUME_UP);
     }
-    else if (delta < 0)
+    else
     {
         bleKeyboard.write(KEY_MEDIA_VOLUME_DOWN);
     }

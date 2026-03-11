@@ -2,194 +2,228 @@
 #include "global_state.h"
 #include "banner_utils.h"
 
-// Dial positions (3 dials across, evenly spaced)
-const int DIAL_Y = 200;           // Vertical center for all dials
-const int DIAL_RADIUS = 60;       // Radius of each dial
-const int DIAL_THICKNESS = 15;    // Arc thickness
+// ── Concentric dial geometry ──────────────────────────────────────────────────
+const int DIAL_CENTER_X  = 240;
+const int DIAL_CENTER_Y  = 240;   // moved up to give more space below arcs for labels
+const int DIAL_THICKNESS = 12;
+const int DIAL_GAP       = 5;
 
-const int RPM_DIAL_X = 115;       // Left dial
-const int SPEED_DIAL_X = 245;     // Center dial
-const int TORQUE_DIAL_X = 375;    // Right dial
+const int R_BATTERY = 45;                              // innermost
+const int R_RPM     = R_BATTERY + DIAL_THICKNESS + DIAL_GAP;   // 62
+const int R_SPEED   = R_RPM     + DIAL_THICKNESS + DIAL_GAP;   // 79
+const int R_TORQUE  = R_SPEED   + DIAL_THICKNESS + DIAL_GAP;   // 96 (outermost)
 
-// Battery bar position
-const int BATTERY_BAR_X = 100;    // Moved 20px left
-const int BATTERY_BAR_Y = 300;    // Moved 100px up
-const int BATTERY_BAR_WIDTH = 300;
-const int BATTERY_BAR_HEIGHT = 40;
+// ── Arc angle range (shared by all dials) ────────────────────────────────────
+const int DIAL_START_ANGLE = 30;
+const int DIAL_END_ANGLE   = 330;
+const int DIAL_ANGLE_RANGE = 300;
 
-// Angle ranges for semi-circular dials (degrees)
-const int DIAL_START_ANGLE = 30;   // Bottom-left (30° from bottom)
-const int DIAL_END_ANGLE = 330;    // Bottom-right (330° from bottom)
-const int DIAL_ANGLE_RANGE = 300;  // Total arc span
+// ── Metric maxima ─────────────────────────────────────────────────────────────
+const int MAX_RPM       = 6000;
+const int MAX_SPEED_KMH = 200;
+const int MAX_SPEED_MPH = 120;
 
-// Maximum values for each metric
-const int MAX_RPM = 6000;          // Typical motor max RPM
-const int MAX_SPEED_KMH = 200;     // km/h
-const int MAX_SPEED_MPH = 120;     // mph
-const int MAX_TORQUE = 150;        // Nm
+// ── Torque range (configurable) ───────────────────────────────────────────────
+const int MIN_TORQUE = -20;   // Nm  negative limit
+const int MAX_TORQUE = 100;   // Nm  positive limit
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 bool SpeedometerScreen::onClick(TFT_eSprite *sprite)
 {
-    return false;  // Allow button to switch screens
+    return false;
 }
 
 void SpeedometerScreen::onTouch(int x, int y, TFT_eSprite *sprite)
 {
-    return;  // No touch interaction
+    return;
 }
 
 void SpeedometerScreen::onScroll(int x, TFT_eSprite *sprite)
 {
-    return;  // No scroll interaction
+    return;
 }
 
-// Helper: Color gradient based on value percentage
+// Green → Yellow → Red based on fill percentage
 uint16_t SpeedometerScreen::getDialColor(int value, int maxValue) {
-    if (maxValue == 0) return TFT_GREEN;  // Avoid division by zero
-
-    int percent = (value * 100) / maxValue;
-    if (percent < 50) return TFT_GREEN;
-    if (percent < 75) return TFT_YELLOW;
+    if (maxValue == 0) return TFT_GREEN;
+    int pct = (value * 100) / maxValue;
+    if (pct < 50) return TFT_GREEN;
+    if (pct < 75) return TFT_YELLOW;
     return TFT_RED;
 }
 
-void SpeedometerScreen::drawSemiCircularDial(
-    TFT_eSprite* sprite,
-    int centerX,
-    int centerY,
-    int radius,
-    int value,
-    int maxValue,
-    const char* label,
-    const char* unit)
+// Draw one concentric arc ring (background + proportional foreground)
+void SpeedometerScreen::drawConcentricDial(
+    TFT_eSprite* sprite, int radius,
+    int value, int maxValue, uint16_t fgColor)
 {
-    GlobalState &state = GlobalState::getInstance();
-    int innerRadius = radius - DIAL_THICKNESS;
+    int inner = radius - DIAL_THICKNESS;
 
-    // Check for stale CAN data
-    bool isStale = (state.getDcVoltage() == 0);
-
-    // Constrain value to valid range
-    if (value < 0) value = 0;
-    if (value > maxValue) value = maxValue;
-
-    // 1. Draw background arc (gray, full range)
-    sprite->drawArc(centerX, centerY, radius, innerRadius,
+    // Background arc
+    sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, radius, inner,
                     DIAL_START_ANGLE, DIAL_END_ANGLE,
                     TFT_DARKGREY, TFT_BLACK, true);
 
-    // 2. Calculate value angle
-    int valueAngle = DIAL_START_ANGLE;
-    if (maxValue > 0) {
-        valueAngle = DIAL_START_ANGLE + (value * DIAL_ANGLE_RANGE) / maxValue;
-    }
+    if (maxValue <= 0) return;
 
-    // Constrain to valid range
-    if (valueAngle < DIAL_START_ANGLE) valueAngle = DIAL_START_ANGLE;
-    if (valueAngle > DIAL_END_ANGLE) valueAngle = DIAL_END_ANGLE;
+    // Clamp value
+    if (value < 0) value = 0;
+    if (value > maxValue) value = maxValue;
 
-    // 3. Draw foreground arc (colored, current value) - only if not stale
-    if (!isStale && maxValue > 0) {
-        uint16_t color = getDialColor(value, maxValue);
-        if (valueAngle > DIAL_START_ANGLE) {
-            sprite->drawArc(centerX, centerY, radius, innerRadius,
-                            DIAL_START_ANGLE, valueAngle,
-                            color, TFT_BLACK, true);
+    int valueAngle = DIAL_START_ANGLE + (value * DIAL_ANGLE_RANGE) / maxValue;
+    if (valueAngle <= DIAL_START_ANGLE) return;
+
+    sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, radius, inner,
+                    DIAL_START_ANGLE, valueAngle,
+                    fgColor, TFT_BLACK, true);
+}
+
+// Torque dial — handles negative (orange) and positive (green) halves
+void SpeedometerScreen::drawTorqueDial(TFT_eSprite* sprite, int torque)
+{
+    int inner      = R_TORQUE - DIAL_THICKNESS;
+    int totalRange = MAX_TORQUE - MIN_TORQUE;  // e.g. 120
+
+    // Background (full arc, dark grey)
+    sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, R_TORQUE, inner,
+                    DIAL_START_ANGLE, DIAL_END_ANGLE,
+                    TFT_DARKGREY, TFT_BLACK, true);
+
+    // Angle at which torque == 0
+    int zeroAngle = DIAL_START_ANGLE + ((-MIN_TORQUE) * DIAL_ANGLE_RANGE) / totalRange;
+
+    // Clamp torque to configured range
+    if (torque < MIN_TORQUE) torque = MIN_TORQUE;
+    if (torque > MAX_TORQUE) torque = MAX_TORQUE;
+
+    // Map torque value to angle
+    int torqueAngle = DIAL_START_ANGLE + ((torque - MIN_TORQUE) * DIAL_ANGLE_RANGE) / totalRange;
+
+    if (torque < 0) {
+        // Negative: fill from torqueAngle → zeroAngle in orange
+        if (torqueAngle < zeroAngle) {
+            sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, R_TORQUE, inner,
+                            torqueAngle, zeroAngle,
+                            TFT_ORANGE, TFT_BLACK, true);
+        }
+    } else if (torque > 0) {
+        // Positive: fill from zeroAngle → torqueAngle in green
+        if (torqueAngle > zeroAngle) {
+            sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, R_TORQUE, inner,
+                            zeroAngle, torqueAngle,
+                            TFT_GREEN, TFT_BLACK, true);
         }
     }
+    // torque == 0: nothing filled — only dark grey background visible
+}
 
-    // 4. Draw label above dial (grey if stale)
-    sprite->setTextDatum(TC_DATUM);
+// Battery innermost ring — green above 20%, red at or below
+void SpeedometerScreen::drawBatteryDial(TFT_eSprite* sprite, int battery)
+{
+    if (battery < 0)   battery = 0;
+    if (battery > 100) battery = 100;
+    uint16_t color = (battery > 20) ? TFT_GREEN : TFT_RED;
+    drawConcentricDial(sprite, R_BATTERY, battery, 100, color);
+}
+
+// Labels sit in the gap at the bottom of each arc, centred at x=240.
+// Each label's y = DIAL_CENTER_Y + r * cos(30°) = DIAL_CENTER_Y + r * 0.866,
+// which is the height of that arc's two gap-edge endpoints.
+void SpeedometerScreen::drawLegend(TFT_eSprite* sprite, int torque, int battery, bool isStale)
+{
+    sprite->unloadFont();
+
+    uint16_t torqueColor  = isStale ? TFT_DARKGREY : (torque < 0 ? TFT_ORANGE : TFT_GREEN);
+    uint16_t batteryColor = isStale ? TFT_DARKGREY : (battery > 20 ? TFT_GREEN : TFT_RED);
+
+    struct LegendItem { int radius; uint16_t color; const char* label; };
+    // Listed innermost first so they stack BAT→RPM→SPD→TRQ top-to-bottom
+    LegendItem items[4] = {
+        { R_BATTERY, batteryColor,                            "BAT" },
+        { R_RPM,     isStale ? TFT_DARKGREY : TFT_SKYBLUE,   "RPM" },
+        { R_SPEED,   isStale ? TFT_DARKGREY : TFT_SKYBLUE,   "SPD" },
+        { R_TORQUE,  torqueColor,                             "TRQ" },
+    };
+
     sprite->setTextSize(1);
-    sprite->setTextColor(isStale ? TFT_DARKGREY : TFT_LIGHTGREY, TFT_BLACK);
-    sprite->drawString(label, centerX, centerY - radius - 15);
+    sprite->setTextDatum(TL_DATUM);
 
-    // 5. Draw value text (large, centered) - show "--" if stale
-    sprite->setTextSize(2);
-    sprite->setTextColor(isStale ? TFT_DARKGREY : TFT_WHITE, TFT_BLACK);
-    char valueStr[16];
-    if (isStale) {
-        sprintf(valueStr, "--");
-    } else {
-        sprintf(valueStr, "%d", value);
-    }
-    sprite->drawString(valueStr, centerX, centerY - 10);
-
-    // 6. Draw unit below value (if provided, grey if stale)
-    if (unit != nullptr && strlen(unit) > 0) {
-        sprite->setTextSize(1);
-        sprite->setTextColor(isStale ? TFT_DARKGREY : TFT_LIGHTGREY, TFT_BLACK);
-        sprite->drawString(unit, centerX, centerY + 15);
+    for (int i = 0; i < 4; i++) {
+        // y aligned with this arc's gap endpoints
+        int y = DIAL_CENTER_Y + (int)(items[i].radius * 0.866f);
+        // dot + "XYZ" grouped and centred around x=240
+        sprite->fillCircle(229, y + 4, 3, items[i].color);
+        sprite->setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+        sprite->drawString(items[i].label, 234, y);
     }
 }
 
-void SpeedometerScreen::drawBatteryBar(TFT_eSprite* sprite) {
-    GlobalState &state = GlobalState::getInstance();
-    int batteryPercent = state.getBatteryLevel();
-
-    // Constrain to valid range
-    if (batteryPercent < 0) batteryPercent = 0;
-    if (batteryPercent > 100) batteryPercent = 100;
-
-    // 1. Draw white outline (3 pixels thick)
-    sprite->drawRect(BATTERY_BAR_X, BATTERY_BAR_Y,
-                     BATTERY_BAR_WIDTH, BATTERY_BAR_HEIGHT, TFT_WHITE);
-    sprite->drawRect(BATTERY_BAR_X + 1, BATTERY_BAR_Y + 1,
-                     BATTERY_BAR_WIDTH - 2, BATTERY_BAR_HEIGHT - 2, TFT_WHITE);
-    sprite->drawRect(BATTERY_BAR_X + 2, BATTERY_BAR_Y + 2,
-                     BATTERY_BAR_WIDTH - 4, BATTERY_BAR_HEIGHT - 4, TFT_WHITE);
-
-    // 2. Fill with color based on battery level
-    int fillWidth = ((BATTERY_BAR_WIDTH - 6) * batteryPercent) / 100;
-    uint16_t fillColor = batteryPercent > 20 ? TFT_GREEN : TFT_RED;
-
-    if (fillWidth > 0) {
-        sprite->fillRect(BATTERY_BAR_X + 3, BATTERY_BAR_Y + 3,
-                         fillWidth, BATTERY_BAR_HEIGHT - 6, fillColor);
-    }
-
-    // 3. Draw percentage text centered in bar
+// Value text below legend — 3 fixed columns, each centred on its own x anchor
+// Column x positions: speed=120, battery=240, rpm=360
+void SpeedometerScreen::drawValueBar(
+    TFT_eSprite* sprite,
+    int speed, const char* speedUnit,
+    int battery, int rpm,
+    bool isStale)
+{
+    sprite->unloadFont();
     sprite->setTextDatum(TC_DATUM);
-    sprite->setTextSize(2);
+    sprite->setTextSize(3);
     sprite->setTextColor(TFT_WHITE, TFT_BLACK);
-    char percentStr[24];
-    sprintf(percentStr, "BATTERY: %d%%", batteryPercent);
-    sprite->drawString(percentStr,
-                      BATTERY_BAR_X + (BATTERY_BAR_WIDTH / 2),
-                      BATTERY_BAR_Y + 10);
+
+    int lineY = DIAL_CENTER_Y + (int)(R_TORQUE * 0.866f) + 20;
+
+    char col1[16], col2[12], col3[12];
+    if (isStale) {
+        sprintf(col1, " -- %s",  speedUnit);
+        sprintf(col2, " --%%");
+        sprintf(col3, " ---RPM");
+    } else {
+        sprintf(col1, "%3d%s",  speed,   speedUnit);
+        sprintf(col2, "%3d%%",  battery);
+        sprintf(col3, "%4dRPM", rpm);
+    }
+
+    sprite->drawString(col1, 120,           lineY);
+    sprite->drawString(col2, DIAL_CENTER_X, lineY);
+    sprite->drawString(col3, 360,           lineY);
 }
+
+// ── Main draw loop ────────────────────────────────────────────────────────────
 
 void SpeedometerScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
 {
     GlobalState &state = GlobalState::getInstance();
 
-    // Clear entire sprite to prevent artifacts
     sprite->fillSprite(TFT_BLACK);
-
-    // Draw banner
     drawBanner(sprite, state);
 
-    // Get current values from global state
-    int currentSpeed = state.getSpeed();
-    int currentRPM = state.getRpm();
-    int currentTorque = state.getTorque();
+    bool isStale       = (state.getDcVoltage() == 0);
+    int  currentSpeed  = state.getSpeed();
+    int  currentRPM    = state.getRpm();
+    int  currentTorque = state.getTorque();
+    int  currentBat    = state.getBatteryLevel();
 
-    // Determine speed unit and max value
     const char* speedUnit = state.getUseMetricUnits() ? "km/h" : "mph";
     int maxSpeed = state.getUseMetricUnits() ? MAX_SPEED_KMH : MAX_SPEED_MPH;
 
-    // Draw three semi-circular dials
-    drawSemiCircularDial(sprite, RPM_DIAL_X, DIAL_Y, DIAL_RADIUS,
-                         currentRPM, MAX_RPM, "RPM", "");
+    // Draw concentric arcs outermost → innermost so inner rings overdraw outer ones cleanly
+    if (!isStale) {
+        drawTorqueDial(sprite, currentTorque);
+        drawConcentricDial(sprite, R_SPEED,   currentSpeed,  maxSpeed, getDialColor(currentSpeed,  maxSpeed));
+        drawConcentricDial(sprite, R_RPM,     currentRPM,    MAX_RPM,  getDialColor(currentRPM,    MAX_RPM));
+        drawBatteryDial(sprite, currentBat);
+    } else {
+        // Stale: draw grey backgrounds only
+        sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, R_TORQUE,  R_TORQUE  - DIAL_THICKNESS, DIAL_START_ANGLE, DIAL_END_ANGLE, TFT_DARKGREY, TFT_BLACK, true);
+        sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, R_SPEED,   R_SPEED   - DIAL_THICKNESS, DIAL_START_ANGLE, DIAL_END_ANGLE, TFT_DARKGREY, TFT_BLACK, true);
+        sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, R_RPM,     R_RPM     - DIAL_THICKNESS, DIAL_START_ANGLE, DIAL_END_ANGLE, TFT_DARKGREY, TFT_BLACK, true);
+        sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, R_BATTERY, R_BATTERY - DIAL_THICKNESS, DIAL_START_ANGLE, DIAL_END_ANGLE, TFT_DARKGREY, TFT_BLACK, true);
+    }
 
-    drawSemiCircularDial(sprite, SPEED_DIAL_X, DIAL_Y, DIAL_RADIUS,
-                         currentSpeed, maxSpeed, "SPEED", speedUnit);
-
-    drawSemiCircularDial(sprite, TORQUE_DIAL_X, DIAL_Y, DIAL_RADIUS,
-                         currentTorque, MAX_TORQUE, "TORQUE", "Nm");
-
-    // Draw battery range status bar
-    drawBatteryBar(sprite);
+    drawLegend(sprite, currentTorque, currentBat, isStale);
+    drawValueBar(sprite, currentSpeed, speedUnit, currentBat, currentRPM, isStale);
 }
 
 void SpeedometerScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
@@ -197,9 +231,6 @@ void SpeedometerScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx
     sprite->fillSprite(TFT_BLACK);
     gfx->fillScreen(TFT_BLACK);
 
-    // Get current values from global state for banner
     GlobalState &state = GlobalState::getInstance();
     drawBanner(sprite, state);
-
-    // All elements are drawn in display() since we clear every frame
 }

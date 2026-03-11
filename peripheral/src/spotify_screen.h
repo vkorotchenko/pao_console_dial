@@ -24,7 +24,8 @@ public:
     void onScroll(int x, TFT_eSprite *sprite) override;
 
 private:
-    // Note: type is inherited from base screen class, no need to redeclare
+    unsigned long lastVolumeKeyTime = 0;
+    static const unsigned long VOLUME_RATE_LIMIT_MS = 150;  // max one volume key per 150ms
 };
 
 #endif /* SPOTIFY_SCREEN_H_ */
