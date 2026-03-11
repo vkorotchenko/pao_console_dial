@@ -165,7 +165,7 @@ void SpeedometerScreen::drawValueBar(
     TFT_eSprite* sprite,
     int speed, const char* speedUnit,
     int battery, int rpm,
-    bool isStale)
+    bool isSpeedStale, bool isCanStale)
 {
     sprite->unloadFont();
     sprite->setTextDatum(TC_DATUM);
@@ -175,12 +175,15 @@ void SpeedometerScreen::drawValueBar(
     int lineY = DIAL_CENTER_Y + (int)(R_TORQUE * 0.866f) + 20;
 
     char col1[16], col2[12], col3[12];
-    if (isStale) {
-        sprintf(col1, " -- %s",  speedUnit);
+    if (isSpeedStale) {
+        sprintf(col1, " -- %s", speedUnit);
+    } else {
+        sprintf(col1, "%3d%s", speed, speedUnit);
+    }
+    if (isCanStale) {
         sprintf(col2, " --%%");
         sprintf(col3, " ---RPM");
     } else {
-        sprintf(col1, "%3d%s",  speed,   speedUnit);
         sprintf(col2, "%3d%%",  battery);
         sprintf(col3, "%4dRPM", rpm);
     }
@@ -199,7 +202,8 @@ void SpeedometerScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gf
     sprite->fillSprite(TFT_BLACK);
     drawBanner(sprite, state);
 
-    bool isStale       = (state.getDcVoltage() == 0);
+    bool isCanStale   = (state.getDcVoltage() == 0);
+    bool isGpsStale   = !state.getGpsFixAvailable();
     int  currentSpeed  = state.getSpeed();
     int  currentRPM    = state.getRpm();
     int  currentTorque = state.getTorque();
@@ -208,22 +212,26 @@ void SpeedometerScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gf
     const char* speedUnit = state.getUseMetricUnits() ? "km/h" : "mph";
     int maxSpeed = state.getUseMetricUnits() ? MAX_SPEED_KMH : MAX_SPEED_MPH;
 
-    // Draw concentric arcs outermost → innermost so inner rings overdraw outer ones cleanly
-    if (!isStale) {
+    // CAN-sourced dials (torque, RPM, battery)
+    if (!isCanStale) {
         drawTorqueDial(sprite, currentTorque);
-        drawConcentricDial(sprite, R_SPEED,   currentSpeed,  maxSpeed, getDialColor(currentSpeed,  maxSpeed));
-        drawConcentricDial(sprite, R_RPM,     currentRPM,    MAX_RPM,  getDialColor(currentRPM,    MAX_RPM));
+        drawConcentricDial(sprite, R_RPM, currentRPM, MAX_RPM, getDialColor(currentRPM, MAX_RPM));
         drawBatteryDial(sprite, currentBat);
     } else {
-        // Stale: draw grey backgrounds only
         sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, R_TORQUE,  R_TORQUE  - DIAL_THICKNESS, DIAL_START_ANGLE, DIAL_END_ANGLE, TFT_DARKGREY, TFT_BLACK, true);
-        sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, R_SPEED,   R_SPEED   - DIAL_THICKNESS, DIAL_START_ANGLE, DIAL_END_ANGLE, TFT_DARKGREY, TFT_BLACK, true);
         sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, R_RPM,     R_RPM     - DIAL_THICKNESS, DIAL_START_ANGLE, DIAL_END_ANGLE, TFT_DARKGREY, TFT_BLACK, true);
         sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, R_BATTERY, R_BATTERY - DIAL_THICKNESS, DIAL_START_ANGLE, DIAL_END_ANGLE, TFT_DARKGREY, TFT_BLACK, true);
     }
 
-    drawLegend(sprite, currentTorque, currentBat, isStale);
-    drawValueBar(sprite, currentSpeed, speedUnit, currentBat, currentRPM, isStale);
+    // GPS-sourced dial (speed)
+    if (!isGpsStale) {
+        drawConcentricDial(sprite, R_SPEED, currentSpeed, maxSpeed, getDialColor(currentSpeed, maxSpeed));
+    } else {
+        sprite->drawArc(DIAL_CENTER_X, DIAL_CENTER_Y, R_SPEED, R_SPEED - DIAL_THICKNESS, DIAL_START_ANGLE, DIAL_END_ANGLE, TFT_DARKGREY, TFT_BLACK, true);
+    }
+
+    drawLegend(sprite, currentTorque, currentBat, isCanStale);
+    drawValueBar(sprite, currentSpeed, speedUnit, currentBat, currentRPM, isGpsStale, isCanStale);
 }
 
 void SpeedometerScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)

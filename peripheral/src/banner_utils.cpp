@@ -1,12 +1,13 @@
 #include "banner_utils.h"
 
 String formatDate(uint8_t day, uint8_t month, bool useMetric) {
+    static const char* months[] = {
+        "???", "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+        "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
+    };
+    const char* mon = (month >= 1 && month <= 12) ? months[month] : months[0];
     char buffer[12];
-    if (useMetric) {
-        sprintf(buffer, "%02d/%02d", day, month);  // DD/MM
-    } else {
-        sprintf(buffer, "%02d/%02d", month, day);  // MM/DD
-    }
+    sprintf(buffer, "%s %02d", mon, day);
     return String(buffer);
 }
 
@@ -38,8 +39,8 @@ void drawBanner(TFT_eSprite* sprite, GlobalState& state) {
     // Format date and time (show placeholders if no GPS fix)
     String dateStr, timeStr;
     if (state.getGpsFixAvailable()) {
-        dateStr = formatDate(state.getGpsDay(), state.getGpsMonth(), state.getUseMetricUnits());
-        timeStr = formatTime(state.getGpsHour(), state.getGpsMinute(), state.getTimeFormat24Hr());
+        dateStr = formatDate(state.getLocalDay(), state.getLocalMonth(), state.getUseMetricUnits());
+        timeStr = formatTime(state.getLocalHour(), state.getGpsMinute(), state.getTimeFormat24Hr());
     } else {
         dateStr = "--/--";
         timeStr = "--:--";

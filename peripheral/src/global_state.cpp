@@ -38,6 +38,7 @@ void GlobalState::saveSettings()
     preferences.putInt("tox", touchXOffset);
     preferences.putInt("toy", touchYOffset);
     preferences.putInt("sth", scrollThreshold);
+    preferences.putInt("tz",  timezoneOffsetHours);
 
     preferences.end();
 }
@@ -52,9 +53,10 @@ void GlobalState::loadSettings()
     chargeAlertThreshold = preferences.getInt("chargeAlert", 20);
     screenTimeout = preferences.getInt("timeout", 60);
     timeFormat24Hr = preferences.getBool("time24hr", true);
-    touchXOffset    = preferences.getInt("tox", -10);
-    touchYOffset    = preferences.getInt("toy", -10);
-    scrollThreshold = preferences.getInt("sth", 15);
+    touchXOffset          = preferences.getInt("tox", -10);
+    touchYOffset          = preferences.getInt("toy", -10);
+    scrollThreshold       = preferences.getInt("sth", 15);
+    timezoneOffsetHours   = preferences.getInt("tz",  0);
 
     preferences.end();
 }

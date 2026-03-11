@@ -30,7 +30,7 @@ private:
 
     Gears::Gear gear;
     screen *currentScreen;
-    int speed = 0;
+    float speed = 0.0f;  // stored in knots
     int rpm = 0;
     int batteryLevel = 0;
 
@@ -52,6 +52,9 @@ private:
     int touchXOffset    = -10;        // touch X correction (pixels)
     int touchYOffset    = -10;        // touch Y correction (pixels)
     int scrollThreshold = 15;         // encoder degrees per carousel click
+
+    // Timezone
+    int timezoneOffsetHours = 0;      // UTC offset, e.g. -5 for EST, +1 for CET
 
     // CAN motor controller data
     int motorTemp = 0;
@@ -93,8 +96,15 @@ public:
 
     // speedometer page
 
-    int getSpeed() { return speed; }
-    void setSpeed(int newSpeed) { speed = newSpeed; }
+    // Returns speed converted from knots to mph or km/h based on units setting
+    int getSpeed() {
+        if (useMetricUnits) {
+            return (int)(speed * 1.852f + 0.5f);   // knots → km/h
+        } else {
+            return (int)(speed * 1.15078f + 0.5f); // knots → mph
+        }
+    }
+    void setSpeed(float newSpeed) { speed = newSpeed; }
     int getRpm() { return rpm; }
     void setRpm(int newRpm) { rpm = newRpm; }
     int getBatteryLevel() { return batteryLevel; }
@@ -155,6 +165,37 @@ public:
 
     int getScrollThreshold() { return scrollThreshold; }
     void setScrollThreshold(int value) { scrollThreshold = value; saveSettings(); }
+
+    int getTimezoneOffsetHours() { return timezoneOffsetHours; }
+    void setTimezoneOffsetHours(int value) { timezoneOffsetHours = value; saveSettings(); }
+
+    // Local time/date with timezone applied
+    int getLocalHour() {
+        int h = (int)gpsHour + timezoneOffsetHours;
+        if (h >= 24) h -= 24;
+        if (h < 0)   h += 24;
+        return h;
+    }
+    int getLocalDay() {
+        int h = (int)gpsHour + timezoneOffsetHours;
+        if (h >= 24) return gpsDay + 1;  // day rolled forward
+        if (h < 0)   return gpsDay - 1;  // day rolled back
+        return gpsDay;
+    }
+    int getLocalMonth() {
+        int h = (int)gpsHour + timezoneOffsetHours;
+        // Only adjust month if day rolled past month boundary
+        if (h >= 24) {
+            // day rolled forward — check if past end of month
+            static const int dim[] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
+            int maxDay = (gpsMonth == 2 && (2000 + gpsYear) % 4 == 0) ? 29 : dim[gpsMonth];
+            if (gpsDay >= maxDay) return gpsMonth + 1 > 12 ? 1 : gpsMonth + 1;
+        } else if (h < 0) {
+            // day rolled back — check if before start of month
+            if (gpsDay <= 1) return gpsMonth - 1 < 1 ? 12 : gpsMonth - 1;
+        }
+        return gpsMonth;
+    }
 
     // CAN motor controller data getters/setters
     int getMotorTemp() { return motorTemp; }

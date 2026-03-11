@@ -22,7 +22,7 @@ private:
     void drawTorqueDial(TFT_eSprite* sprite, int torque);
     void drawBatteryDial(TFT_eSprite* sprite, int battery);
     void drawLegend(TFT_eSprite* sprite, int torque, int battery, bool isStale);
-    void drawValueBar(TFT_eSprite* sprite, int speed, const char* speedUnit, int battery, int rpm, bool isStale);
+    void drawValueBar(TFT_eSprite* sprite, int speed, const char* speedUnit, int battery, int rpm, bool isSpeedStale, bool isCanStale);
 };
 
 #endif /* SPEEDO_SCREEN_H_ */

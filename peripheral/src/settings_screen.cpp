@@ -14,14 +14,15 @@ struct SettingItem {
     int stepSize;           // Increment/decrement step
 };
 
-const SettingItem SETTINGS[7] = {
-    {"BRIGHTNESS", "%",  0, 0, 100,   1},   // 0: Display Brightness
-    {"UNITS",      "",   1, 0, 1,     1},   // 1: Speed Units (0=MPH, 1=KM/H)
-    {"CHG ALERT",  "%",  0, 0, 100,   5},   // 2: Charge Alert Threshold
-    {"TIMEOUT",    "s",  0, 0, 300,  15},   // 3: Screen Timeout
-    {"TIME FMT",   "",   1, 0, 1,     1},   // 4: Time Format (0=12hr, 1=24hr)
-    {"TOUCH CAL",  "",   2, 0, 0,     0},   // 5: Touch calibration wizard
-    {"DIAL CAL",   "",   2, 0, 0,     0},   // 6: Dial calibration wizard
+const SettingItem SETTINGS[8] = {
+    {"BRIGHTNESS", "%",  0,   0, 100,   1},   // 0: Display Brightness
+    {"UNITS",      "",   1,   0, 1,     1},   // 1: Speed Units (0=MPH, 1=KM/H)
+    {"CHG ALERT",  "%",  0,   0, 100,   5},   // 2: Charge Alert Threshold
+    {"TIMEOUT",    "s",  0,   0, 300,  15},   // 3: Screen Timeout
+    {"TIME FMT",   "",   1,   0, 1,     1},   // 4: Time Format (0=12hr, 1=24hr)
+    {"TIMEZONE",   "",   0, -12, 14,    1},   // 5: UTC offset (-12 to +14)
+    {"TOUCH CAL",  "",   2,   0, 0,     0},   // 6: Touch calibration wizard
+    {"DIAL CAL",   "",   2,   0, 0,     0},   // 7: Dial calibration wizard
 };
 
 // Get current value for a setting index
@@ -34,6 +35,7 @@ int getCurrentValue(int index) {
         case 2: return state.getChargeAlertThreshold();
         case 3: return state.getScreenTimeout();
         case 4: return state.getTimeFormat24Hr() ? 1 : 0;  // Convert bool to int
+        case 5: return state.getTimezoneOffsetHours();
         default: return 0;
     }
 }
@@ -48,6 +50,7 @@ void saveValue(int index, int value) {
         case 2: state.setChargeAlertThreshold(value); break;
         case 3: state.setScreenTimeout(value); break;
         case 4: state.setTimeFormat24Hr(value == 1); break;  // Convert int to bool
+        case 5: state.setTimezoneOffsetHours(value); break;
     }
 }
 
@@ -67,8 +70,14 @@ String getValueString(int index, int value) {
     }
     else {
         // Numeric setting
-        if (index == 3 && value == 0) {  // Timeout special case
+        if (index == 3 && value == 0) {  // Timeout: 0 = never
             return "NEVER";
+        }
+        if (index == 5) {  // Timezone: show sign explicitly
+            if (value == 0) return "UTC";
+            char buf[8];
+            sprintf(buf, "%+d", value);
+            return String(buf);
         }
         return String(value);
     }
@@ -118,9 +127,9 @@ void SettingsScreen::onTouch(int x, int y, TFT_eSprite *sprite) {
 
     // Launch calibration wizards for type-2 items
     if (!isEditMode && SETTINGS[currentIndex].settingType == 2) {
-        if (currentIndex == 5) {
+        if (currentIndex == 6) {
             calibMode = CALIB_TOUCH_AWAIT;
-        } else if (currentIndex == 6) {
+        } else if (currentIndex == 7) {
             calibDialPeak = 0;
             calibMode = CALIB_DIAL_AWAIT;
         }
@@ -153,7 +162,7 @@ void SettingsScreen::onScroll(int x, TFT_eSprite *sprite) {
 
     if (!isEditMode) {
         // NOT EDITING - Use base class carousel navigation
-        Carousel<7>::onScroll(x, sprite);
+        Carousel<8>::onScroll(x, sprite);
     }
     else {
         // EDITING - Use accumulator with lockout for consistent behavior
@@ -208,7 +217,7 @@ const char* SettingsScreen::getItemLabel(int index) {
 
 String SettingsScreen::getItemValue(int index) {
     if (SETTINGS[index].settingType == 2) {
-        return (index == 5) ? "TAP" : "TURN";
+        return (index == 6) ? "TAP" : "TURN";
     }
     int value = isEditMode && index == currentIndex ? editValue : getCurrentValue(index);
     return getValueString(index, value);
@@ -286,5 +295,5 @@ void SettingsScreen::display(TFT_eSprite* sprite, Arduino_ST7701_RGBPanel* gfx) 
         drawCalibScreen(sprite);
         return;
     }
-    Carousel<7>::display(sprite, gfx);
+    Carousel<8>::display(sprite, gfx);
 }
