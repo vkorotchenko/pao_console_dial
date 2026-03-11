@@ -70,23 +70,29 @@ const char* getUnitString(int index) {
 String getValueString(int index) {
     GlobalState &state = GlobalState::getInstance();
 
+    // Check for stale CAN data (dcVoltage == 0 indicates no CAN messages)
+    bool canDataStale = (state.getDcVoltage() == 0);
+
+    // Check for GPS fix availability
+    bool gpsFixAvailable = state.getGpsFixAvailable();
+
     switch(index) {
-        // Motor Controller Data
-        case 0: return String(state.getMotorTemp());
-        case 1: return String(state.getInverterTemp());
-        case 2: return String(state.getTorque());
-        case 3: return String(state.getDcVoltage());
-        case 4: return String(state.getDcCurrent());
+        // Motor Controller Data (indices 0-4)
+        case 0: return canDataStale ? "N/A" : String(state.getMotorTemp());
+        case 1: return canDataStale ? "N/A" : String(state.getInverterTemp());
+        case 2: return canDataStale ? "N/A" : String(state.getTorque());
+        case 3: return canDataStale ? "N/A" : String(state.getDcVoltage());
+        case 4: return canDataStale ? "N/A" : String(state.getDcCurrent());
         case 5: return getMotorStateString(state.getMotorState());
         case 6: return getMotorStatusString(state);  // Combines flags
 
-        // GPS Data
-        case 7: return String(state.getGpsLatitude(), 4);   // 4 decimals
-        case 8: return String(state.getGpsLongitude(), 4);
-        case 9: return String(state.getGpsSpeed(), 1);      // 1 decimal
-        case 10: return String(state.getGpsAltitude(), 1);
-        case 11: return String(state.getGpsSatellites());
-        case 12: return state.getGpsFixAvailable() ? "AVAILABLE" : "NO FIX";
+        // GPS Data (indices 7-11)
+        case 7: return gpsFixAvailable ? String(state.getGpsLatitude(), 4) : "--";
+        case 8: return gpsFixAvailable ? String(state.getGpsLongitude(), 4) : "--";
+        case 9: return gpsFixAvailable ? String(state.getGpsSpeed(), 1) : "--";
+        case 10: return gpsFixAvailable ? String(state.getGpsAltitude(), 1) : "--";
+        case 11: return gpsFixAvailable ? String(state.getGpsSatellites()) : "--";
+        case 12: return gpsFixAvailable ? "AVAILABLE" : "NO FIX";
 
         default: return "--";
     }
@@ -95,6 +101,17 @@ String getValueString(int index) {
 // Helper function - not part of DataScreen class interface
 uint16_t getValueColorHelper(int index) {
     GlobalState &state = GlobalState::getInstance();
+
+    // Check for stale CAN data (dcVoltage == 0 indicates no CAN messages)
+    bool canDataStale = (state.getDcVoltage() == 0);
+
+    // Check for GPS fix availability
+    bool gpsFixAvailable = state.getGpsFixAvailable();
+
+    // CAN motor data (indices 0-4) - show grey if stale
+    if (index >= 0 && index <= 4) {
+        return canDataStale ? TFT_DARKGREY : TFT_WHITE;
+    }
 
     // Motor status color-coding (index 6)
     if (index == 6) {
@@ -105,9 +122,14 @@ uint16_t getValueColorHelper(int index) {
         return TFT_WHITE;                              // Idle
     }
 
+    // GPS data (indices 7-11) - show grey if no fix
+    if (index >= 7 && index <= 11) {
+        return gpsFixAvailable ? TFT_WHITE : TFT_DARKGREY;
+    }
+
     // GPS fix color-coding (index 12)
     if (index == 12) {
-        return state.getGpsFixAvailable() ? TFT_GREEN : TFT_RED;
+        return gpsFixAvailable ? TFT_GREEN : TFT_RED;
     }
 
     // All other values: white

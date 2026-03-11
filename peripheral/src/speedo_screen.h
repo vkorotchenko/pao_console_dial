@@ -17,12 +17,12 @@ public:
 private:
     ScreenTypes::ScreenType type = ScreenTypes::ScreenType::SPEEDOMETER;
 
-    // Helper methods for drawing gauge elements
-    void drawSemiCircularDial(TFT_eSprite* sprite, int centerX, int centerY,
-                              int radius, int value, int maxValue,
-                              const char* label, const char* unit);
-    void drawBatteryBar(TFT_eSprite* sprite);
     uint16_t getDialColor(int value, int maxValue);
+    void drawConcentricDial(TFT_eSprite* sprite, int radius, int value, int maxValue, uint16_t fgColor);
+    void drawTorqueDial(TFT_eSprite* sprite, int torque);
+    void drawBatteryDial(TFT_eSprite* sprite, int battery);
+    void drawLegend(TFT_eSprite* sprite, int torque, int battery, bool isStale);
+    void drawValueBar(TFT_eSprite* sprite, int speed, const char* speedUnit, int battery, int rpm, bool isSpeedStale, bool isCanStale);
 };
 
 #endif /* SPEEDO_SCREEN_H_ */

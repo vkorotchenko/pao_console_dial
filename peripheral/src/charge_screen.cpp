@@ -2,10 +2,11 @@
 #include "global_state.h"
 #include "bigFont.h"
 #include "midleFont.h"
+#include "banner_utils.h"
 
 // Position constants
 int X_PROGRESS_BAR = 100;     // Progress bar left edge (moved 20px left)
-int Y_PROGRESS_BAR = 140;     // Progress bar top edge
+int Y_PROGRESS_BAR = 170;     // Progress bar top edge
 int PROGRESS_BAR_WIDTH = 300; // Total width
 int PROGRESS_BAR_HEIGHT = 40; // Total height
 int X_REQUESTED_AMPS = 170;   // Moved 20px right
@@ -50,12 +51,15 @@ void ChargeScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
 
   // Clear entire sprite to prevent artifacts from previous renders
   sprite->fillSprite(TFT_BLACK);
+
+  // Draw banner
+  drawBanner(sprite, state);
+
   sprite->loadFont(midleFont);
   sprite->setTextSize(1);
   sprite->setTextColor(TFT_DARKGREY, TFT_BLACK);
 
   // Redraw static elements that were on onLoad
-  drawTitle(sprite, "CHARGE");
   sprite->drawString("Requested Amps", X_REQUESTED_AMPS - 20, Y_REQUESTED_AMPS - 60);
   sprite->drawString("Current Voltage", X_CURRENT_VOLTAGE - 20, Y_CURRENT_VOLTAGE - 60);
   sprite->drawString("Target Voltage", X_TARGET_VOLTAGE - 20, Y_TARGET_VOLTAGE - 60);
@@ -106,8 +110,9 @@ void ChargeScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
   sprite->fillSprite(TFT_BLACK);
   gfx->fillScreen(TFT_BLACK);
 
-  // Draw title using helper method
-  drawTitle(sprite, "CHARGE");
+  // Draw banner
+  GlobalState &state = GlobalState::getInstance();
+  drawBanner(sprite, state);
 
   // Static labels (center-aligned, 20px left of values, 10px higher)
   sprite->setTextDatum(TC_DATUM);

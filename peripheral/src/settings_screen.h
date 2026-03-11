@@ -4,21 +4,38 @@
 
 #include "carousel.h"
 
-class SettingsScreen : public Carousel<4>
+enum CalibMode {
+    CALIB_NONE,
+    CALIB_TOUCH_AWAIT,
+    CALIB_TOUCH_RESULT,
+    CALIB_DIAL_AWAIT,
+    CALIB_DIAL_RESULT
+};
+
+class SettingsScreen : public Carousel<8>
 {
 private:
     ScreenTypes::ScreenType type = ScreenTypes::ScreenType::SETTINGS;
 
-    // Edit mode state (NEW for settings screen)
-    bool isEditMode = false;        // Are we currently editing a value?
-    int editValue = 0;              // Temporary value being edited
+    // Edit mode state
+    bool isEditMode = false;
+    int editValue = 0;
 
     // Touch debouncing
-    unsigned long lastTouchTime = 0;       // Last touch timestamp in milliseconds
-    const unsigned long TOUCH_DEBOUNCE = 300; // 300ms debounce delay
+    unsigned long lastTouchTime = 0;
+    const unsigned long TOUCH_DEBOUNCE = 300;
+
+    // Calibration state
+    CalibMode calibMode = CALIB_NONE;
+    static const int CALIB_TARGET_X = 240;
+    static const int CALIB_TARGET_Y = 270;
+    int calibRawX = 0;
+    int calibRawY = 0;
+    int calibDialPeak = 0;
+
+    void drawCalibScreen(TFT_eSprite* sprite);
 
 protected:
-    // Implement required virtual methods
     const char* getItemLabel(int index) override;
     String getItemValue(int index) override;
     const char* getItemUnit(int index) override;
@@ -28,7 +45,7 @@ protected:
 
 public:
     SettingsScreen() {};
-    // Override onScroll for edit mode logic
+    void display(TFT_eSprite* sprite, Arduino_ST7701_RGBPanel* gfx) override;
     void onScroll(int x, TFT_eSprite *sprite) override;
     void onTouch(int x, int y, TFT_eSprite *sprite) override;
     bool onClick(TFT_eSprite *sprite) override;

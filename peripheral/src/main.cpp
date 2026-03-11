@@ -102,31 +102,16 @@ unsigned short grays[13];
 
 void readEncoder()
 {
-
   static int pos = 0;
   encoder.tick();
 
   int newPos = encoder.getPosition();
   if (pos != newPos)
   {
-
-    if (newPos > pos)
-      angle = angle + inc;
-    if (newPos < pos)
-      angle = angle - inc;
-
+    angle += (newPos > pos) ? inc : -inc;
     pos = newPos;
+    state.getCurrentScreen()->onScroll(angle, &sprite);
   }
-  if (angle < 0)
-  {
-    angle = 359;
-  }
-  if (angle >= 360)
-  {
-    angle = 0;
-  }
-
-  state.getCurrentScreen()->onScroll(angle, &sprite);
 }
 
 void setup()
@@ -135,7 +120,6 @@ void setup()
   pinMode(BUTTON, INPUT_PULLUP);
   ledcSetup(PWM_CHANNEL, PWM_FREQ, pwm_resolution_bits);
   ledcAttachPin(IO_PWM_PIN, PWM_CHANNEL);
-  ledcWrite(PWM_CHANNEL, 840);
 
   rtc.setTime(0, 47, 13, 10, 23, 2023, 0);
 
@@ -178,6 +162,9 @@ void loop()
 
   // Periodic I2C data exchange with controller
   i2cHandler.process();
+
+  // Apply display brightness setting (0-100% → 10-bit PWM 0-1023)
+  ledcWrite(PWM_CHANNEL, (state.getDisplayBrightness() * 1023) / 100);
 
   state.getCurrentScreen()->display(&sprite, gfx);
   gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)sprite.getPointer(), 540, 540);
