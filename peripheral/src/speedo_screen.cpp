@@ -141,8 +141,8 @@ void SpeedometerScreen::drawLegend(TFT_eSprite* sprite, int torque, int battery,
     // Listed innermost first so they stack BAT→RPM→SPD→TRQ top-to-bottom
     LegendItem items[4] = {
         { R_BATTERY, batteryColor,                            "BAT" },
-        { R_RPM,     isStale ? TFT_DARKGREY : TFT_SKYBLUE,   "RPM" },
-        { R_SPEED,   isStale ? TFT_DARKGREY : TFT_SKYBLUE,   "SPD" },
+        { R_RPM,     (uint16_t)(isStale ? TFT_DARKGREY : TFT_SKYBLUE),   "RPM" },
+        { R_SPEED,   (uint16_t)(isStale ? TFT_DARKGREY : TFT_SKYBLUE),   "SPD" },
         { R_TORQUE,  torqueColor,                             "TRQ" },
     };
 
@@ -202,7 +202,7 @@ void SpeedometerScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gf
     sprite->fillSprite(TFT_BLACK);
     drawBanner(sprite, state);
 
-    bool isCanStale   = (state.getDcVoltage() == 0);
+    bool isCanStale   = !state.getCanConnected();
     bool isGpsStale   = !state.getGpsFixAvailable();
     int  currentSpeed  = state.getSpeed();
     int  currentRPM    = state.getRpm();

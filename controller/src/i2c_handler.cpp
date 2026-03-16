@@ -53,7 +53,8 @@ void I2CHandler::handleOnRequest() {
                  (statePtr->isWarning ? 0x04 : 0) |
                  (statePtr->isReady ? 0x08 : 0) |
                  (statePtr->gpsFixAvailable ? 0x10 : 0) |
-                 (statePtr->preChargeReady ? 0x20 : 0);
+                 (statePtr->preChargeReady ? 0x20 : 0) |
+                 (statePtr->canConnected ? 0x40 : 0);
 
     // GPS data (floats as raw bytes)
     memcpy(&buffer[16], &statePtr->gpsLatitude, 4);

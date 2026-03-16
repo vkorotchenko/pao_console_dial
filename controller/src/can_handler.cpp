@@ -74,6 +74,7 @@ void CanHandler::process(State::Data *data) {
 
         // Update timestamp to track data freshness
         data->lastCanMessageTime = millis();
+        data->canConnected = true;
     }
 
     // Detect gear changes and send CAN message

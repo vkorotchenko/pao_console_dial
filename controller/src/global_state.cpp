@@ -39,6 +39,7 @@ void State::setup() {
     data.isWarning = false;
     data.isReady = false;
     data.preChargeReady = false;
+    data.canConnected = false;
 
     // Initialize configuration fields to 0 (typically loaded from EEPROM later)
     data.configSpeedMax = 0;
@@ -115,6 +116,7 @@ void State::resetCanData() {
     data.isWarning = false;
     data.isReady = false;
     data.preChargeReady = false;
+    data.canConnected = false;
 
     // Reset timestamp to indicate no valid data
     data.lastCanMessageTime = 0;

@@ -60,6 +60,7 @@ public:
       bool isWarning;
       bool isReady;
       bool preChargeReady;  // Pre-charge contactor ready status from CAN 0x607
+      bool canConnected;    // True while CAN messages are being received
 
       int configSpeedMax;
       int configTorqueMax;

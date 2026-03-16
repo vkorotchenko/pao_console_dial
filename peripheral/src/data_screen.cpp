@@ -11,7 +11,7 @@ struct DataItem {
     uint8_t decimalPlaces;  // For floats only
 };
 
-const DataItem DATA_ITEMS[13] = {
+const DataItem DATA_ITEMS[14] = {
     // Motor Controller Data (7 items)
     {"MOTOR TEMP", "C", 0, 0},                  // 0: motorTemp (int)
     {"INVERTER TEMP", "C", 0, 0},               // 1: inverterTemp (int)
@@ -28,6 +28,9 @@ const DataItem DATA_ITEMS[13] = {
     {"GPS ALT", "m", 1, 1},                     // 10: gpsAltitude (float, 1 decimal)
     {"SATELLITES", "", 0, 0},                   // 11: gpsSatellites (int)
     {"GPS FIX", "", 4, 0},                      // 12: gpsFixAvailable (bool/status)
+
+    // Bus status
+    {"CAN BUS", "", 4, 0},                      // 13: CAN bus connection status
 };
 
 // Charge state helper functions moved to global_state.cpp (shared with charge_screen)
@@ -70,19 +73,18 @@ const char* getUnitString(int index) {
 String getValueString(int index) {
     GlobalState &state = GlobalState::getInstance();
 
-    // Check for stale CAN data (dcVoltage == 0 indicates no CAN messages)
-    bool canDataStale = (state.getDcVoltage() == 0);
+    bool canConnected = state.getCanConnected();
 
     // Check for GPS fix availability
     bool gpsFixAvailable = state.getGpsFixAvailable();
 
     switch(index) {
         // Motor Controller Data (indices 0-4)
-        case 0: return canDataStale ? "N/A" : String(state.getMotorTemp());
-        case 1: return canDataStale ? "N/A" : String(state.getInverterTemp());
-        case 2: return canDataStale ? "N/A" : String(state.getTorque());
-        case 3: return canDataStale ? "N/A" : String(state.getDcVoltage());
-        case 4: return canDataStale ? "N/A" : String(state.getDcCurrent());
+        case 0: return canConnected ? String(state.getMotorTemp()) : "N/A";
+        case 1: return canConnected ? String(state.getInverterTemp()) : "N/A";
+        case 2: return canConnected ? String(state.getTorque()) : "N/A";
+        case 3: return canConnected ? String(state.getDcVoltage()) : "N/A";
+        case 4: return canConnected ? String(state.getDcCurrent()) : "N/A";
         case 5: return getMotorStateString(state.getMotorState());
         case 6: return getMotorStatusString(state);  // Combines flags
 
@@ -93,6 +95,7 @@ String getValueString(int index) {
         case 10: return gpsFixAvailable ? String(state.getGpsAltitude(), 1) : "--";
         case 11: return gpsFixAvailable ? String(state.getGpsSatellites()) : "--";
         case 12: return gpsFixAvailable ? "AVAILABLE" : "NO FIX";
+        case 13: return canConnected ? "CONNECTED" : "NO CONNECTION";
 
         default: return "--";
     }
@@ -102,15 +105,14 @@ String getValueString(int index) {
 uint16_t getValueColorHelper(int index) {
     GlobalState &state = GlobalState::getInstance();
 
-    // Check for stale CAN data (dcVoltage == 0 indicates no CAN messages)
-    bool canDataStale = (state.getDcVoltage() == 0);
+    bool canConnected = state.getCanConnected();
 
     // Check for GPS fix availability
     bool gpsFixAvailable = state.getGpsFixAvailable();
 
-    // CAN motor data (indices 0-4) - show grey if stale
+    // CAN motor data (indices 0-4) - show grey if not connected
     if (index >= 0 && index <= 4) {
-        return canDataStale ? TFT_DARKGREY : TFT_WHITE;
+        return canConnected ? TFT_WHITE : TFT_DARKGREY;
     }
 
     // Motor status color-coding (index 6)
@@ -130,6 +132,11 @@ uint16_t getValueColorHelper(int index) {
     // GPS fix color-coding (index 12)
     if (index == 12) {
         return gpsFixAvailable ? TFT_GREEN : TFT_RED;
+    }
+
+    // CAN bus connection color-coding (index 13)
+    if (index == 13) {
+        return canConnected ? TFT_GREEN : TFT_RED;
     }
 
     // All other values: white

@@ -61,8 +61,8 @@ void I2CHandler::parseI2CState(uint8_t* buffer)
     uint8_t gpsYear = buffer[38];
 
     // Update GlobalState (triggers screen re-render)
-    state.setSpeed(resSpeed);
-    state.setRpm(resSpeed);  // or calculate RPM if different
+    state.setSpeed(gpsSpeed);  // GPS speed in knots — getSpeed() converts to km/h or mph
+    state.setRpm(resSpeed);    // CAN motor speed
     state.setMotorTemp(motorTemp / 10);  // convert back from ×10
     state.setInverterTemp(invTemp / 10);
     state.setTorque(torque / 10);
@@ -80,6 +80,7 @@ void I2CHandler::parseI2CState(uint8_t* buffer)
     state.setGpsSatellites(gpsSats);
     state.setGpsFixAvailable(statusFlags & 0x10);
     state.setPreChargeReady(statusFlags & 0x20);
+    state.setCanConnected(statusFlags & 0x40);
     state.setGpsHour(gpsHour);
     state.setGpsMinute(gpsMinute);
     state.setGpsSecond(gpsSecond);

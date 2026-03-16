@@ -4,7 +4,7 @@
 
 #include "carousel.h"
 
-class DataScreen : public Carousel<13>
+class DataScreen : public Carousel<14>
 {
 private:
     ScreenTypes::ScreenType type = ScreenTypes::ScreenType::CAN_DATA;
