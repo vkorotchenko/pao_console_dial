@@ -199,24 +199,17 @@ void ChargeScreen::onScroll(int x, TFT_eSprite* sprite) {
 
     const int THRESHOLD = GlobalState::getInstance().getScrollThreshold();
     const int MAX_ACCUM = THRESHOLD + THRESHOLD / 2;
-    const int RESET_THRESHOLD = THRESHOLD / 2;
     if (scrollAccumulator >  MAX_ACCUM) scrollAccumulator =  MAX_ACCUM;
     if (scrollAccumulator < -MAX_ACCUM) scrollAccumulator = -MAX_ACCUM;
 
-    if (abs(scrollAccumulator) < RESET_THRESHOLD) {
-        scrollLockout = false;
-    }
-
     const ChargeItem &item = CHARGE_ITEMS[currentIndex];
-    if (scrollAccumulator >= THRESHOLD && !scrollLockout) {
+    if (scrollAccumulator >= THRESHOLD) {
         editValue += item.stepSize;
         if (editValue > item.maxValue) editValue = item.maxValue;
         scrollAccumulator = 0;
-        scrollLockout = true;
-    } else if (scrollAccumulator <= -THRESHOLD && !scrollLockout) {
+    } else if (scrollAccumulator <= -THRESHOLD) {
         editValue -= item.stepSize;
         if (editValue < item.minValue) editValue = item.minValue;
         scrollAccumulator = 0;
-        scrollLockout = true;
     }
 }

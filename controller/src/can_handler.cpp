@@ -93,11 +93,14 @@ void CanHandler::process(State::Data *data) {
         data->pendingChargeValue = 0;
     }
 
-    // Detect gear changes and send CAN message
+    // Send gear command on change AND periodically (every 1s)
     static State::Gear lastGear = State::Gear::NEUTRAL;
-    if (data->selectedGear != lastGear) {
+    static unsigned long lastGearSendTime = 0;
+    bool gearChanged = (data->selectedGear != lastGear);
+    if (gearChanged || (millis() - lastGearSendTime >= 1000)) {
         sendGearChange(data->selectedGear);
         lastGear = data->selectedGear;
+        lastGearSendTime = millis();
     }
 }
 
@@ -236,27 +239,38 @@ void CanHandler::handle_236(CAN_FRAME *frame, State::Data *data)
     //u_int8_t selectedGear = frame->data.bytes[5];
 }
 
+// Digital output command values per DMOC 0x606 protocol
+static const unsigned char DO_NO_CHANGE = 0x00;  // Don't disturb this output
+static const unsigned char DO_HIGH      = 0x88;  // Set output to 1 (HIGH)
+static const unsigned char DO_LOW       = 0xFF;  // Set output to 0 (LOW)
+
 void CanHandler::sendGearChange(State::Gear gear) {
-    unsigned char buf[8] = {0};  // Initialize all bytes to 0x00
+    unsigned char buf[8] = {
+        DO_NO_CHANGE, DO_NO_CHANGE, DO_NO_CHANGE, DO_NO_CHANGE,
+        DO_NO_CHANGE, DO_NO_CHANGE, DO_NO_CHANGE, DO_NO_CHANGE
+    };
 
     switch (gear) {
         case State::Gear::NEUTRAL:
-            // All bytes already 0x00 from initialization
+            buf[5] = DO_LOW;
+            buf[6] = DO_LOW;
+            buf[7] = DO_LOW;
             break;
 
         case State::Gear::DRIVE:
-            buf[7] = 0x88;  // 8th byte (last digit) = high
-            buf[6] = 0xFF;  // 7th byte = low
+            buf[6] = DO_LOW;
+            buf[7] = DO_HIGH;
             break;
 
         case State::Gear::REVERSE:
-            buf[7] = 0xFF;  // 8th byte = low (swapped with drive)
-            buf[6] = 0x88;  // 7th byte = high (swapped with drive)
+            buf[6] = DO_HIGH;
+            buf[7] = DO_LOW;
             break;
 
         case State::Gear::PARK:
-            buf[5] = 0xFF;  // 6th byte = high
-            // bytes 6 and 7 remain 0x00
+            buf[5] = DO_LOW;
+            buf[6] = DO_LOW;
+            buf[7] = DO_LOW;
             break;
     }
 
