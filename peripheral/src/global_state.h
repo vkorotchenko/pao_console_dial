@@ -40,6 +40,13 @@ private:
     float requestedAmps = 0.0f;
     float currentVoltage = 0.0f;
     float targetVoltage = 0.0f;
+    uint8_t chargeErrorState = 0;      // error bitmask from charger
+    uint16_t chargeMaxTime = 0;        // max charge time in seconds (from 0x18FFA1E5)
+
+    // Pending charge config command — held until charger confirms via CAN broadcast
+    uint8_t pendingChargeCmd = 0;      // 0=none, 1=set_max_time, 2=set_target_pct, 3=set_amps
+    uint16_t pendingChargeValue = 0;
+    unsigned long pendingChargeSentTime = 0;  // millis() when command was first queued
 
     // Settings data
     int displayBrightness = 100;      // 0-100%
@@ -126,6 +133,40 @@ public:
 
     float getTargetVoltage() { return targetVoltage; }
     void setTargetVoltage(float newVoltage) { targetVoltage = newVoltage; }
+
+    uint8_t getChargeErrorState() { return chargeErrorState; }
+    void setChargeErrorState(uint8_t state) { chargeErrorState = state; }
+
+    uint16_t getChargeMaxTime() { return chargeMaxTime; }
+    void setChargeMaxTime(uint16_t seconds) { chargeMaxTime = seconds; }
+
+    // Estimated SOC from live voltage vs target voltage.
+    // Returns 0-100; falls back to chargePercentage (target %) if no voltage data.
+    int getEstimatedSOC() {
+        if (targetVoltage <= 0.0f || currentVoltage <= 0.0f) return chargePercentage;
+        int soc = (int)((currentVoltage / targetVoltage) * chargePercentage);
+        if (soc < 0) soc = 0;
+        if (soc > 100) soc = 100;
+        return soc;
+    }
+
+    uint8_t getPendingChargeCmd() { return pendingChargeCmd; }
+    uint16_t getPendingChargeValue() { return pendingChargeValue; }
+    void setPendingChargeCmd(uint8_t cmd, uint16_t value) {
+        pendingChargeCmd = cmd;
+        pendingChargeValue = value;
+        pendingChargeSentTime = millis();
+    }
+    void clearPendingChargeCmd() {
+        pendingChargeCmd = 0;
+        pendingChargeValue = 0;
+        pendingChargeSentTime = 0;
+    }
+    // Returns true if pending command has not been confirmed within 30 seconds
+    bool isPendingChargeExpired() {
+        return pendingChargeCmd != 0 &&
+               (millis() - pendingChargeSentTime) > 30000UL;
+    }
 
     // Settings page (with EEPROM persistence)
     int getDisplayBrightness() { return displayBrightness; }

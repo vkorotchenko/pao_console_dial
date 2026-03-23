@@ -88,9 +88,44 @@ void I2CHandler::parseI2CState(uint8_t* buffer)
     state.setGpsMonth(gpsMonth);
     state.setGpsYear(gpsYear);
 
+    // Charge data (bytes 39-46)
+    state.setChargePercentage(buffer[39]);
+    state.setChargeErrorState(buffer[40]);
+    uint16_t chargeMaxA = ((uint16_t)buffer[41] << 8) | buffer[42];
+    state.setRequestedAmps(chargeMaxA / 10.0f);
+    uint16_t tgtV = ((uint16_t)buffer[43] << 8) | buffer[44];
+    state.setTargetVoltage(tgtV / 10.0f);
+    uint16_t chargeMaxTime = ((uint16_t)buffer[45] << 8) | buffer[46];
+    state.setChargeMaxTime(chargeMaxTime);
+    // currentVoltage: use targetVoltage as proxy (no direct ELCON voltage in I2C packet)
+    // getEstimatedSOC() uses currentVoltage/targetVoltage ratio — set to 0 if unknown
+    // (actual voltage from 0x18FF50E5 is not forwarded via I2C; SOC falls back to target%)
+
     // Battery level calculation (could use voltage)
     int batteryPercent = map(voltage, 3000, 4200, 0, 100);  // adjust ranges
     state.setBatteryLevel(constrain(batteryPercent, 0, 100));
+
+    // Check if the charger has confirmed a pending config change via its CAN broadcast
+    if (state.getPendingChargeCmd() != 0) {
+        uint8_t cmd = state.getPendingChargeCmd();
+        uint16_t expected = state.getPendingChargeValue();
+        bool confirmed = false;
+        switch (cmd) {
+            case 3:  // set_amps: expected is 1/10th A, chargeMaxA is 1/10th A
+                confirmed = (chargeMaxA == expected);
+                break;
+            case 2:  // set_target_pct: expected is pct*10 (e.g. 950), chargePercent is 0-100
+                confirmed = (buffer[39] == (uint8_t)(expected / 10));
+                break;
+            case 1:  // set_max_time: expected is seconds, chargeMaxTime is seconds
+                confirmed = (chargeMaxTime == expected);
+                break;
+        }
+        if (confirmed) {
+            Serial.println("I2C: Charge config confirmed by charger broadcast");
+            state.clearPendingChargeCmd();
+        }
+    }
 
     Serial.print("I2C: Parsed - Speed: ");
     Serial.print(resSpeed);
@@ -102,23 +137,42 @@ void I2CHandler::parseI2CState(uint8_t* buffer)
 
 void I2CHandler::updateI2CData()
 {
-    // Send gear change to controller
-    uint8_t gearMessage[4];
-    gearMessage[0] = 0x01;  // protocol version
-    gearMessage[1] = 0x02;  // message type: gear command
+    // Build 8-byte message: gear command or charge config command
+    uint8_t msg[8] = {0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-    // Map gear enum to byte
-    switch (state.getGear()) {
-        case Gears::Gear::NEUTRAL: gearMessage[2] = 0; break;
-        case Gears::Gear::DRIVE: gearMessage[2] = 1; break;
-        case Gears::Gear::REVERSE: gearMessage[2] = 2; break;
-        case Gears::Gear::PARK: gearMessage[2] = 3; break;
+    // Expire stale pending command (no confirmation after 30s)
+    if (state.isPendingChargeExpired()) {
+        Serial.println("I2C: Charge config timed out, clearing");
+        state.clearPendingChargeCmd();
     }
 
-    gearMessage[3] = gearMessage[0] ^ gearMessage[1] ^ gearMessage[2];
+    if (state.getPendingChargeCmd() != 0) {
+        // Charge config command — keep resending until confirmed via CAN broadcast
+        msg[1] = 0x03;
+        msg[2] = state.getPendingChargeCmd();
+        uint16_t val = state.getPendingChargeValue();
+        msg[3] = (val >> 8) & 0xFF;
+        msg[4] = val & 0xFF;
+        // Do NOT clear here — clearPendingChargeCmd() is called in parseI2CState
+        // once the charger confirms the new value via its CAN broadcast
+    } else {
+        // Gear command
+        msg[1] = 0x02;
+        switch (state.getGear()) {
+            case Gears::Gear::NEUTRAL: msg[2] = 0; break;
+            case Gears::Gear::DRIVE:   msg[2] = 1; break;
+            case Gears::Gear::REVERSE: msg[2] = 2; break;
+            case Gears::Gear::PARK:    msg[2] = 3; break;
+        }
+    }
+
+    // XOR checksum of bytes 0-6
+    uint8_t cs = 0;
+    for (int i = 0; i < 7; i++) cs ^= msg[i];
+    msg[7] = cs;
 
     Wire.beginTransmission(CONTROLLER_I2C_ADDRESS);
-    Wire.write(gearMessage, 4);
+    Wire.write(msg, 8);
     uint8_t error = Wire.endTransmission();
 
     if (error != 0) {

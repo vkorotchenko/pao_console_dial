@@ -29,6 +29,10 @@ private:
     void handle_236(CAN_FRAME *frame, State::Data *data);
     void handle_609(CAN_FRAME *frame, State::Data *data);
     void handle_607(CAN_FRAME *frame, State::Data *data);
+    void handle_charger_config1(CAN_FRAME *frame, State::Data *data);  // 0x18FFA0E5
+    void handle_charger_config2(CAN_FRAME *frame, State::Data *data);  // 0x18FFA1E5
+    void handle_charger_status(CAN_FRAME *frame, State::Data *data);   // 0x18FF50E5
+    void sendChargeConfig(uint8_t cmd, uint16_t value);                 // → 0x18FF60F4
 };
 
 

@@ -70,11 +70,27 @@ void CanHandler::process(State::Data *data) {
             case 0x607:
                 CanHandler::handle_607(&frame, data);
                 break;
+            case 0x18FFA0E5:
+                CanHandler::handle_charger_config1(&frame, data);
+                break;
+            case 0x18FFA1E5:
+                CanHandler::handle_charger_config2(&frame, data);
+                break;
+            case 0x18FF50E5:
+                CanHandler::handle_charger_status(&frame, data);
+                break;
         }
 
         // Update timestamp to track data freshness
         data->lastCanMessageTime = millis();
         data->canConnected = true;
+    }
+
+    // Dispatch pending charge config command from peripheral
+    if (data->pendingChargeCmd != 0) {
+        sendChargeConfig(data->pendingChargeCmd, data->pendingChargeValue);
+        data->pendingChargeCmd = 0;
+        data->pendingChargeValue = 0;
     }
 
     // Detect gear changes and send CAN message
@@ -267,6 +283,45 @@ void CanHandler::handle_609(CAN_FRAME *frame, State::Data *data) {
     // Process confirmation message from 0x609
     // Could store confirmation status if needed
     Serial.println("CAN: Received 0x609 confirmation");
+}
+
+void CanHandler::handle_charger_config1(CAN_FRAME *frame, State::Data *data) {
+    // 0x18FFA0E5: bytes 0-1 = maxCurrent (1/10th A), bytes 6-7 = targetVoltage (1/10th V)
+    data->chargeMaxCurrent = ((uint16_t)frame->data.bytes[0] << 8) | frame->data.bytes[1];
+    data->chargeTargetVoltage = ((uint16_t)frame->data.bytes[6] << 8) | frame->data.bytes[7];
+    Serial.print("CAN: Charger config1 - maxCurrent: ");
+    Serial.print(data->chargeMaxCurrent);
+    Serial.print(", targetVoltage: ");
+    Serial.println(data->chargeTargetVoltage);
+}
+
+void CanHandler::handle_charger_config2(CAN_FRAME *frame, State::Data *data) {
+    // 0x18FFA1E5: byte 0 = targetPercentage (0-100), byte 1 = errorState,
+    //             bytes 4-5 = maxChargeTime (seconds)
+    data->chargePercent = frame->data.bytes[0];
+    data->chargeErrorState = frame->data.bytes[1];
+    data->chargeMaxTime = ((uint16_t)frame->data.bytes[4] << 8) | frame->data.bytes[5];
+    Serial.print("CAN: Charger config2 - chargePercent: ");
+    Serial.print(data->chargePercent);
+    Serial.print(", errorState: ");
+    Serial.print(data->chargeErrorState);
+    Serial.print(", maxTime: ");
+    Serial.println(data->chargeMaxTime);
+}
+
+void CanHandler::handle_charger_status(CAN_FRAME *frame, State::Data *data) {
+    // 0x18FF50E5: bytes 0-1 = actualVoltage (1/10th V), bytes 2-3 = actualCurrent (1/10th A)
+    data->chargeActualVoltage = ((uint16_t)frame->data.bytes[0] << 8) | frame->data.bytes[1];
+    data->chargeActualCurrent = ((uint16_t)frame->data.bytes[2] << 8) | frame->data.bytes[3];
+}
+
+void CanHandler::sendChargeConfig(uint8_t cmd, uint16_t value) {
+    unsigned char buf[8] = {cmd, 0x00, (unsigned char)(value >> 8), (unsigned char)(value & 0xFF), 0x00, 0x00, 0x00, 0x00};
+    CAN.sendMsgBuf(1, 0x18FF60F4, 0, 0, 8, buf);
+    Serial.print("CAN: Sent charge config cmd=");
+    Serial.print(cmd);
+    Serial.print(" value=");
+    Serial.println(value);
 }
 
 void CanHandler::handle_607(CAN_FRAME *frame, State::Data *data) {

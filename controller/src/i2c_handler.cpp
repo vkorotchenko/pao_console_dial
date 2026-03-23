@@ -70,9 +70,15 @@ void I2CHandler::handleOnRequest() {
     buffer[36] = statePtr->gpsDay;
     buffer[37] = statePtr->gpsMonth;
     buffer[38] = statePtr->gpsYear;
-    buffer[39] = 0;  // Reserved
-
-    // Bytes 40-46 reserved (already zeroed)
+    // Charge data (bytes 39-46)
+    buffer[39] = statePtr->chargePercent;
+    buffer[40] = statePtr->chargeErrorState;
+    buffer[41] = (statePtr->chargeMaxCurrent >> 8) & 0xFF;
+    buffer[42] = statePtr->chargeMaxCurrent & 0xFF;
+    buffer[43] = (statePtr->chargeTargetVoltage >> 8) & 0xFF;
+    buffer[44] = statePtr->chargeTargetVoltage & 0xFF;
+    buffer[45] = (statePtr->chargeMaxTime >> 8) & 0xFF;
+    buffer[46] = statePtr->chargeMaxTime & 0xFF;
 
     // Calculate checksum
     uint8_t checksum = 0;
@@ -92,7 +98,7 @@ void I2CHandler::handleOnReceive(int numBytes) {
         return;
     }
 
-    if (numBytes != 4) {
+    if (numBytes != 4 && numBytes != 8) {
         Serial.print("I2C: Invalid message size: ");
         Serial.println(numBytes);
         // Flush the buffer
@@ -100,54 +106,56 @@ void I2CHandler::handleOnReceive(int numBytes) {
         return;
     }
 
-    uint8_t buffer[4];
-    for (int i = 0; i < 4 && Wire.available(); i++) {
+    uint8_t buffer[8] = {0};
+    for (int i = 0; i < numBytes && Wire.available(); i++) {
         buffer[i] = Wire.read();
     }
 
-    // Validate checksum
-    uint8_t checksum = buffer[0] ^ buffer[1] ^ buffer[2];
-    if (checksum != buffer[3]) {
+    // Validate checksum (XOR of all bytes except last)
+    uint8_t checksum = 0;
+    for (int i = 0; i < numBytes - 1; i++) checksum ^= buffer[i];
+    if (checksum != buffer[numBytes - 1]) {
         Serial.println("I2C: Checksum error");
         return;
     }
 
-    // Validate protocol
-    if (buffer[0] != 0x01 || buffer[1] != 0x02) {
-        Serial.println("I2C: Invalid protocol version or message type");
+    // Validate protocol version
+    if (buffer[0] != 0x01) {
+        Serial.println("I2C: Invalid protocol version");
         return;
     }
 
-    // Update gear
-    State::Gear oldGear = statePtr->selectedGear;
-    switch (buffer[2]) {
-        case 0:
-            statePtr->selectedGear = State::Gear::NEUTRAL;
-            break;
-        case 1:
-            statePtr->selectedGear = State::Gear::DRIVE;
-            break;
-        case 2:
-            statePtr->selectedGear = State::Gear::REVERSE;
-            break;
-        case 3:
-            statePtr->selectedGear = State::Gear::PARK;
-            break;
-        default:
-            Serial.println("I2C: Invalid gear value");
-            return;
+    if (buffer[1] == 0x02) {
+        // Gear command (4 or 8 bytes)
+        State::Gear oldGear = statePtr->selectedGear;
+        switch (buffer[2]) {
+            case 0: statePtr->selectedGear = State::Gear::NEUTRAL; break;
+            case 1: statePtr->selectedGear = State::Gear::DRIVE;   break;
+            case 2: statePtr->selectedGear = State::Gear::REVERSE; break;
+            case 3: statePtr->selectedGear = State::Gear::PARK;    break;
+            default:
+                Serial.println("I2C: Invalid gear value");
+                return;
+        }
+        Serial.print("I2C: Received gear change: ");
+        switch (statePtr->selectedGear) {
+            case State::Gear::NEUTRAL: Serial.println("NEUTRAL"); break;
+            case State::Gear::DRIVE:   Serial.println("DRIVE");   break;
+            case State::Gear::REVERSE: Serial.println("REVERSE"); break;
+            case State::Gear::PARK:    Serial.println("PARK");    break;
+        }
+        // Gear change will be detected by CAN handler which checks for changes
+    } else if (buffer[1] == 0x03 && numBytes == 8) {
+        // Charge config command
+        uint8_t cmd = buffer[2];
+        uint16_t value = ((uint16_t)buffer[3] << 8) | buffer[4];
+        statePtr->pendingChargeCmd = cmd;
+        statePtr->pendingChargeValue = value;
+        Serial.print("I2C: Received charge config cmd=");
+        Serial.print(cmd);
+        Serial.print(" value=");
+        Serial.println(value);
+    } else {
+        Serial.println("I2C: Unknown message type");
     }
-
-    Serial.print("I2C: Received gear change: ");
-    Serial.print(buffer[2]);
-    Serial.print(" (");
-    switch (statePtr->selectedGear) {
-        case State::Gear::NEUTRAL: Serial.print("NEUTRAL"); break;
-        case State::Gear::DRIVE: Serial.print("DRIVE"); break;
-        case State::Gear::REVERSE: Serial.print("REVERSE"); break;
-        case State::Gear::PARK: Serial.print("PARK"); break;
-    }
-    Serial.println(")");
-
-    // Gear change will be detected by CAN handler which checks for changes
 }

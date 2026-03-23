@@ -100,6 +100,19 @@ public:
 
       Gear selectedGear;
 
+      // Charge data (from pao_charger CAN broadcasts)
+      uint8_t chargePercent;         // 0-100 (from 0x18FFA1E5)
+      uint8_t chargeErrorState;      // error bitmask (from 0x18FFA1E5)
+      uint16_t chargeMaxCurrent;     // 1/10th A (from 0x18FFA0E5)
+      uint16_t chargeTargetVoltage;  // 1/10th V (from 0x18FFA0E5)
+      uint16_t chargeActualVoltage;  // 1/10th V (from 0x18FF50E5, local use only)
+      uint16_t chargeActualCurrent;  // 1/10th A (from 0x18FF50E5, local use only)
+      uint16_t chargeMaxTime;        // seconds (from 0x18FFA1E5 bytes 4-5)
+
+      // Pending charge config command (set by I2C receive, dispatched by CAN handler)
+      uint8_t pendingChargeCmd;      // 0=none, 1=set_max_time, 2=set_target_pct, 3=set_amps
+      uint16_t pendingChargeValue;   // value for the command
+
       // Timestamp tracking for staleness detection
       unsigned long lastCanMessageTime;  // Timestamp of last CAN message receipt
       unsigned long lastGpsUpdateTime;   // Timestamp of last GPS fix

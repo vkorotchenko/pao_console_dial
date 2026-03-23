@@ -1,127 +1,222 @@
 #include "charge_screen.h"
 #include "global_state.h"
+#include "banner_utils.h"
 #include "bigFont.h"
 #include "midleFont.h"
-#include "banner_utils.h"
 
-// Position constants
-int X_PROGRESS_BAR = 100;     // Progress bar left edge (moved 20px left)
-int Y_PROGRESS_BAR = 170;     // Progress bar top edge
-int PROGRESS_BAR_WIDTH = 300; // Total width
-int PROGRESS_BAR_HEIGHT = 40; // Total height
-int X_REQUESTED_AMPS = 170;   // Moved 20px right
-int Y_REQUESTED_AMPS = 320;
-int X_CURRENT_VOLTAGE = 390;  // Moved 20px right
-int Y_CURRENT_VOLTAGE = 320;
-int X_TARGET_VOLTAGE = 290;   // Moved 20px right
-int Y_TARGET_VOLTAGE = 410;   // Moved 10px down
+// ── Charge item definitions ───────────────────────────────────────────────────
+// Indices 0-2 are editable (scroll to adjust, tap to confirm).
+// Indices 3-4 are read-only telemetry.
+struct ChargeItem {
+    const char* label;
+    const char* unit;
+    bool editable;
+    uint8_t canCmd;   // 1=set_max_time, 2=set_target_pct, 3=set_amps
+    int minValue;
+    int maxValue;
+    int stepSize;
+};
 
-// Font sizes
-int CHARGE_PERCENT_FONT_SIZE = 24;
-int CHARGE_STATE_FONT_SIZE = 18;
-int CHARGE_VALUES_FONT_SIZE = 16;
+static const ChargeItem CHARGE_ITEMS[5] = {
+    {"MAX AMPS",  "A",   true,  3, 0, 200, 5},   // 0: max charge current (1/10th A stored, display as A)
+    {"TARGET %",  "%",   true,  2, 50, 100, 5},  // 1: target charge percentage (0-100)
+    {"MAX TIME",  "min", true,  1, 0, 720, 15},  // 2: max charge time (minutes; sent as seconds)
+    {"MAX TIME",  "min", false, 0, 0, 0,   0},   // 3: current max time display (read-only)
+    {"TARGET V",  "V",   false, 0, 0, 0,   0},   // 4: target voltage (read-only)
+};
 
-// Font offsets
-int CHARGE_PERCENT_X_OFFSET = -60;
-int CHARGE_PERCENT_Y_OFFSET = -60;
-int CHARGE_STATE_X_OFFSET = -80;
-int CHARGE_STATE_Y_OFFSET = -40;
-int REQUESTED_AMPS_X_OFFSET = -60;
-int REQUESTED_AMPS_Y_OFFSET = -30;
-int CURRENT_VOLTAGE_X_OFFSET = -60;
-int CURRENT_VOLTAGE_Y_OFFSET = -30;
-int TARGET_VOLTAGE_X_OFFSET = -60;
-int TARGET_VOLTAGE_Y_OFFSET = -30;
+// ── Progress bar ──────────────────────────────────────────────────────────────
+static const int PB_X = 120;
+static const int PB_Y = 133;
+static const int PB_W = 300;
+static const int PB_H = 28;
 
-// Helper functions moved to global_state.cpp (shared with data_screen)
+void ChargeScreen::drawProgressBar(TFT_eSprite* sprite) {
+    GlobalState &state = GlobalState::getInstance();
+    // Use voltage-derived SOC estimate; falls back to target% when no voltage data
+    int pct = constrain(state.getEstimatedSOC(), 0, 100);
 
-bool ChargeScreen::onClick(TFT_eSprite *sprite)
-{
-  return false;
+    // White 2px border
+    sprite->drawRect(PB_X, PB_Y, PB_W, PB_H, TFT_WHITE);
+    sprite->drawRect(PB_X + 1, PB_Y + 1, PB_W - 2, PB_H - 2, TFT_WHITE);
+
+    // Sky blue fill
+    int fillW = ((PB_W - 4) * pct) / 100;
+    if (fillW > 0) {
+        sprite->fillRect(PB_X + 2, PB_Y + 2, fillW, PB_H - 4, TFT_SKYBLUE);
+    }
+
+    // Percentage text centered in bar
+    sprite->unloadFont();
+    sprite->setTextDatum(MC_DATUM);
+    sprite->setTextSize(1);
+    sprite->setTextColor(TFT_WHITE, TFT_BLACK);
+    char buf[8];
+    sprintf(buf, "%d%%", pct);
+    sprite->drawString(buf, PB_X + PB_W / 2, PB_Y + PB_H / 2);
 }
 
-void ChargeScreen::onTouch(int x, int y, TFT_eSprite *sprite)
-{
-  return;
-};
+// ── display() override ────────────────────────────────────────────────────────
+void ChargeScreen::display(TFT_eSprite* sprite, Arduino_ST7701_RGBPanel* gfx) {
+    // Auto-clear pending indicator once charger confirms (GlobalState.pendingChargeCmd cleared)
+    if (pendingConfirmIndex >= 0 && GlobalState::getInstance().getPendingChargeCmd() == 0) {
+        pendingConfirmIndex = -1;
+    }
+    Carousel<5>::display(sprite, gfx);  // clears, draws banner + carousel panels
+    drawProgressBar(sprite);            // overlay progress bar between banner and carousel
+}
 
-void ChargeScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
-{
-  GlobalState &state = GlobalState::getInstance();
+// ── Carousel virtual methods ──────────────────────────────────────────────────
+const char* ChargeScreen::getItemLabel(int index) {
+    return CHARGE_ITEMS[index].label;
+}
 
-  // Clear entire sprite to prevent artifacts from previous renders
-  sprite->fillSprite(TFT_BLACK);
+String ChargeScreen::getItemValue(int index) {
+    GlobalState &state = GlobalState::getInstance();
 
-  // Draw banner
-  drawBanner(sprite, state);
+    if (isEditMode && index == currentIndex) {
+        // Show the live edit value
+        if (index == 0) {
+            // MAX AMPS: editValue is in 1/10th A, display as A.A
+            char buf[8];
+            sprintf(buf, "%.1f", editValue / 10.0f);
+            return String(buf);
+        }
+        return String(editValue);
+    }
 
-  sprite->loadFont(midleFont);
-  sprite->setTextSize(1);
-  sprite->setTextColor(TFT_DARKGREY, TFT_BLACK);
+    switch (index) {
+        case 0: {
+            // requestedAmps is already in amps (float)
+            char buf[8];
+            sprintf(buf, "%.1f", state.getRequestedAmps());
+            return String(buf);
+        }
+        case 1:
+            return String(state.getChargePercentage());
+        case 2: {
+            // Max time: stored as seconds, display in minutes
+            return String(state.getChargeMaxTime() / 60);
+        }
+        case 3: {
+            // Read-only display of current max time in minutes
+            return String(state.getChargeMaxTime() / 60);
+        }
+        case 4: {
+            char buf[8];
+            sprintf(buf, "%.1f", state.getTargetVoltage());
+            return String(buf);
+        }
+        default: return String("--");
+    }
+}
 
-  // Redraw static elements that were on onLoad
-  sprite->drawString("Requested Amps", X_REQUESTED_AMPS - 20, Y_REQUESTED_AMPS - 60);
-  sprite->drawString("Current Voltage", X_CURRENT_VOLTAGE - 20, Y_CURRENT_VOLTAGE - 60);
-  sprite->drawString("Target Voltage", X_TARGET_VOLTAGE - 20, Y_TARGET_VOLTAGE - 60);
+const char* ChargeScreen::getItemUnit(int index) {
+    return CHARGE_ITEMS[index].unit;
+}
 
-  // Draw progress bar for charge percentage
-  int chargePercent = state.getChargePercentage();
+uint16_t ChargeScreen::getValueColor(int index) {
+    if (isEditMode && index == currentIndex) return TFT_GREEN;
+    if (index == pendingConfirmIndex && GlobalState::getInstance().getPendingChargeCmd() != 0)
+        return TFT_ORANGE;
+    if (!CHARGE_ITEMS[index].editable) return TFT_SKYBLUE;
+    return TFT_WHITE;
+}
 
-  // Draw white outline (3 pixels thick)
-  sprite->drawRect(X_PROGRESS_BAR, Y_PROGRESS_BAR, PROGRESS_BAR_WIDTH, PROGRESS_BAR_HEIGHT, TFT_WHITE);
-  sprite->drawRect(X_PROGRESS_BAR + 1, Y_PROGRESS_BAR + 1, PROGRESS_BAR_WIDTH - 2, PROGRESS_BAR_HEIGHT - 2, TFT_WHITE);
-  sprite->drawRect(X_PROGRESS_BAR + 2, Y_PROGRESS_BAR + 2, PROGRESS_BAR_WIDTH - 4, PROGRESS_BAR_HEIGHT - 4, TFT_WHITE);
+void ChargeScreen::drawCenterExtra(TFT_eSprite* sprite, int index) {
+    sprite->unloadFont();
+    sprite->setTextDatum(TC_DATUM);
+    sprite->setTextSize(1);
 
-  // Fill with sky blue based on percentage (leave 3px padding for outline)
-  int fillWidth = ((PROGRESS_BAR_WIDTH - 6) * chargePercent) / 100;
-  if (fillWidth > 0) {
-    sprite->fillRect(X_PROGRESS_BAR + 3, Y_PROGRESS_BAR + 3, fillWidth, PROGRESS_BAR_HEIGHT - 6, TFT_SKYBLUE);
-  }
+    if (isEditMode) {
+        sprite->setTextColor(TFT_GREEN, TFT_BLACK);
+        sprite->drawString("[EDIT]", CENTER_X, CENTER_Y + 55);
+    } else if (index == pendingConfirmIndex && GlobalState::getInstance().getPendingChargeCmd() != 0) {
+        sprite->setTextColor(TFT_ORANGE, TFT_BLACK);
+        sprite->drawString("[PEND]", CENTER_X, CENTER_Y + 55);
+    } else if (CHARGE_ITEMS[index].editable) {
+        sprite->setTextColor(TFT_DARKGREY, TFT_BLACK);
+        sprite->drawString("[TAP]", CENTER_X, CENTER_Y + 55);
+    }
+}
 
-  // Draw percentage text centered in the bar
-  sprite->setTextDatum(TC_DATUM);  // Top Center alignment for proper centering
-  sprite->setTextColor(TFT_WHITE, TFT_BLACK);
-  sprite->setTextSize(2);
-  char percentStr[8];
-  sprintf(percentStr, "%d%%", chargePercent);
-  sprite->drawString(percentStr, X_PROGRESS_BAR + (PROGRESS_BAR_WIDTH / 2), Y_PROGRESS_BAR + 10);
+// ── Touch: toggle edit mode ───────────────────────────────────────────────────
+void ChargeScreen::onTouch(int x, int y, TFT_eSprite* sprite) {
+    if (x < 0 || y < 0) return;
 
-  // Requested amps (left side)
-  sprite->loadFont(midleFont);
-  sprite->setTextSize(CHARGE_VALUES_FONT_SIZE);
-  sprite->setTextColor(TFT_WHITE, TFT_BLACK);
-  sprite->setCursor(X_REQUESTED_AMPS + REQUESTED_AMPS_X_OFFSET, Y_REQUESTED_AMPS + REQUESTED_AMPS_Y_OFFSET);
-  sprite->print(state.getRequestedAmps(), 1);
-  sprite->print("A");
+    unsigned long now = millis();
+    if (now - lastTouchTime < TOUCH_DEBOUNCE) return;
+    lastTouchTime = now;
 
-  // Current voltage (right side)
-  sprite->setCursor(X_CURRENT_VOLTAGE + CURRENT_VOLTAGE_X_OFFSET, Y_CURRENT_VOLTAGE + CURRENT_VOLTAGE_Y_OFFSET);
-  sprite->print(state.getCurrentVoltage(), 1);
-  sprite->print("V");
+    if (!CHARGE_ITEMS[currentIndex].editable) return;
 
-  // Target voltage (bottom center)
-  sprite->setCursor(X_TARGET_VOLTAGE + TARGET_VOLTAGE_X_OFFSET, Y_TARGET_VOLTAGE + TARGET_VOLTAGE_Y_OFFSET);
-  sprite->print(state.getTargetVoltage(), 1);
-  sprite->print("V");
-};
+    if (!isEditMode) {
+        // Enter edit mode — seed with current value
+        isEditMode = true;
+        GlobalState &state = GlobalState::getInstance();
+        switch (currentIndex) {
+            case 0: editValue = (int)(state.getRequestedAmps() * 10.0f); break;
+            case 1: editValue = state.getChargePercentage(); break;
+            case 2: editValue = state.getChargeMaxTime() / 60; break;
+            default: break;
+        }
+    } else {
+        // Confirm edit — store pending command
+        GlobalState &state = GlobalState::getInstance();
+        uint8_t cmd = CHARGE_ITEMS[currentIndex].canCmd;
+        uint16_t val = 0;
+        switch (currentIndex) {
+            case 0: val = (uint16_t)editValue; break;           // already in 1/10th A
+            case 1: val = (uint16_t)(editValue * 10);  break;   // pct × 10 as per charger protocol
+            case 2: val = (uint16_t)(editValue * 60);  break;   // minutes → seconds
+            default: break;
+        }
+        state.setPendingChargeCmd(cmd, val);
+        pendingConfirmIndex = currentIndex;
+        isEditMode = false;
+    }
+}
 
-void ChargeScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
-{
-  sprite->fillSprite(TFT_BLACK);
-  gfx->fillScreen(TFT_BLACK);
+bool ChargeScreen::onClick(TFT_eSprite* sprite) {
+    return false;
+}
 
-  // Draw banner
-  GlobalState &state = GlobalState::getInstance();
-  drawBanner(sprite, state);
+// ── Scroll: carousel navigation or value editing ──────────────────────────────
+void ChargeScreen::onScroll(int x, TFT_eSprite* sprite) {
+    if (!isEditMode) {
+        Carousel<5>::onScroll(x, sprite);
+        return;
+    }
 
-  // Static labels (center-aligned, 20px left of values, 10px higher)
-  sprite->setTextDatum(TC_DATUM);
-  sprite->drawString("Requested Amps", X_REQUESTED_AMPS - 20, Y_REQUESTED_AMPS - 60);
-  sprite->drawString("Current Voltage", X_CURRENT_VOLTAGE - 20, Y_CURRENT_VOLTAGE - 60);
-  sprite->drawString("Target Voltage", X_TARGET_VOLTAGE - 20, Y_TARGET_VOLTAGE - 60);
-};
+    // Edit mode: use accumulator to change editValue
+    int delta = x - lastScrollValue;
+    lastScrollValue = x;
 
-void ChargeScreen::onScroll(int x, TFT_eSprite *sprite)
-{
-  return;
-};
+    if (delta > 180)  delta -= 360;
+    if (delta < -180) delta += 360;
+
+    scrollAccumulator += delta;
+
+    const int THRESHOLD = GlobalState::getInstance().getScrollThreshold();
+    const int MAX_ACCUM = THRESHOLD + THRESHOLD / 2;
+    const int RESET_THRESHOLD = THRESHOLD / 2;
+    if (scrollAccumulator >  MAX_ACCUM) scrollAccumulator =  MAX_ACCUM;
+    if (scrollAccumulator < -MAX_ACCUM) scrollAccumulator = -MAX_ACCUM;
+
+    if (abs(scrollAccumulator) < RESET_THRESHOLD) {
+        scrollLockout = false;
+    }
+
+    const ChargeItem &item = CHARGE_ITEMS[currentIndex];
+    if (scrollAccumulator >= THRESHOLD && !scrollLockout) {
+        editValue += item.stepSize;
+        if (editValue > item.maxValue) editValue = item.maxValue;
+        scrollAccumulator = 0;
+        scrollLockout = true;
+    } else if (scrollAccumulator <= -THRESHOLD && !scrollLockout) {
+        editValue -= item.stepSize;
+        if (editValue < item.minValue) editValue = item.minValue;
+        scrollAccumulator = 0;
+        scrollLockout = true;
+    }
+}
