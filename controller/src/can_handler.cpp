@@ -260,7 +260,7 @@ void CanHandler::sendGearChange(State::Gear gear) {
             break;
     }
 
-    CAN.sendMsgBuf(0, 0x606, 0, 0, 8, buf);
+    CAN.sendMsgBuf(0x606, 0, 0, 8, buf);
 
     // Debug output with all relevant bytes
     Serial.print("CAN: Sending 0x606, bytes[5-7]: ");
@@ -317,7 +317,7 @@ void CanHandler::handle_charger_status(CAN_FRAME *frame, State::Data *data) {
 
 void CanHandler::sendChargeConfig(uint8_t cmd, uint16_t value) {
     unsigned char buf[8] = {cmd, 0x00, (unsigned char)(value >> 8), (unsigned char)(value & 0xFF), 0x00, 0x00, 0x00, 0x00};
-    CAN.sendMsgBuf(1, 0x18FF60F4, 0, 0, 8, buf);
+    CAN.sendMsgBuf(0x18FF60F4, 1, 0, 8, buf);
     Serial.print("CAN: Sent charge config cmd=");
     Serial.print(cmd);
     Serial.print(" value=");
