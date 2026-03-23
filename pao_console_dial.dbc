@@ -6,20 +6,25 @@ BS_:
 
 BU_: MC Charger ELCON Controller Peripheral
 
-BO_ 1616 MC_DC_Bus: 8 MC
- SG_ DC_Voltage : 7|16@0+ (1,0) [0|0] "" Controller
- SG_ DC_Current : 23|16@0+ (1,-5000) [0|0] "0.1A" Controller
+BO_ 1616 DMOC_Electrical_Status: 8 MC
+ SG_ Bat_Voltage : 7|16@0+ (0.1,0) [0|1000] "V" Controller
+ SG_ Bat_Current : 23|16@0- (0.1,-500) [-500|500] "A" Controller
+ SG_ Thermal_Limit_Cause : 39|8@0+ (1,0) [0|240] "" Controller
 
-BO_ 1617 MC_Temperatures: 8 MC
- SG_ Rotor_Temp : 7|8@0+ (1,-40) [-40|215] "degC" Controller
- SG_ Inverter_Temp : 15|8@0+ (1,-40) [-40|215] "degC" Controller
- SG_ Stator_Temp : 23|8@0+ (1,-40) [-40|215] "degC" Controller
+BO_ 1617 DMOC_Temperature_Status: 8 MC
+ SG_ Motor_Temp : 7|8@0+ (1,-40) [-40|200] "degC" Controller
+ SG_ Inverter_Temp : 15|8@0+ (1,-40) [-40|200] "degC" Controller
+ SG_ Stator_Temp : 23|8@0+ (1,-40) [-40|200] "degC" Controller
+ SG_ CAN_Rev : 55|8@0+ (1,0) [0|255] "" Controller
+ SG_ Rolling_Counter : 63|8@0+ (1,0) [0|255] "" Controller
 
-BO_ 570 MC_Torque_Actual: 8 MC
- SG_ Torque_Actual : 7|16@0+ (1,-30000) [0|0] "" Controller
+BO_ 570 DMOC_Torque_Actual: 8 MC
+ SG_ Torque_Actual : 7|16@0- (0.1,-3000) [-3000|3000] "Nm" Controller
 
-BO_ 571 MC_Speed_State: 8 MC
- SG_ Speed_Actual : 7|16@0+ (1,-20000) [0|0] "rpm" Controller
+BO_ 571 DMOC_Mechanical_Status: 8 MC
+ SG_ Speed_Actual : 7|16@0- (1,-20000) [-20000|20000] "rpm" Controller
+ SG_ Powerstage_State : 39|8@0+ (1,0) [0|7] "" Controller
+ SG_ Active_Fault : 47|8@0+ (1,0) [0|255] "" Controller
  SG_ Reported_State : 55|4@0+ (1,0) [0|7] "" Controller
 
 BO_ 562 MC_Request_Speed: 8 MC
@@ -70,22 +75,22 @@ BO_ 2566873332 Charge_Config_Command: 8 Controller
  SG_ Reserved : 15|8@0+ (1,0) [0|0] "" Charger
  SG_ Value : 23|16@0+ (1,0) [0|65535] "" Charger
 
-CM_ BU_ MC "Motor controller (e.g. Rinehart/Cascadia)";
+CM_ BU_ MC "Azure Dynamics DMOC445/DMOC645 motor controller";
 CM_ BU_ Charger "pao_charger - Arduino-based CAN charge manager";
 CM_ BU_ ELCON "ELCON hardware charger, J1939 broadcast";
 CM_ BU_ Controller "pao_console_dial controller MCU (Feather M0)";
 CM_ BU_ Peripheral "pao_console_dial peripheral MCU (ESP32-S3, display)";
 
-CM_ BO_ 1616 "0x650 - DC bus voltage (raw) and current (raw - 5000, unit 0.1 A)";
-CM_ BO_ 1617 "0x651 - Motor and inverter temperatures. Wire value minus 40 = degC";
-CM_ BO_ 570  "0x23A - Actual torque. Wire value minus 30000";
-CM_ BO_ 571  "0x23B - Actual speed (|wire - 20000|) and inverter state (upper nibble of byte 6)";
-CM_ BO_ 562  "0x232 - Speed/state/gear requests. State in bits[7:6] of byte 6; gear in bits[5:4]";
-CM_ BO_ 563  "0x233 - Requested torque and torque limit";
-CM_ BO_ 564  "0x234 - Regen and acceleration limits";
+CM_ BO_ 1616 "0x650 - DMOC Electrical Status Message (EEXCANElecStatus1ID). Ref: MAN-080002-001 Table 13. ISR2BatVoltageWF = filtered DC bus voltage. ISR2EstBatCurrent = estimated battery current. ISR2ThermCurrentLimitCause = thermal derating reason. TX rate configurable via EEXCANElecStatus1CycleSec.";
+CM_ BO_ 1617 "0x651 - DMOC Temperature Status Message (EEXCANTempStatusID). Ref: MAN-080002-001 Table 13. Motor_Temp = ISR2MotorLimit (PTC-based, only 3 discrete values: 20C=OK, 120C=derated, 200C=limited). Inverter_Temp = ISR2HeatsinkTemp. Bytes 2-5 reserved per spec; Stator_Temp at byte 2 may be firmware-specific. CAN_Rev = FRC_CAN_REV interface level. Rolling_Counter increments each message.";
+CM_ BO_ 570  "0x23A - DMOC torque feedback. ISR2RealTorque. Equivalent to Mechanical Status bytes 0-1 at configured ID. physical_Nm = raw * 0.1 - 3000. Example: 0x7530 (30000) = 0 Nm.";
+CM_ BO_ 571  "0x23B - DMOC mechanical/speed status. Speed_Actual = ISR2HertzWF (motor electrical frequency in rpm equivalent). physical_rpm = raw - 20000. Powerstage_State and Active_Fault at bytes 4-5 per Mechanical Status spec (MAN-080002-001 Table 13). Reported_State is upper nibble of byte 6 (ISR2StatusCode MSB nibble) as parsed by pao_console_dial firmware.";
+CM_ BO_ 562  "0x232 - Speed/state/gear requests monitored from upstream controller. State in bits[7:6] of byte 6; gear in bits[5:4]";
+CM_ BO_ 563  "0x233 - Requested torque and torque limit monitored from upstream controller";
+CM_ BO_ 564  "0x234 - Regen and acceleration limits monitored from upstream controller";
 CM_ BO_ 565  "0x235 - Unimplemented (no signals parsed)";
 CM_ BO_ 566  "0x236 - Unimplemented (no signals parsed)";
-CM_ BO_ 1542 "0x606 - Gear command. NEUTRAL: all 0. DRIVE: byte6=0xFF byte7=0x88. REVERSE: byte6=0x88 byte7=0xFF. PARK: byte5=0xFF bytes6-7=0x00";
+CM_ BO_ 1542 "0x606 - Gear command to DMOC. NEUTRAL: all 0. DRIVE: byte6=0xFF byte7=0x88. REVERSE: byte6=0x88 byte7=0xFF. PARK: byte5=0xFF bytes6-7=0x00";
 CM_ BO_ 1543 "0x607 - Pre-charge contactor ready. byte1: 0x88=ready, 0xFF=not ready";
 CM_ BO_ 1545 "0x609 - Gear change confirmation from motor controller (no payload parsed)";
 CM_ BO_ 2566889701 "0x18FFA0E5 - pao_charger config broadcast 1. bytes[0:1]=maxCurrent, bytes[2:3]=maxCurrent(dup), bytes[4:5]=nominalVoltage, bytes[6:7]=targetVoltage. All in 0.1 V / 0.1 A";
@@ -93,11 +98,31 @@ CM_ BO_ 2566889957 "0x18FFA1E5 - pao_charger config broadcast 2. Target_Percenta
 CM_ BO_ 2566869221 "0x18FF50E5 - ELCON hardware charger status. Actual voltage and current from charger output. Error_Flags bitmask at byte 4";
 CM_ BO_ 2566873332 "0x18FF60F4 - Charge config command from pao_console_dial to pao_charger. Sent repeatedly until charger confirms via broadcast. Value encoding depends on Command_ID";
 
-CM_ SG_ 571 Reported_State "0=Initializing, 1=Disabled, 2=Standby/Ready, 3=Enabled, 4=PowerDown, 5=Fault, 6=CriticalFault, 7=LOS";
+CM_ SG_ 1616 Bat_Voltage "ISR2BatVoltageWF - filtered DC bus voltage. physical = raw * 0.1 V";
+CM_ SG_ 1616 Bat_Current "ISR2EstBatCurrent - estimated battery current. physical = raw * 0.1 - 500 A. Positive = discharge.";
+CM_ SG_ 1616 Thermal_Limit_Cause "ISR2ThermCurrentLimitCause - reason for thermal current derating. 0 = no limit.";
+CM_ SG_ 1617 Motor_Temp "ISR2MotorLimit - motor stator PTC temperature. Only 3 valid values: 20C (OK), 120C (derated), 200C (thermally limited). Values 241-255 indicate sensor error.";
+CM_ SG_ 1617 Inverter_Temp "ISR2HeatsinkTemp - DMOC heatsink temperature. Values 241-255 indicate sensor error.";
+CM_ SG_ 1617 Rolling_Counter "Increments with each transmitted message. Use to verify DMOC is alive.";
+CM_ SG_ 570 Torque_Actual "ISR2RealTorque - actual motor torque. physical = raw * 0.1 - 3000 Nm. Zero torque = raw 30000 (0x7530).";
+CM_ SG_ 571 Speed_Actual "ISR2HertzWF - motor speed. physical = raw - 20000 rpm. Zero speed = raw 20000 (0x4E20).";
+CM_ SG_ 571 Powerstage_State "ISR2PowerStageState - DMOC power stage state (byte 4 per MAN-080002-001 Table 13).";
+CM_ SG_ 571 Active_Fault "ISR2PSFaultActive - active fault enum (byte 5 per MAN-080002-001 Table 13). See DMOC445/DMOC645 User Manual for fault codes.";
+CM_ SG_ 571 Reported_State "Upper nibble of byte 6 (ISR2StatusCode) as parsed by pao_console_dial. Maps to DMOC powerstage state enum.";
 CM_ SG_ 1543 PreCharge_Status_Raw "0x88 = pre-charge ready (HIGH); 0xFF = not ready (LOW)";
 CM_ SG_ 2566889957 Target_Percentage "Configured charge limit percent (0-100). NOT current SOC. Estimated SOC = (Actual_Voltage / Target_Voltage) * Target_Percentage";
 CM_ SG_ 2566873332 Command_ID "1=set_max_time, 2=set_target_pct, 3=set_target_amps";
 CM_ SG_ 2566873332 Value "cmd=1: seconds (uint16). cmd=2: target_pct * 10 (e.g. 950 = 95%). cmd=3: amps in 0.1 A units (e.g. 150 = 15.0 A)";
+
+VAL_ 571 Powerstage_State
+ 0 "Initializing"
+ 1 "Disabled"
+ 2 "Standby"
+ 3 "Enabled"
+ 4 "PowerDown"
+ 5 "Fault"
+ 6 "CriticalFault"
+ 7 "LOS" ;
 
 VAL_ 571 Reported_State
  0 "Initializing"
