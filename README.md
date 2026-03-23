@@ -94,6 +94,12 @@ Stale detection: CAN data resets after 5 seconds of silence; GPS resets after 10
 
 ---
 
+## CAN Database
+
+`pao.dbc` at the repo root is a DBC file documenting all CAN messages used by this project, including GEVCU/DMOC motor controller signals (electrical status, temperatures, torque, speed, gear commands) and charger messages (ELCON status, pao_charger config broadcasts and commands). Load it in any DBC-compatible tool (e.g. SavvyCAN, BUSMASTER, Vector CANdb++) to decode live bus traffic.
+
+---
+
 ## Project Structure
 
 ```
