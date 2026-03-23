@@ -1,0 +1,193 @@
+VERSION ""
+
+NS_ :
+
+BS_:
+
+BU_: DMOC PaoCharger ELCON Controller Peripheral
+
+BO_ 1616 DMOC_Electrical_Status: 8 DMOC
+ SG_ Bat_Voltage : 7|16@0+ (0.1,0) [0|1000] "V" Controller
+ SG_ Bat_Current : 23|16@0- (0.1,-500) [-500|500] "A" Controller
+ SG_ Thermal_Limit_Cause : 39|8@0+ (1,0) [0|240] "" Controller
+
+BO_ 1617 DMOC_Temperature_Status: 8 DMOC
+ SG_ Motor_Temp : 7|8@0+ (1,-40) [-40|200] "degC" Controller
+ SG_ Inverter_Temp : 15|8@0+ (1,-40) [-40|200] "degC" Controller
+ SG_ Stator_Temp : 23|8@0+ (1,-40) [-40|200] "degC" Controller
+ SG_ CAN_Rev : 55|8@0+ (1,0) [0|255] "" Controller
+ SG_ Rolling_Counter : 63|8@0+ (1,0) [0|255] "" Controller
+
+BO_ 570 DMOC_Torque_Actual: 8 DMOC
+ SG_ Torque_Actual : 7|16@0- (0.1,-3000) [-3000|3000] "Nm" Controller
+
+BO_ 571 DMOC_Mechanical_Status: 8 DMOC
+ SG_ Speed_Actual : 7|16@0- (1,-20000) [-20000|20000] "rpm" Controller
+ SG_ Powerstage_State : 39|8@0+ (1,0) [0|7] "" Controller
+ SG_ Active_Fault : 47|8@0+ (1,0) [0|255] "" Controller
+ SG_ Reported_State : 55|4@0+ (1,0) [0|7] "" Controller
+
+BO_ 562 MC_Request_Speed: 8 DMOC
+ SG_ Requested_Speed : 7|16@0+ (1,0) [0|0] "" DMOC
+ SG_ Requested_State : 55|2@0+ (1,0) [0|3] "" DMOC
+ SG_ Requested_Gear : 53|2@0+ (1,0) [0|3] "" DMOC
+
+BO_ 563 MC_Torque_Request: 8 DMOC
+ SG_ Torque_Requested : 7|16@0+ (1,0) [0|0] "" DMOC
+ SG_ Torque_Limit : 23|16@0+ (1,0) [0|0] "" DMOC
+
+BO_ 564 MC_Limits: 8 DMOC
+ SG_ Regen_Limit : 7|16@0+ (1,0) [0|0] "" DMOC
+ SG_ Accel_Limit : 23|16@0+ (1,0) [0|0] "" DMOC
+
+BO_ 565 MC_0x235: 8 DMOC
+
+BO_ 566 MC_0x236: 8 DMOC
+
+BO_ 1542 Gear_Command: 8 Controller
+ SG_ Gear_Byte5 : 47|8@0+ (1,0) [0|255] "" DMOC
+ SG_ Gear_Byte6 : 55|8@0+ (1,0) [0|255] "" DMOC
+ SG_ Gear_Byte7 : 63|8@0+ (1,0) [0|255] "" DMOC
+
+BO_ 1543 PreCharge_Status: 8 DMOC
+ SG_ PreCharge_Status_Raw : 15|8@0+ (1,0) [0|255] "" Controller
+
+BO_ 1545 Gear_Confirmation: 8 DMOC
+
+BO_ 2550588916 TCC_Control: 8 PaoCharger
+ SG_ TargetVoltage : 7|16@0+ (0.1,0) [0|6553.5] "V" ELCON
+ SG_ MaxCurrent : 23|16@0+ (0.1,0) [0|6553.5] "A" ELCON
+ SG_ EnableBit : 32|1@0+ (1,0) [0|1] "" ELCON
+
+BO_ 2566869221 ELCON_Charger_Status: 8 ELCON
+ SG_ OutputVoltage : 7|16@0+ (0.1,0) [0|6553.5] "V" Controller
+ SG_ OutputCurrent : 23|16@0+ (0.1,0) [0|6553.5] "A" Controller
+ SG_ HardwareFailure : 32|1@0+ (1,0) [0|1] "" Controller
+ SG_ Overheating : 33|1@0+ (1,0) [0|1] "" Controller
+ SG_ InputVoltageWrong : 34|1@0+ (1,0) [0|1] "" Controller
+ SG_ ChargerOff : 35|1@0+ (1,0) [0|1] "" Controller
+ SG_ CommTimeout : 36|1@0+ (1,0) [0|1] "" Controller
+
+BO_ 2566889701 PAO_Config_Broadcast1: 8 PaoCharger
+ SG_ MaxCurrent_A : 7|16@0+ (0.1,0) [0|6553.5] "A" Controller
+ SG_ MaxCurrent_B : 23|16@0+ (0.1,0) [0|6553.5] "A" Controller
+ SG_ NominalVoltage : 39|16@0+ (0.1,0) [0|6553.5] "V" Controller
+ SG_ TargetVoltage_Cfg : 55|16@0+ (0.1,0) [0|6553.5] "V" Controller
+
+BO_ 2566889957 PAO_Config_Broadcast2: 8 PaoCharger
+ SG_ TargetPercentage : 7|8@0+ (1,0) [0|100] "%" Controller
+ SG_ ErrorState : 15|8@0+ (1,0) [0|255] "" Controller
+ SG_ ChargingTime : 23|16@0+ (1,0) [0|65535] "s" Controller
+ SG_ MaxChargeTime : 39|16@0+ (1,0) [0|65535] "s" Controller
+
+BO_ 2566873332 PAO_Config_Command: 8 Controller
+ SG_ CommandID : 7|8@0+ (1,0) [0|3] "" PaoCharger
+ SG_ Reserved : 15|8@0+ (1,0) [0|0] "" PaoCharger
+ SG_ Value : 23|16@0+ (1,0) [0|65535] "" PaoCharger
+
+CM_ BU_ DMOC "Azure Dynamics DMOC445/DMOC645 motor controller";
+CM_ BU_ PaoCharger "pao_charger - Feather M0 charge management board (bridges ELCON to CAN)";
+CM_ BU_ ELCON "ELCON hardware charger (J1939 broadcast)";
+CM_ BU_ Controller "pao_console_dial controller MCU (Feather M0)";
+CM_ BU_ Peripheral "pao_console_dial peripheral MCU (ESP32-S3, display)";
+
+CM_ BO_ 1616 "0x650 - DMOC Electrical Status (EEXCANElecStatus1ID). ISR2BatVoltageWF = filtered DC bus voltage. ISR2EstBatCurrent = estimated battery current. ISR2ThermCurrentLimitCause = thermal derating reason. Ref: MAN-080002-001 Table 13.";
+CM_ BO_ 1617 "0x651 - DMOC Temperature Status (EEXCANTempStatusID). Motor_Temp = ISR2MotorLimit (PTC sensor, 3 discrete values: 20C=OK, 120C=derated, 200C=thermally limited). Inverter_Temp = ISR2HeatsinkTemp. Rolling_Counter increments each message. Ref: MAN-080002-001 Table 13.";
+CM_ BO_ 570  "0x23A - DMOC torque feedback. ISR2RealTorque. physical = raw * 0.1 - 3000 Nm. Zero torque = raw 30000 (0x7530).";
+CM_ BO_ 571  "0x23B - DMOC mechanical status. Speed_Actual = ISR2HertzWF. physical = raw - 20000 rpm. Powerstage_State and Active_Fault at bytes 4-5 per MAN-080002-001 Table 13. Reported_State = upper nibble of byte 6 (ISR2StatusCode).";
+CM_ BO_ 562  "0x232 - Speed/state/gear requests (monitored from upstream controller). State in bits[7:6] of byte 6; gear in bits[5:4].";
+CM_ BO_ 563  "0x233 - Requested torque and torque limit.";
+CM_ BO_ 564  "0x234 - Regen and acceleration limits.";
+CM_ BO_ 565  "0x235 - Unimplemented (no signals parsed).";
+CM_ BO_ 566  "0x236 - Unimplemented (no signals parsed).";
+CM_ BO_ 1542 "0x606 - Gear command to DMOC. NEUTRAL: all 0. DRIVE: byte6=0xFF byte7=0x88. REVERSE: byte6=0x88 byte7=0xFF. PARK: byte5=0xFF bytes6-7=0x00.";
+CM_ BO_ 1543 "0x607 - Pre-charge contactor ready status. byte1: 0x88=ready, 0xFF=not ready.";
+CM_ BO_ 1545 "0x609 - Gear change confirmation from DMOC (no payload parsed).";
+CM_ BO_ 2550588916 "0x1806E5F4 - PaoCharger -> ELCON charger control command, 1 Hz. TargetVoltage and MaxCurrent set charging parameters. EnableBit=0 enables charging, 1 stops it.";
+CM_ BO_ 2566869221 "0x18FF50E5 - ELCON hardware charger status broadcast, ~1 Hz. Actual charger output voltage and current. Error flags are individual status bits in byte 4.";
+CM_ BO_ 2566889701 "0x18FFA0E5 - pao_charger config broadcast 1, 1 Hz. MaxCurrent_A and MaxCurrent_B are duplicates. TargetVoltage_Cfg = configured charge target voltage.";
+CM_ BO_ 2566889957 "0x18FFA1E5 - pao_charger config broadcast 2, 1 Hz. TargetPercentage is the configured charge limit (e.g. 95%), NOT current SOC. ChargingTime = elapsed session time. MaxChargeTime = configured limit.";
+CM_ BO_ 2566873332 "0x18FF60F4 - pao_console_dial -> pao_charger config command. Resent every 1s until charger confirms via 0x18FFA0E5/0x18FFA1E5 broadcast or 30s timeout.";
+
+CM_ SG_ 1616 Bat_Voltage "ISR2BatVoltageWF - filtered DC bus voltage. physical = raw * 0.1 V.";
+CM_ SG_ 1616 Bat_Current "ISR2EstBatCurrent. physical = raw * 0.1 - 500 A. Positive = discharge.";
+CM_ SG_ 1616 Thermal_Limit_Cause "ISR2ThermCurrentLimitCause - reason for thermal current derating. 0 = no limit.";
+CM_ SG_ 1617 Motor_Temp "ISR2MotorLimit (PTC). Only 3 valid values: 20C (OK), 120C (derated), 200C (limited). Raw 241-255 = sensor error.";
+CM_ SG_ 1617 Inverter_Temp "ISR2HeatsinkTemp. Raw 241-255 = sensor error.";
+CM_ SG_ 1617 Rolling_Counter "Increments with each message. Use to detect DMOC alive status.";
+CM_ SG_ 570 Torque_Actual "ISR2RealTorque. physical = raw * 0.1 - 3000 Nm.";
+CM_ SG_ 571 Speed_Actual "ISR2HertzWF. physical = raw - 20000 rpm. Zero speed = raw 20000 (0x4E20).";
+CM_ SG_ 571 Powerstage_State "ISR2PowerStageState at byte 4.";
+CM_ SG_ 571 Active_Fault "ISR2PSFaultActive at byte 5. See DMOC445/DMOC645 User Manual for fault codes.";
+CM_ SG_ 571 Reported_State "Upper nibble of ISR2StatusCode byte 6, as parsed by pao_console_dial.";
+CM_ SG_ 1543 PreCharge_Status_Raw "0x88 = pre-charge contactor ready; 0xFF = not ready.";
+CM_ SG_ 2550588916 TargetVoltage "Target charging voltage sent to ELCON. physical = raw * 0.1 V. Default 320.0 V.";
+CM_ SG_ 2550588916 MaxCurrent "Max charging current sent to ELCON. physical = raw * 0.1 A. Default 20.0 A.";
+CM_ SG_ 2550588916 EnableBit "0 = charging enabled, 1 = stop charging.";
+CM_ SG_ 2566869221 OutputVoltage "ELCON actual output voltage. physical = raw * 0.1 V.";
+CM_ SG_ 2566869221 OutputCurrent "ELCON actual output current. physical = raw * 0.1 A.";
+CM_ SG_ 2566869221 HardwareFailure "1 = hardware malfunction detected.";
+CM_ SG_ 2566869221 Overheating "1 = charger temperature exceeded threshold.";
+CM_ SG_ 2566869221 InputVoltageWrong "1 = input voltage out of acceptable range.";
+CM_ SG_ 2566869221 ChargerOff "1 = charger off (reverse polarity protection triggered).";
+CM_ SG_ 2566869221 CommTimeout "1 = CAN communication timeout (no TCC_Control received within window).";
+CM_ SG_ 2566889701 MaxCurrent_A "Max charge current config (copy 1). physical = raw * 0.1 A.";
+CM_ SG_ 2566889701 MaxCurrent_B "Max charge current config (copy 2, duplicate).";
+CM_ SG_ 2566889701 NominalVoltage "Nominal battery pack voltage. physical = raw * 0.1 V.";
+CM_ SG_ 2566889701 TargetVoltage_Cfg "Target charging voltage config. physical = raw * 0.1 V.";
+CM_ SG_ 2566889957 TargetPercentage "Configured charge limit 0-100%. NOT current SOC. Estimated SOC = (OutputVoltage / TargetVoltage_Cfg) * TargetPercentage.";
+CM_ SG_ 2566889957 ErrorState "Current error bitfield (same layout as ELCON_Charger_Status byte 4).";
+CM_ SG_ 2566889957 ChargingTime "Elapsed charging session time in seconds.";
+CM_ SG_ 2566889957 MaxChargeTime "Maximum allowed charge duration in seconds. Default 43200 (12 h).";
+CM_ SG_ 2566873332 CommandID "0x01=SetMaxChargeTime, 0x02=SetTargetPercentage, 0x03=SetMaxCurrent.";
+CM_ SG_ 2566873332 Value "cmd=1: seconds. cmd=2: target_pct*10 (e.g. 950=95%). cmd=3: 1/10 A (e.g. 150=15.0A).";
+
+VAL_ 571 Powerstage_State
+ 0 "Initializing"
+ 1 "Disabled"
+ 2 "Standby"
+ 3 "Enabled"
+ 4 "PowerDown"
+ 5 "Fault"
+ 6 "CriticalFault"
+ 7 "LOS" ;
+
+VAL_ 571 Reported_State
+ 0 "Initializing"
+ 1 "Disabled"
+ 2 "Standby"
+ 3 "Enabled"
+ 4 "PowerDown"
+ 5 "Fault"
+ 6 "CriticalFault"
+ 7 "LOS" ;
+
+VAL_ 2550588916 EnableBit
+ 0 "Enable"
+ 1 "Stop" ;
+
+VAL_ 2566869221 HardwareFailure
+ 0 "OK"
+ 1 "Fault" ;
+
+VAL_ 2566869221 Overheating
+ 0 "OK"
+ 1 "Overheat" ;
+
+VAL_ 2566869221 InputVoltageWrong
+ 0 "OK"
+ 1 "Fault" ;
+
+VAL_ 2566869221 ChargerOff
+ 0 "Running"
+ 1 "Off" ;
+
+VAL_ 2566869221 CommTimeout
+ 0 "OK"
+ 1 "Timeout" ;
+
+VAL_ 2566873332 CommandID
+ 1 "SetMaxChargeTime"
+ 2 "SetTargetPercentage"
+ 3 "SetMaxCurrent" ;
+

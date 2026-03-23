@@ -1,6 +1,3 @@
-[submodule "charge"]
-	path = charge
-	url = ../pao_charger
 [submodule "charger"]
 	path = charger
 	url = ../pao_charger
