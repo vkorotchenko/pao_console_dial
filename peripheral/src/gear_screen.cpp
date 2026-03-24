@@ -38,20 +38,19 @@ void GearScreen::onTouch(int x, int y, TFT_eSprite *sprite)
     // If different gear selected: SELECT current gear instead
 
     if (selectedIndex == -1) {
-        // Nothing selected, select current gear
+        // Nothing selected, select current gear (no CAN yet)
         selectedIndex = currentIndex;
-        GlobalState::getInstance().setGear(GEAR_VALUES[currentIndex]);
     }
     else if (selectedIndex == currentIndex) {
-        // Current gear already selected, CONFIRM it
+        // Current gear already selected — CONFIRM and send to CAN
         confirmedIndex = currentIndex;
         selectedIndex = -1;  // Clear selection (confirmed takes over)
+        GlobalState::getInstance().setGear(GEAR_VALUES[currentIndex]);
     }
     else {
-        // Different gear was selected, switch selection to current
+        // Different gear was selected, switch selection (no CAN yet)
         selectedIndex = currentIndex;
         confirmedIndex = -1;  // Clear previous confirmation
-        GlobalState::getInstance().setGear(GEAR_VALUES[currentIndex]);
     }
 }
 
