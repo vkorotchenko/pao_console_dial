@@ -26,10 +26,10 @@ static const ChargeItem CHARGE_ITEMS[5] = {
 };
 
 // ── Progress bar ──────────────────────────────────────────────────────────────
-static const int PB_X = 120;
+static const int PB_X = 65;
 static const int PB_Y = 133;
-static const int PB_W = 300;
-static const int PB_H = 28;
+static const int PB_W = 350;
+static const int PB_H = 32;
 
 void ChargeScreen::drawProgressBar(TFT_eSprite* sprite) {
     GlobalState &state = GlobalState::getInstance();
