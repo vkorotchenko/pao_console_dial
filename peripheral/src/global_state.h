@@ -223,15 +223,19 @@ public:
 
     int  getChargerNominalVoltage() { return chargerNominalVoltage; }
     void setChargerNominalVoltage(int v) { chargerNominalVoltage = v; saveSettings(); }
+    void updateChargerNominalVoltage(int v) { chargerNominalVoltage = v; }  // no EEPROM write
 
     int  getChargerMaxMultiplier() { return chargerMaxMultiplier; }
     void setChargerMaxMultiplier(int v) { chargerMaxMultiplier = v; saveSettings(); }
+    void updateChargerMaxMultiplier(int v) { chargerMaxMultiplier = v; }
 
     int  getChargerMinMultiplier() { return chargerMinMultiplier; }
     void setChargerMinMultiplier(int v) { chargerMinMultiplier = v; saveSettings(); }
+    void updateChargerMinMultiplier(int v) { chargerMinMultiplier = v; }
 
     bool getChargerAutoNominal() { return chargerAutoNominal; }
     void setChargerAutoNominal(bool v) { chargerAutoNominal = v; saveSettings(); }
+    void updateChargerAutoNominal(bool v) { chargerAutoNominal = v; }
 
     // Local time/date with timezone applied
     int getLocalHour() {

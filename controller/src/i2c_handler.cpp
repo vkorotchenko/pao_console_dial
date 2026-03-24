@@ -28,7 +28,7 @@ void I2CHandler::handleOnRequest() {
 
     Serial.println("I2C: Sending state data");
 
-    uint8_t buffer[48] = {0};
+    uint8_t buffer[58] = {0};
     buffer[0] = 0x01;  // protocol version
     buffer[1] = 0x01;  // message type: full state
 
@@ -79,15 +79,25 @@ void I2CHandler::handleOnRequest() {
     buffer[44] = statePtr->chargeTargetVoltage & 0xFF;
     buffer[45] = (statePtr->chargeMaxTime >> 8) & 0xFF;
     buffer[46] = statePtr->chargeMaxTime & 0xFF;
+    buffer[47] = (statePtr->chargeActualVoltage >> 8) & 0xFF;
+    buffer[48] = statePtr->chargeActualVoltage & 0xFF;
+    buffer[49] = (statePtr->chargeActualCurrent >> 8) & 0xFF;
+    buffer[50] = statePtr->chargeActualCurrent & 0xFF;
+    buffer[51] = (statePtr->chargeNomVoltage >> 8) & 0xFF;
+    buffer[52] = statePtr->chargeNomVoltage & 0xFF;
+    buffer[53] = (statePtr->chargeMaxMult >> 8) & 0xFF;
+    buffer[54] = statePtr->chargeMaxMult & 0xFF;
+    buffer[55] = statePtr->chargeMinMult;
+    buffer[56] = statePtr->chargeAutoNominal;
 
     // Calculate checksum
     uint8_t checksum = 0;
-    for (int i = 0; i < 47; i++) {
+    for (int i = 0; i < 57; i++) {
         checksum ^= buffer[i];
     }
-    buffer[47] = checksum;
+    buffer[57] = checksum;
 
-    Wire.write(buffer, 48);
+    Wire.write(buffer, 58);
 }
 
 void I2CHandler::handleOnReceive(int numBytes) {

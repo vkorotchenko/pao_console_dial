@@ -300,21 +300,27 @@ void CanHandler::handle_609(CAN_FRAME *frame, State::Data *data) {
 }
 
 void CanHandler::handle_charger_config1(CAN_FRAME *frame, State::Data *data) {
-    // 0x18FFA0E5: bytes 0-1 = maxCurrent (1/10th A), bytes 6-7 = targetVoltage (1/10th V)
-    data->chargeMaxCurrent = ((uint16_t)frame->data.bytes[0] << 8) | frame->data.bytes[1];
+    // 0x18FFA0E5: bytes 0-1 = maxCurrent, bytes 2-3 = maxMult (×100), bytes 4-5 = nomVoltage, bytes 6-7 = targetVoltage
+    data->chargeMaxCurrent    = ((uint16_t)frame->data.bytes[0] << 8) | frame->data.bytes[1];
+    data->chargeMaxMult       = ((uint16_t)frame->data.bytes[2] << 8) | frame->data.bytes[3];
+    data->chargeNomVoltage    = ((uint16_t)frame->data.bytes[4] << 8) | frame->data.bytes[5];
     data->chargeTargetVoltage = ((uint16_t)frame->data.bytes[6] << 8) | frame->data.bytes[7];
     Serial.print("CAN: Charger config1 - maxCurrent: ");
     Serial.print(data->chargeMaxCurrent);
+    Serial.print(", nomVoltage: ");
+    Serial.print(data->chargeNomVoltage);
     Serial.print(", targetVoltage: ");
     Serial.println(data->chargeTargetVoltage);
 }
 
 void CanHandler::handle_charger_config2(CAN_FRAME *frame, State::Data *data) {
-    // 0x18FFA1E5: byte 0 = targetPercentage (0-100), byte 1 = errorState,
-    //             bytes 4-5 = maxChargeTime (seconds)
-    data->chargePercent = frame->data.bytes[0];
-    data->chargeErrorState = frame->data.bytes[1];
-    data->chargeMaxTime = ((uint16_t)frame->data.bytes[4] << 8) | frame->data.bytes[5];
+    // 0x18FFA1E5: byte 0 = targetPercentage, byte 1 = errorState,
+    //             bytes 4-5 = maxChargeTime, byte 6 = minMult (×100), byte 7 = autoNominal
+    data->chargePercent     = frame->data.bytes[0];
+    data->chargeErrorState  = frame->data.bytes[1];
+    data->chargeMaxTime     = ((uint16_t)frame->data.bytes[4] << 8) | frame->data.bytes[5];
+    data->chargeMinMult     = frame->data.bytes[6];
+    data->chargeAutoNominal = frame->data.bytes[7];
     Serial.print("CAN: Charger config2 - chargePercent: ");
     Serial.print(data->chargePercent);
     Serial.print(", errorState: ");

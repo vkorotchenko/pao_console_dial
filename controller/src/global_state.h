@@ -108,6 +108,10 @@ public:
       uint16_t chargeActualVoltage;  // 1/10th V (from 0x18FF50E5, local use only)
       uint16_t chargeActualCurrent;  // 1/10th A (from 0x18FF50E5, local use only)
       uint16_t chargeMaxTime;        // seconds (from 0x18FFA1E5 bytes 4-5)
+      uint16_t chargeNomVoltage;     // 1/10th V (from 0x18FFA0E5 bytes 4-5)
+      uint16_t chargeMaxMult;        // ×100 (from 0x18FFA0E5 bytes 2-3)
+      uint8_t  chargeMinMult;        // ×100 (from 0x18FFA1E5 byte 6)
+      uint8_t  chargeAutoNominal;    // 0=off, 1=on (from 0x18FFA1E5 byte 7)
 
       // Pending charge config command (set by I2C receive, dispatched by CAN handler)
       uint8_t pendingChargeCmd;      // 0=none, 1=set_max_time, 2=set_target_pct, 3=set_amps

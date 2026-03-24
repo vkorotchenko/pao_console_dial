@@ -21,10 +21,10 @@ void I2CHandler::parseI2CState(uint8_t* buffer)
 {
     // Validate checksum
     uint8_t checksum = 0;
-    for (int i = 0; i < 47; i++) {
+    for (int i = 0; i < 57; i++) {
         checksum ^= buffer[i];
     }
-    if (checksum != buffer[47]) {
+    if (checksum != buffer[57]) {
         Serial.println("I2C: Checksum error");
         return;
     }
@@ -97,9 +97,20 @@ void I2CHandler::parseI2CState(uint8_t* buffer)
     state.setTargetVoltage(tgtV / 10.0f);
     uint16_t chargeMaxTime = ((uint16_t)buffer[45] << 8) | buffer[46];
     state.setChargeMaxTime(chargeMaxTime);
-    // currentVoltage: use targetVoltage as proxy (no direct ELCON voltage in I2C packet)
-    // getEstimatedSOC() uses currentVoltage/targetVoltage ratio — set to 0 if unknown
-    // (actual voltage from 0x18FF50E5 is not forwarded via I2C; SOC falls back to target%)
+
+    // Extended charge fields (bytes 47-56)
+    uint16_t chargeActualV  = ((uint16_t)buffer[47] << 8) | buffer[48];
+    uint16_t chargeActualA  = ((uint16_t)buffer[49] << 8) | buffer[50];
+    uint16_t chargeNomV     = ((uint16_t)buffer[51] << 8) | buffer[52];
+    uint16_t chargeMaxMult  = ((uint16_t)buffer[53] << 8) | buffer[54];
+    uint8_t  chargeMinMult  = buffer[55];
+    uint8_t  chargeAutoNom  = buffer[56];
+
+    state.setCurrentVoltage(chargeActualV / 10.0f);
+    state.updateChargerNominalVoltage((int)chargeNomV);
+    state.updateChargerMaxMultiplier((int)chargeMaxMult);
+    state.updateChargerMinMultiplier((int)chargeMinMult);
+    state.updateChargerAutoNominal(chargeAutoNom != 0);
 
     // Battery level calculation (could use voltage)
     int batteryPercent = map(voltage, 3000, 4200, 0, 100);  // adjust ranges
@@ -111,14 +122,26 @@ void I2CHandler::parseI2CState(uint8_t* buffer)
         uint16_t expected = state.getPendingChargeValue();
         bool confirmed = false;
         switch (cmd) {
-            case 3:  // set_amps: expected is 1/10th A, chargeMaxA is 1/10th A
+            case 3:  // set_amps: expected is 1/10th A
                 confirmed = (chargeMaxA == expected);
                 break;
             case 2:  // set_target_pct: expected is pct*10 (e.g. 950), chargePercent is 0-100
                 confirmed = (buffer[39] == (uint8_t)(expected / 10));
                 break;
-            case 1:  // set_max_time: expected is seconds, chargeMaxTime is seconds
+            case 1:  // set_max_time: expected is seconds
                 confirmed = (chargeMaxTime == expected);
+                break;
+            case 4:  // set_nominal_voltage: expected is 1/10th V
+                confirmed = (chargeNomV == expected);
+                break;
+            case 5:  // set_nominal_max_mult: expected is ×100
+                confirmed = (chargeMaxMult == expected);
+                break;
+            case 6:  // set_nominal_min_mult: expected is ×100
+                confirmed = ((uint16_t)chargeMinMult == expected);
+                break;
+            case 7:  // set_auto_nominal: expected is 0 or 1
+                confirmed = ((uint16_t)chargeAutoNom == expected);
                 break;
         }
         if (confirmed) {
@@ -184,18 +207,18 @@ void I2CHandler::updateI2CData()
     Serial.println("I2C: Requesting data from controller");
 
     // Request state data from controller
-    uint8_t stateBuffer[48];
-    int bytesReceived = Wire.requestFrom(CONTROLLER_I2C_ADDRESS, 48);
+    uint8_t stateBuffer[58];
+    int bytesReceived = Wire.requestFrom(CONTROLLER_I2C_ADDRESS, 58);
 
-    if (bytesReceived == 48) {
-        for (int i = 0; i < 48 && Wire.available(); i++) {
+    if (bytesReceived == 58) {
+        for (int i = 0; i < 58 && Wire.available(); i++) {
             stateBuffer[i] = Wire.read();
         }
         Serial.print("I2C: Received bytes: ");
         Serial.println(bytesReceived);
         parseI2CState(stateBuffer);
     } else {
-        Serial.print("I2C: Expected 48 bytes, got ");
+        Serial.print("I2C: Expected 58 bytes, got ");
         Serial.println(bytesReceived);
         // Flush any remaining bytes
         while (Wire.available()) {
