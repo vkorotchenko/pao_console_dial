@@ -19,7 +19,7 @@ struct ChargeItem {
 
 static const ChargeItem CHARGE_ITEMS[5] = {
     {"MAX AMPS",  "A",   true,  3, 0, 200, 5},   // 0: max charge current (1/10th A stored, display as A)
-    {"TARGET %",  "%",   true,  2, 50, 100, 5},  // 1: target charge percentage (0-100)
+    {"TARGET %",  "%",   true,  2, 25, 100, 5},  // 1: target charge percentage (0-100)
     {"MAX TIME",  "min", true,  1, 0, 720, 15},  // 2: max charge time (minutes; sent as seconds)
     {"MAX TIME",  "min", false, 0, 0, 0,   0},   // 3: current max time display (read-only)
     {"TARGET V",  "V",   false, 0, 0, 0,   0},   // 4: target voltage (read-only)
