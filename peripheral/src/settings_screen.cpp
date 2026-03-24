@@ -14,7 +14,7 @@ struct SettingItem {
     int stepSize;           // Increment/decrement step
 };
 
-const SettingItem SETTINGS[8] = {
+const SettingItem SETTINGS[12] = {
     {"BRIGHTNESS", "%",  0,   0, 100,   1},   // 0: Display Brightness
     {"UNITS",      "",   1,   0, 1,     1},   // 1: Speed Units (0=MPH, 1=KM/H)
     {"CHG ALERT",  "%",  0,   0, 100,   5},   // 2: Charge Alert Threshold
@@ -23,6 +23,10 @@ const SettingItem SETTINGS[8] = {
     {"TIMEZONE",   "",   0, -12, 14,    1},   // 5: UTC offset (-12 to +14)
     {"TOUCH CAL",  "",   2,   0, 0,     0},   // 6: Touch calibration wizard
     {"DIAL CAL",   "",   2,   0, 0,     0},   // 7: Dial calibration wizard
+    {"NOM VOLT",   "V",  0, 1000, 6000, 10},  // 8: Charger nominal voltage (1/10th V)
+    {"MAX MULT",   "",   0,  100,  150,  1},  // 9: Max voltage multiplier ×100 (114=1.14)
+    {"MIN MULT",   "",   0,   50,  100,  1},  // 10: Min voltage multiplier ×100 (81=0.81)
+    {"AUTO NOM",   "",   1,    0,    1,  1},  // 11: Auto nominal voltage from CAN
 };
 
 // Get current value for a setting index
@@ -36,6 +40,10 @@ int getCurrentValue(int index) {
         case 3: return state.getScreenTimeout();
         case 4: return state.getTimeFormat24Hr() ? 1 : 0;  // Convert bool to int
         case 5: return state.getTimezoneOffsetHours();
+        case 8: return state.getChargerNominalVoltage();
+        case 9: return state.getChargerMaxMultiplier();
+        case 10: return state.getChargerMinMultiplier();
+        case 11: return state.getChargerAutoNominal() ? 1 : 0;
         default: return 0;
     }
 }
@@ -51,6 +59,15 @@ void saveValue(int index, int value) {
         case 3: state.setScreenTimeout(value); break;
         case 4: state.setTimeFormat24Hr(value == 1); break;  // Convert int to bool
         case 5: state.setTimezoneOffsetHours(value); break;
+        case 8:  state.setChargerNominalVoltage(value); break;
+        case 9:  state.setChargerMaxMultiplier(value);  break;
+        case 10: state.setChargerMinMultiplier(value);  break;
+        case 11: state.setChargerAutoNominal(value == 1); break;
+    }
+
+    if (index >= 8 && index <= 11) {
+        uint8_t cmd = (uint8_t)(index - 4);  // 8→0x04, 9→0x05, 10→0x06, 11→0x07
+        state.setPendingChargeCmd(cmd, (uint16_t)value);
     }
 }
 
@@ -77,6 +94,16 @@ String getValueString(int index, int value) {
             if (value == 0) return "UTC";
             char buf[8];
             sprintf(buf, "%+d", value);
+            return String(buf);
+        }
+        if (index == 8) {  // Nominal voltage: display as X.X V
+            char buf[10];
+            sprintf(buf, "%.1f", value / 10.0f);
+            return String(buf);
+        }
+        if (index == 9 || index == 10) {  // Multipliers: display as X.XX
+            char buf[10];
+            sprintf(buf, "%.2f", value / 100.0f);
             return String(buf);
         }
         return String(value);
@@ -162,7 +189,7 @@ void SettingsScreen::onScroll(int x, TFT_eSprite *sprite) {
 
     if (!isEditMode) {
         // NOT EDITING - Use base class carousel navigation
-        Carousel<8>::onScroll(x, sprite);
+        Carousel<12>::onScroll(x, sprite);
     }
     else {
         // EDITING - Use accumulator with lockout for consistent behavior
@@ -295,5 +322,5 @@ void SettingsScreen::display(TFT_eSprite* sprite, Arduino_ST7701_RGBPanel* gfx) 
         drawCalibScreen(sprite);
         return;
     }
-    Carousel<8>::display(sprite, gfx);
+    Carousel<12>::display(sprite, gfx);
 }

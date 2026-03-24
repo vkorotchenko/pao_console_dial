@@ -40,6 +40,10 @@ void GlobalState::saveSettings()
     preferences.putInt("sth", scrollThreshold);
     preferences.putInt("tz",  timezoneOffsetHours);
     preferences.putBool("autoPreLoad", autoPreLoadDismiss);
+    preferences.putInt("chgNomV",  chargerNominalVoltage);
+    preferences.putInt("chgMaxM",  chargerMaxMultiplier);
+    preferences.putInt("chgMinM",  chargerMinMultiplier);
+    preferences.putBool("chgAuto", chargerAutoNominal);
 
     preferences.end();
 }
@@ -59,6 +63,10 @@ void GlobalState::loadSettings()
     scrollThreshold       = preferences.getInt("sth", 15);
     timezoneOffsetHours   = preferences.getInt("tz",  0);
     autoPreLoadDismiss    = preferences.getBool("autoPreLoad", false);
+    chargerNominalVoltage = preferences.getInt("chgNomV",  3200);
+    chargerMaxMultiplier  = preferences.getInt("chgMaxM",  114);
+    chargerMinMultiplier  = preferences.getInt("chgMinM",  81);
+    chargerAutoNominal    = preferences.getBool("chgAuto", false);
 
     preferences.end();
 }

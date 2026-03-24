@@ -139,8 +139,8 @@ CM_ SG_ 2566889957 TargetPercentage "Configured charge limit 0-100%. NOT current
 CM_ SG_ 2566889957 ErrorState "Current error bitfield (same layout as ELCON_Charger_Status byte 4).";
 CM_ SG_ 2566889957 ChargingTime "Elapsed charging session time in seconds.";
 CM_ SG_ 2566889957 MaxChargeTime "Maximum allowed charge duration in seconds. Default 43200 (12 h).";
-CM_ SG_ 2566873332 CommandID "0x01=SetMaxChargeTime, 0x02=SetTargetPercentage, 0x03=SetMaxCurrent.";
-CM_ SG_ 2566873332 Value "cmd=1: seconds. cmd=2: target_pct*10 (e.g. 950=95%). cmd=3: 1/10 A (e.g. 150=15.0A).";
+CM_ SG_ 2566873332 CommandID "0x01=SetMaxChargeTime, 0x02=SetTargetPercentage, 0x03=SetMaxCurrent, 0x04=SetNominalVoltage, 0x05=SetNominalMaxMult, 0x06=SetNominalMinMult, 0x07=SetAutoNominalFromCan.";
+CM_ SG_ 2566873332 Value "cmd=1: seconds. cmd=2: target_pct*10 (e.g. 950=95%). cmd=3: 1/10 A (e.g. 150=15.0A). cmd=4: 1/10 V (e.g. 3200=320.0V). cmd=5: multiplier*100 (e.g. 114=1.14). cmd=6: multiplier*100 (e.g. 81=0.81). cmd=7: 0=off 1=on.";
 
 VAL_ 571 Powerstage_State
  0 "Initializing"
@@ -189,5 +189,9 @@ VAL_ 2566869221 CommTimeout
 VAL_ 2566873332 CommandID
  1 "SetMaxChargeTime"
  2 "SetTargetPercentage"
- 3 "SetMaxCurrent" ;
+ 3 "SetMaxCurrent"
+ 4 "SetNominalVoltage"
+ 5 "SetNominalMaxMult"
+ 6 "SetNominalMinMult"
+ 7 "SetAutoNominalFromCan" ;
 

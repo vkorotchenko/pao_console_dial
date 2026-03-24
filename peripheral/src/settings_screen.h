@@ -12,7 +12,7 @@ enum CalibMode {
     CALIB_DIAL_RESULT
 };
 
-class SettingsScreen : public Carousel<8>
+class SettingsScreen : public Carousel<12>
 {
 private:
     ScreenTypes::ScreenType type = ScreenTypes::ScreenType::SETTINGS;

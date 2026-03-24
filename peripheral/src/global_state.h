@@ -56,6 +56,12 @@ private:
     bool timeFormat24Hr = true;       // true=24hr, false=12hr
     bool autoPreLoadDismiss = true;  // true = block manual click on loading screen, pre-charge only
 
+    // Charger config settings (dispatched via CAN cmds 0x04-0x07)
+    int chargerNominalVoltage = 3200;  // 1/10th V (320.0V default)
+    int chargerMaxMultiplier  = 114;   // ×100 (1.14 default)
+    int chargerMinMultiplier  = 81;    // ×100 (0.81 default)
+    bool chargerAutoNominal   = false;
+
     // Calibration data
     int touchXOffset    = -10;        // touch X correction (pixels)
     int touchYOffset    = -10;        // touch Y correction (pixels)
@@ -214,6 +220,18 @@ public:
 
     bool getAutoPreLoadDismiss() { return autoPreLoadDismiss; }
     void setAutoPreLoadDismiss(bool value) { autoPreLoadDismiss = value; saveSettings(); }
+
+    int  getChargerNominalVoltage() { return chargerNominalVoltage; }
+    void setChargerNominalVoltage(int v) { chargerNominalVoltage = v; saveSettings(); }
+
+    int  getChargerMaxMultiplier() { return chargerMaxMultiplier; }
+    void setChargerMaxMultiplier(int v) { chargerMaxMultiplier = v; saveSettings(); }
+
+    int  getChargerMinMultiplier() { return chargerMinMultiplier; }
+    void setChargerMinMultiplier(int v) { chargerMinMultiplier = v; saveSettings(); }
+
+    bool getChargerAutoNominal() { return chargerAutoNominal; }
+    void setChargerAutoNominal(bool v) { chargerAutoNominal = v; saveSettings(); }
 
     // Local time/date with timezone applied
     int getLocalHour() {
