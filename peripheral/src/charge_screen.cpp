@@ -33,8 +33,13 @@ static const int PB_H = 32;
 
 void ChargeScreen::drawProgressBar(TFT_eSprite* sprite) {
     GlobalState &state = GlobalState::getInstance();
-    // Use voltage-derived SOC estimate; falls back to target% when no voltage data
-    int pct = constrain(state.getEstimatedSOC(), 0, 100);
+    float current = state.getCurrentVoltage();
+    float target  = state.getTargetVoltage();
+
+    int pct = 0;
+    if (target > 0.0f && current > 0.0f) {
+        pct = constrain((int)((current / target) * 100.0f), 0, 100);
+    }
 
     // White 2px border
     sprite->drawRect(PB_X, PB_Y, PB_W, PB_H, TFT_WHITE);
@@ -46,13 +51,17 @@ void ChargeScreen::drawProgressBar(TFT_eSprite* sprite) {
         sprite->fillRect(PB_X + 2, PB_Y + 2, fillW, PB_H - 4, TFT_SKYBLUE);
     }
 
-    // Percentage text centered in bar
+    // Voltage label centered in bar: "XXX.X / YYY.X V"
     sprite->unloadFont();
     sprite->setTextDatum(MC_DATUM);
     sprite->setTextSize(1);
     sprite->setTextColor(TFT_WHITE, TFT_BLACK);
-    char buf[8];
-    sprintf(buf, "%d%%", pct);
+    char buf[24];
+    if (target > 0.0f) {
+        sprintf(buf, "%.1f / %.1f V", current, target);
+    } else {
+        sprintf(buf, "-- / -- V");
+    }
     sprite->drawString(buf, PB_X + PB_W / 2, PB_Y + PB_H / 2);
 }
 
