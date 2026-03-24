@@ -39,6 +39,7 @@ void GlobalState::saveSettings()
     preferences.putInt("toy", touchYOffset);
     preferences.putInt("sth", scrollThreshold);
     preferences.putInt("tz",  timezoneOffsetHours);
+    preferences.putBool("autoPreLoad", autoPreLoadDismiss);
 
     preferences.end();
 }
@@ -57,6 +58,7 @@ void GlobalState::loadSettings()
     touchYOffset          = preferences.getInt("toy", -10);
     scrollThreshold       = preferences.getInt("sth", 15);
     timezoneOffsetHours   = preferences.getInt("tz",  0);
+    autoPreLoadDismiss    = preferences.getBool("autoPreLoad", false);
 
     preferences.end();
 }

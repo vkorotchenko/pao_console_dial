@@ -54,6 +54,7 @@ private:
     int chargeAlertThreshold = 20;    // 0-100%
     int screenTimeout = 60;           // 0-300 seconds, 0=never
     bool timeFormat24Hr = true;       // true=24hr, false=12hr
+    bool autoPreLoadDismiss = true;  // true = block manual click on loading screen, pre-charge only
 
     // Calibration data
     int touchXOffset    = -10;        // touch X correction (pixels)
@@ -210,6 +211,9 @@ public:
 
     int getTimezoneOffsetHours() { return timezoneOffsetHours; }
     void setTimezoneOffsetHours(int value) { timezoneOffsetHours = value; saveSettings(); }
+
+    bool getAutoPreLoadDismiss() { return autoPreLoadDismiss; }
+    void setAutoPreLoadDismiss(bool value) { autoPreLoadDismiss = value; saveSettings(); }
 
     // Local time/date with timezone applied
     int getLocalHour() {
