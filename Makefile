@@ -79,16 +79,36 @@ clean: clean-peripheral clean-controller clean-charger ## Clean all firmware pro
 # Mobile (React Native)
 # ─────────────────────────────────────────────────────────────────────────
 
-.PHONY: mobile-install mobile-android mobile-ios
+JAVA_HOME_17 := /Library/Java/JavaVirtualMachines/jdk-17.jdk/Contents/Home
+NODE_DIR     := $(shell dirname $(shell which node))
+
+.PHONY: mobile-install mobile-android mobile-android-fresh mobile-ios mobile-start mobile-metro reset-android-cache
 
 mobile-install: ## Install mobile app dependencies (npm install)
 	cd mobile && npm install
 
-mobile-android: ## Build and run mobile app on Android
-	cd mobile && npx react-native run-android
+mobile-metro: ## Start Metro bundler in background (USB device workflow: run this first, then mobile-android)
+	cd mobile && npx react-native start --reset-cache &
+
+mobile-start: ## Start Metro bundler in foreground (run in a separate terminal)
+	cd mobile && npx react-native start --reset-cache
+
+mobile-android: ## Build and run mobile app on Android device (USB: sets adb reverse, requires Metro running)
+	adb reverse tcp:8081 tcp:8081
+	cd mobile && JAVA_HOME=$(JAVA_HOME_17) PATH="$(NODE_DIR):$$PATH" npx react-native run-android
+
+mobile-android-fresh: ## Full USB Android workflow: adb reverse + Metro in background + build (single command)
+	adb reverse tcp:8081 tcp:8081
+	cd mobile && npx react-native start &
+	sleep 8
+	adb reverse tcp:8081 tcp:8081
+	cd mobile && JAVA_HOME=$(JAVA_HOME_17) PATH="$(NODE_DIR):$$PATH" npx react-native run-android
 
 mobile-ios: ## Build and run mobile app on iOS
 	cd mobile && npx react-native run-ios
+
+reset-android-cache: ## Reset Android build cache
+	cd mobile && cd android && JAVA_HOME=$(JAVA_HOME_17) ./gradlew clean
 
 # ─────────────────────────────────────────────────────────────────────────
 # Utility

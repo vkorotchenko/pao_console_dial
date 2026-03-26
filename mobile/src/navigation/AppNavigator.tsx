@@ -28,15 +28,18 @@ export default function AppNavigator() {
 
   useEffect(() => {
     if (index >= routes.length) {
-      setIndex(0);
+      const settingsIndex = routes.findIndex(r => r.key === 'settings');
+      setIndex(settingsIndex !== -1 ? settingsIndex : 0);
     }
   }, [routes.length, index]);
+
+  const safeIndex = Math.min(index, routes.length - 1);
 
   return (
     <View style={styles.container}>
       <BottomNavigation
-        navigationState={{index, routes}}
-        onIndexChange={setIndex}
+        navigationState={{index: safeIndex, routes}}
+        onIndexChange={i => setIndex(i)}
         renderScene={sceneMap}
         labelMaxFontSizeMultiplier={2}
         sceneAnimationEnabled={true}
