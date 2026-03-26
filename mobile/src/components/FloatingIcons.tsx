@@ -1,67 +1,45 @@
 import * as React from 'react';
 import {useState} from 'react';
-import {Alert} from 'react-native';
 import {FAB, Portal} from 'react-native-paper';
-import {useAppStore} from '../store/useAppStore';
-import {paoBleManager} from '../ble/PaoBleManager';
-import {Device} from 'react-native-ble-plx';
-import {requestBlePermissions} from '../utils/permissions';
 
 interface FloatingIconsProps {
-  onOpenHUD: () => void;
+  onNavigate: (screen: string) => void;
+  showGearTab: boolean;
+  currentScreen: string;
+  isHUD: boolean;
 }
 
-export const FloatingIcons: React.FC<FloatingIconsProps> = ({onOpenHUD}) => {
+export const FloatingIcons: React.FC<FloatingIconsProps> = ({onNavigate, showGearTab, currentScreen, isHUD}) => {
   const [open, setOpen] = useState<boolean>(false);
 
-  const bleStatus = useAppStore(state => state.bleStatus);
+  const isActive = (screen: string) =>
+    screen === 'hud' ? isHUD : !isHUD && currentScreen === screen;
 
-  const isScanning = bleStatus === 'scanning';
-  const isConnected = bleStatus === 'connected';
+  const actionStyle = (screen: string) => ({
+    color: isActive(screen) ? '#87CEEB' : '#555',
+  });
 
-  const handleScanPress = async () => {
-    if (!isScanning && !isConnected) {
-      const granted = await requestBlePermissions();
-      if (!granted) {
-        Alert.alert(
-          'Bluetooth Permission Required',
-          'Please grant Bluetooth permissions to connect to PAO Console.',
-          [{text: 'OK'}],
-        );
-        return;
-      }
-      paoBleManager.scan((device: Device) => {
-        console.log('FloatingIcons: device found, connecting to', device.name);
-        paoBleManager.connect(device.id).catch((err: Error) => {
-          console.error('FloatingIcons: connect error', err);
-        });
-      });
-    } else if (isScanning) {
-      paoBleManager.stopScan();
-    }
-  };
+  const navActions = [
+    {icon: 'speedometer', onPress: () => onNavigate('hud'), ...actionStyle('hud')},
+    {icon: 'car', onPress: () => onNavigate('dashboard'), ...actionStyle('dashboard')},
+    {icon: 'lightning-bolt', onPress: () => onNavigate('charger'), ...actionStyle('charger')},
+    ...(showGearTab ? [{icon: 'power-standby', onPress: () => onNavigate('gear'), ...actionStyle('gear')}] : []),
+    {icon: 'car-wrench', onPress: () => onNavigate('settings'), ...actionStyle('settings')},
+  ];
 
   return (
     <Portal>
       <FAB.Group
         open={open}
         visible={true}
-        icon={isScanning ? 'refresh' : 'bluetooth-settings'}
-        actions={[
-          {
-            icon: isConnected ? 'bluetooth' : 'bluetooth-off',
-            label: 'PAO Console',
-            onPress: handleScanPress,
-          },
-          {
-            icon: 'speedometer',
-            label: 'HUD',
-            onPress: onOpenHUD,
-          },
-        ]}
-        onStateChange={({open: isOpen}: {open: boolean}) => setOpen(isOpen)}
+        icon={open ? 'close' : 'menu'}
+        actions={navActions}
+        onStateChange={({open: isOpen}) => setOpen(isOpen)}
         onPress={() => {}}
-        style={{paddingBottom: 90}}
+        backdropColor="transparent"
+        color="#87CEEB"
+        fabStyle={{transform: [{scale: 1.25}], backgroundColor: '#1e4a6e'}}
+        style={{paddingBottom: 16}}
       />
     </Portal>
   );

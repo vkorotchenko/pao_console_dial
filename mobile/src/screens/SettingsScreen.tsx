@@ -1,7 +1,10 @@
-import React from 'react';
-import {View, Text, StyleSheet, ScrollView} from 'react-native';
-import {Switch, SegmentedButtons} from 'react-native-paper';
+import React, {useState} from 'react';
+import {View, Text, StyleSheet, ScrollView, Alert, ActivityIndicator} from 'react-native';
+import {Switch, SegmentedButtons, Button} from 'react-native-paper';
+import {Device} from 'react-native-ble-plx';
 import {useAppStore} from '../store/useAppStore';
+import {paoBleManager} from '../ble/PaoBleManager';
+import {requestBlePermissions} from '../utils/permissions';
 
 export default function SettingsScreen() {
   const bleStatus = useAppStore(state => state.bleStatus);
@@ -11,6 +14,47 @@ export default function SettingsScreen() {
   const speedUnit = useAppStore(state => state.speedUnit);
   const setSpeedUnit = useAppStore(state => state.setSpeedUnit);
 
+  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
+
+  const canScan = bleStatus === 'disconnected' || bleStatus === 'error';
+  const canDisconnect =
+    bleStatus === 'connected' || bleStatus === 'connecting' || bleStatus === 'scanning';
+  const isScanning = bleStatus === 'scanning';
+
+  const statusColor =
+    bleStatus === 'connected'
+      ? '#4cff91'
+      : bleStatus === 'scanning' || bleStatus === 'connecting'
+      ? '#FFC107'
+      : '#F44336'; // disconnected / error
+
+  const handleScan = async () => {
+    setIsRequestingPermission(true);
+    let granted = false;
+    try {
+      granted = await requestBlePermissions();
+    } finally {
+      setIsRequestingPermission(false);
+    }
+
+    if (!granted) {
+      Alert.alert(
+        'Bluetooth Permission Required',
+        'Please grant Bluetooth permissions to connect to PAO Console.',
+        [{text: 'OK'}],
+      );
+      return;
+    }
+
+    paoBleManager.scan((device: Device) => {
+      paoBleManager.connect(device.id).catch(console.error);
+    });
+  };
+
+  const handleDisconnect = () => {
+    paoBleManager.disconnect();
+  };
+
   return (
     <ScrollView
       style={styles.scrollView}
@@ -18,17 +62,22 @@ export default function SettingsScreen() {
       {/* BLE Connection Section */}
       <Text style={styles.sectionHeader}>Connection</Text>
       <View style={styles.card}>
+        {/* Status row */}
         <View style={styles.row}>
           <Text style={styles.label}>Status</Text>
-          <Text
-            style={[
-              styles.value,
-              bleStatus === 'connected' && styles.valueConnected,
-              bleStatus === 'error' && styles.valueError,
-            ]}>
-            {bleStatus}
-          </Text>
+          <View style={styles.statusContainer}>
+            {(isScanning || isRequestingPermission) && (
+              <ActivityIndicator
+                size="small"
+                color="#FFC107"
+                style={styles.spinner}
+              />
+            )}
+            <Text style={[styles.value, {color: statusColor}]}>{bleStatus}</Text>
+          </View>
         </View>
+
+        {/* Device ID row */}
         {deviceId ? (
           <View style={styles.row}>
             <Text style={styles.label}>Device ID</Text>
@@ -37,6 +86,28 @@ export default function SettingsScreen() {
             </Text>
           </View>
         ) : null}
+
+        {/* Action buttons row */}
+        <View style={styles.buttonRow}>
+          <Button
+            mode="contained"
+            onPress={handleScan}
+            disabled={!canScan || isRequestingPermission}
+            style={styles.actionButton}
+            contentStyle={styles.actionButtonContent}
+            labelStyle={styles.actionButtonLabel}>
+            Scan
+          </Button>
+          <Button
+            mode="outlined"
+            onPress={handleDisconnect}
+            disabled={!canDisconnect}
+            style={styles.actionButton}
+            contentStyle={styles.actionButtonContent}
+            labelStyle={styles.actionButtonLabel}>
+            Disconnect
+          </Button>
+        </View>
       </View>
 
       {/* Navigation Section */}
@@ -123,19 +194,33 @@ const styles = StyleSheet.create({
   },
   value: {
     fontSize: 14,
-    color: '#9E9E9E',
     textTransform: 'capitalize',
-  },
-  valueConnected: {
-    color: '#00C853',
-  },
-  valueError: {
-    color: '#F44336',
   },
   valueSmall: {
     fontSize: 12,
     color: '#9E9E9E',
     maxWidth: 180,
+  },
+  statusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  spinner: {
+    marginRight: 6,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingVertical: 12,
+  },
+  actionButton: {
+    flex: 1,
+  },
+  actionButtonContent: {
+    height: 40,
+  },
+  actionButtonLabel: {
+    fontSize: 13,
   },
   segmentedWrapper: {
     paddingTop: 8,

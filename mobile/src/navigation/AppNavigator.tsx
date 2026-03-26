@@ -1,6 +1,5 @@
-import React, {useEffect} from 'react';
-import {View, StyleSheet, Easing} from 'react-native';
-import {BottomNavigation} from 'react-native-paper';
+import React, {useState} from 'react';
+import {View, StyleSheet} from 'react-native';
 import DashboardScreen from '../screens/DashboardScreen';
 import GearScreen from '../screens/GearScreen';
 import ChargerScreen from '../screens/ChargerScreen';
@@ -8,52 +7,45 @@ import SettingsScreen from '../screens/SettingsScreen';
 import HUDScreen from '../screens/HUDScreen';
 import {FloatingIcons} from '../components/FloatingIcons';
 import {useAppStore} from '../store/useAppStore';
-import tabs from '../config/tabs.json';
 
-const sceneMap = BottomNavigation.SceneMap({
-  dashboard: DashboardScreen,
-  charger: ChargerScreen,
-  gear: GearScreen,
-  settings: SettingsScreen,
-});
+type Screen = 'dashboard' | 'charger' | 'gear' | 'settings';
 
 export default function AppNavigator() {
-  const [index, setIndex] = React.useState(0);
-  const [showHUD, setShowHUD] = React.useState(false);
+  const [currentScreen, setCurrentScreen] = useState<Screen>('dashboard');
+  const [showHUD, setShowHUD] = useState(true); // HUD is default on launch
   const showGearTab = useAppStore(state => state.showGearTab);
 
-  const routes = (
-    tabs.navigation as Array<{key: string; title: string; focusedIcon: string}>
-  ).filter(r => r.key !== 'gear' || showGearTab);
-
-  useEffect(() => {
-    if (index >= routes.length) {
-      const settingsIndex = routes.findIndex(r => r.key === 'settings');
-      setIndex(settingsIndex !== -1 ? settingsIndex : 0);
+  const navigate = (screen: string) => {
+    if (screen === 'hud') {
+      setShowHUD(true);
+    } else {
+      setCurrentScreen(screen as Screen);
+      setShowHUD(false);
     }
-  }, [routes.length, index]);
+  };
 
-  const safeIndex = Math.min(index, routes.length - 1);
+  const renderScreen = () => {
+    // If gear is disabled and somehow on gear screen, fall back to dashboard
+    if (currentScreen === 'gear' && !showGearTab) {
+      return <DashboardScreen />;
+    }
+    switch (currentScreen) {
+      case 'charger': return <ChargerScreen />;
+      case 'gear': return <GearScreen />;
+      case 'settings': return <SettingsScreen />;
+      default: return <DashboardScreen />;
+    }
+  };
 
   return (
     <View style={styles.container}>
-      <BottomNavigation
-        navigationState={{index: safeIndex, routes}}
-        onIndexChange={i => setIndex(i)}
-        renderScene={sceneMap}
-        labelMaxFontSizeMultiplier={2}
-        sceneAnimationEnabled={true}
-        sceneAnimationType={'shifting'}
-        sceneAnimationEasing={Easing.ease}
-      />
-      <FloatingIcons onOpenHUD={() => setShowHUD(true)} />
+      {renderScreen()}
+      <FloatingIcons onNavigate={navigate} showGearTab={showGearTab} currentScreen={currentScreen} isHUD={showHUD} />
       <HUDScreen visible={showHUD} onClose={() => setShowHUD(false)} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: {flex: 1},
 });

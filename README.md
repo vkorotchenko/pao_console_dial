@@ -102,13 +102,97 @@ Stale detection: CAN data resets after 5 seconds of silence; GPS resets after 10
 
 ## Mobile App
 
-A React Native companion app (iOS + Android) provides BLE connectivity to the ESP32-S3, enabling:
+A React Native companion app (iOS + Android) provides BLE connectivity to the ESP32-S3 peripheral, enabling:
 - Live telemetry dashboard
 - Remote gear control
 - Charger configuration
 - Device management
 
-See [`mobile/README.md`](mobile/README.md) for setup and build instructions.
+### BLE GATT Service
+
+**Device Name:** `PAO Console`
+**Service UUID:** `c909d45a-0560-4725-85e7-c20a9bbb74c2`
+
+The ESP32-S3 advertises a GATT service with three characteristics:
+
+#### Characteristic 1 — Telemetry (Notify)
+**UUID:** `c169df83-5127-46df-a18b-066672243018`
+**Size:** 36 bytes (big-endian)
+**Frequency:** ~100 ms
+
+| Byte(s) | Field | Type | Scale | Notes |
+|---------|-------|------|-------|-------|
+| 0 | schemaVersion | uint8 | — | Always `0x01` |
+| 1–2 | speedRpm | int16 | 1 RPM | Motor RPM |
+| 3–4 | motorTempC | int16 | ÷10 | Motor temperature (°C) |
+| 5–6 | inverterTempC | int16 | ÷10 | Inverter temperature (°C) |
+| 7–8 | torqueNm | int16 | ÷10 | Signed; negative = regen braking (Nm) |
+| 9–10 | dcVoltageV | uint16 | ÷10 | Pack voltage (V) |
+| 11–12 | dcCurrentA | int16 | ÷10 | Pack current; signed (A) |
+| 13 | motorState | uint8 | — | 0=disabled, 1=standby, 2=enabled, 3=powerdown |
+| 14 | statusFlags | uint8 | bitmask | bit0=running, bit1=fault, bit2=warning, bit3=ready, bit4=gpsFix, bit5=preChargeReady, bit6=canConnected |
+| 15 | gear | uint8 | — | 0=neutral, 1=drive, 2=reverse, 3=park |
+| 16–19 | gpsLat | float32 | — | GPS latitude (degrees) |
+| 20–23 | gpsLon | float32 | — | GPS longitude (degrees) |
+| 24–27 | gpsSpeedKmh | float32 | — | GPS-derived speed (km/h) |
+| 28–31 | gpsAltitudeM | float32 | — | GPS altitude (metres) |
+| 32 | gpsSatellites | uint8 | — | Satellite count |
+| 33 | chargePercent | uint8 | — | State of charge (%) |
+| 34 | chargeErrorState | uint8 | — | Charger error code |
+| 35 | chargeState | uint8 | — | 0=not charging, 1=charging, 2=complete |
+
+#### Characteristic 2 — Gear Command (Write)
+**UUID:** `b2b08d43-7ec9-40c4-add2-a3a899756607`
+**Size:** 1 byte
+
+| Value | Gear |
+|-------|------|
+| 0 | Neutral |
+| 1 | Drive |
+| 2 | Reverse |
+| 3 | Park |
+
+#### Characteristic 3 — Charger Config (Read/Write/Notify)
+**UUID:** `06ad7ea2-24cc-46fe-b791-78167b76693e`
+
+**Read / Notify (12 bytes, big-endian):**
+
+| Byte(s) | Field | Type | Scale | Notes |
+|---------|-------|------|-------|-------|
+| 0–1 | targetVoltageV | uint16 | ÷10 | Target voltage (V) |
+| 2–3 | maxCurrentA | uint16 | ÷10 | Max charge current (A) |
+| 4 | targetSocPercent | uint8 | — | Target SOC (%) |
+| 5–6 | maxChargeTimeSeconds | uint16 | — | Max charge time (seconds) |
+| 7–8 | actualVoltageV | uint16 | ÷10 | Actual voltage (V, read-only) |
+| 9–10 | actualCurrentA | uint16 | ÷10 | Actual current (A, read-only) |
+| 11 | chargeErrorState | uint8 | — | Charger error code (read-only) |
+
+**Write (7 bytes):**
+
+| Byte(s) | Field |
+|---------|-------|
+| 0–1 | targetVoltageV |
+| 2–3 | maxCurrentA |
+| 4 | targetSocPercent |
+| 5–6 | maxChargeTimeSeconds |
+
+### Mobile App Setup
+
+```bash
+# Install dependencies
+make mobile-install
+
+# Start Metro bundler (in one terminal)
+make mobile-start
+
+# In another terminal, build and run on Android (requires Metro running)
+make mobile-android
+
+# Or for iOS
+make mobile-ios
+```
+
+See [`mobile/README.md`](mobile/README.md) for detailed setup, tech stack, and troubleshooting.
 
 ---
 
@@ -136,30 +220,72 @@ pao_console_dial/
 │       ├── settings_screen.cpp/.h
 │       ├── spotify_screen.cpp/.h
 │       └── loading_screen.cpp/.h
-└── mobile/              # React Native companion app
+├── charger/             # SAMD21 charger firmware (PlatformIO)
+│   └── src/
+│       ├── main.cpp
+│       ├── charger_handler.cpp/.h
+│       └── ...
+└── mobile/              # React Native companion app (iOS + Android)
     ├── src/
-    │   ├── ble/         # BLE communication layer
-    │   ├── screens/     # Dashboard, Gear, Charger, Settings
-    │   ├── store/       # Zustand state management
-    │   └── navigation/  # React Navigation setup
+    │   ├── components/
+    │   │   └── FloatingIcons.tsx
+    │   ├── config/
+    │   │   └── tabs.json
+    │   ├── navigation/
+    │   │   └── AppNavigator.tsx
+    │   ├── screens/
+    │   │   ├── DashboardScreen.tsx
+    │   │   ├── GearScreen.tsx
+    │   │   ├── ChargerScreen.tsx
+    │   │   ├── SettingsScreen.tsx
+    │   │   └── HUDScreen.tsx
+    │   ├── ble/
+    │   │   ├── PaoBleManager.ts
+    │   │   └── packets.ts
+    │   ├── store/
+    │   │   ├── useAppStore.ts
+    │   │   └── permissions.ts
+    │   ├── types/
+    │   │   └── index.ts
+    │   └── App.tsx
+    ├── ios/             # iOS build
+    ├── android/         # Android build
+    ├── package.json
     └── README.md
 ```
+
+**Navigation:** Bottom tab navigation via React Navigation with 5 main screens (Dashboard, Gear, Charger, Settings) plus a full-screen HUD modal.
 
 ---
 
 ## Building & Flashing
 
-Both units use [PlatformIO](https://platformio.org/).
+Both firmware units use [PlatformIO](https://platformio.org/). Use the Makefile targets to build and flash:
 
+### Make Targets
+
+| Target | Purpose |
+|--------|---------|
+| `make build` | Build all firmware projects (controller, peripheral, charger) |
+| `make build-peripheral` | Build ESP32-S3 peripheral firmware |
+| `make build-controller` | Build SAMD21 controller firmware |
+| `make build-charger` | Build SAMD21 charger firmware |
+| `make upload-peripheral` | Flash peripheral to ESP32-S3 (USB) |
+| `make upload-controller` | Flash controller to Feather M0 (USB) |
+| `make upload-charger` | Flash charger to SAMD21 (USB) |
+| `make monitor-peripheral` | Open serial monitor for peripheral |
+| `make monitor-controller` | Open serial monitor for controller |
+| `make monitor-charger` | Open serial monitor for charger |
+| `make clean` | Clean all build artifacts |
+
+**Example:**
 ```bash
-# Flash the controller
-cd controller
-pio run --target upload
-
-# Flash the peripheral
-cd peripheral
-pio run --target upload
+make build-peripheral
+make upload-peripheral
+make monitor-peripheral
 ```
+
+All projects are configured with PlatformIO (`platformio.ini` in each directory).
 
 ---
 
