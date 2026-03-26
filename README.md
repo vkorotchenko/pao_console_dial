@@ -100,6 +100,18 @@ Stale detection: CAN data resets after 5 seconds of silence; GPS resets after 10
 
 ---
 
+## Mobile App
+
+A React Native companion app (iOS + Android) provides BLE connectivity to the ESP32-S3, enabling:
+- Live telemetry dashboard
+- Remote gear control
+- Charger configuration
+- Device management
+
+See [`mobile/README.md`](mobile/README.md) for setup and build instructions.
+
+---
+
 ## Project Structure
 
 ```
@@ -111,19 +123,26 @@ pao_console_dial/
 │       ├── gps_handler.cpp/.h
 │       ├── i2c_handler.cpp/.h
 │       └── global_state.cpp/.h
-└── peripheral/          # ESP32-S3 firmware (PlatformIO)
-    └── src/
-        ├── main.cpp
-        ├── i2c_handler.cpp/.h
-        ├── global_state.cpp/.h
-        ├── carousel.cpp/.h
-        ├── speedo_screen.cpp/.h
-        ├── data_screen.cpp/.h
-        ├── gear_screen.cpp/.h
-        ├── charge_screen.cpp/.h
-        ├── settings_screen.cpp/.h
-        ├── spotify_screen.cpp/.h
-        └── loading_screen.cpp/.h
+├── peripheral/          # ESP32-S3 firmware (PlatformIO)
+│   └── src/
+│       ├── main.cpp
+│       ├── i2c_handler.cpp/.h
+│       ├── global_state.cpp/.h
+│       ├── carousel.cpp/.h
+│       ├── speedo_screen.cpp/.h
+│       ├── data_screen.cpp/.h
+│       ├── gear_screen.cpp/.h
+│       ├── charge_screen.cpp/.h
+│       ├── settings_screen.cpp/.h
+│       ├── spotify_screen.cpp/.h
+│       └── loading_screen.cpp/.h
+└── mobile/              # React Native companion app
+    ├── src/
+    │   ├── ble/         # BLE communication layer
+    │   ├── screens/     # Dashboard, Gear, Charger, Settings
+    │   ├── store/       # Zustand state management
+    │   └── navigation/  # React Navigation setup
+    └── README.md
 ```
 
 ---

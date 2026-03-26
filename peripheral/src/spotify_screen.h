@@ -2,7 +2,7 @@
 #ifndef SPOTIFY_SCREEN_H_
 #define SPOTIFY_SCREEN_H_
 
-#include <BleKeyboard.h>
+#include "pao_ble.h"
 #include "screen.h"
 
 // Spotify image assets (bitmap format)
