@@ -1,140 +1,144 @@
 import React from 'react';
-import {View, Text, StyleSheet, Button, Alert} from 'react-native';
+import {View, Text, StyleSheet, ScrollView} from 'react-native';
+import {Switch, SegmentedButtons} from 'react-native-paper';
 import {useAppStore} from '../store/useAppStore';
 
 export default function SettingsScreen() {
-  const {bleStatus, deviceId} = useAppStore();
-
-  const handleScan = () => {
-    Alert.alert('BLE Scan', 'BLE scanning will be implemented after ADR-001');
-  };
-
-  const handleConnect = () => {
-    Alert.alert(
-      'BLE Connect',
-      'BLE connection will be implemented after ADR-001',
-    );
-  };
-
-  const handleDisconnect = () => {
-    Alert.alert(
-      'BLE Disconnect',
-      'BLE disconnection will be implemented after ADR-001',
-    );
-  };
+  const bleStatus = useAppStore(state => state.bleStatus);
+  const deviceId = useAppStore(state => state.deviceId);
+  const showGearTab = useAppStore(state => state.showGearTab);
+  const setShowGearTab = useAppStore(state => state.setShowGearTab);
+  const speedUnit = useAppStore(state => state.speedUnit);
+  const setSpeedUnit = useAppStore(state => state.setSpeedUnit);
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>BLE Settings</Text>
-      <Text style={styles.subtitle}>Scan and connect to PAO Console</Text>
-
-      <View style={styles.statusSection}>
-        <Text style={styles.sectionTitle}>Connection Status</Text>
-        <View style={styles.statusRow}>
-          <Text style={styles.label}>Status:</Text>
-          <Text style={styles.value}>{bleStatus}</Text>
+    <ScrollView
+      style={styles.scrollView}
+      contentContainerStyle={styles.container}>
+      {/* BLE Connection Section */}
+      <Text style={styles.sectionHeader}>Connection</Text>
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <Text style={styles.label}>Status</Text>
+          <Text
+            style={[
+              styles.value,
+              bleStatus === 'connected' && styles.valueConnected,
+              bleStatus === 'error' && styles.valueError,
+            ]}>
+            {bleStatus}
+          </Text>
         </View>
-        {deviceId && (
-          <View style={styles.statusRow}>
-            <Text style={styles.label}>Device:</Text>
-            <Text style={styles.value}>{deviceId}</Text>
+        {deviceId ? (
+          <View style={styles.row}>
+            <Text style={styles.label}>Device ID</Text>
+            <Text style={styles.valueSmall} numberOfLines={1}>
+              {deviceId}
+            </Text>
           </View>
-        )}
+        ) : null}
       </View>
 
-      <View style={styles.buttonSection}>
-        <Button title="Scan for Devices" onPress={handleScan} />
-        <View style={styles.buttonSpacer} />
-        <Button
-          title="Connect"
-          onPress={handleConnect}
-          disabled={bleStatus === 'connected'}
-        />
-        <View style={styles.buttonSpacer} />
-        <Button
-          title="Disconnect"
-          onPress={handleDisconnect}
-          disabled={bleStatus !== 'connected'}
-          color="#ff6b6b"
-        />
+      {/* Navigation Section */}
+      <Text style={styles.sectionHeader}>Navigation</Text>
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>Manual Gear Control</Text>
+            <Text style={styles.hint}>Show the Gear tab in the bottom bar</Text>
+          </View>
+          <Switch
+            value={showGearTab}
+            onValueChange={setShowGearTab}
+            color="#00C853"
+          />
+        </View>
       </View>
 
-      <View style={styles.infoSection}>
-        <Text style={styles.infoTitle}>Device Name</Text>
-        <Text style={styles.infoText}>PAO Console</Text>
-        <Text style={styles.infoNote}>
-          BLE implementation will be added after docs/adr-001-ble-gatt-service.md
-          is finalized
-        </Text>
+      {/* Display Section */}
+      <Text style={styles.sectionHeader}>Display</Text>
+      <View style={styles.card}>
+        <Text style={styles.label}>Speed Unit</Text>
+        <View style={styles.segmentedWrapper}>
+          <SegmentedButtons
+            value={speedUnit}
+            onValueChange={val => setSpeedUnit(val as 'kmh' | 'mph')}
+            buttons={[
+              {value: 'kmh', label: 'km/h'},
+              {value: 'mph', label: 'mph'},
+            ]}
+          />
+        </View>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  scrollView: {
     flex: 1,
-    padding: 20,
-    backgroundColor: '#fff',
+    backgroundColor: '#0D0D0D',
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#666',
-    marginBottom: 24,
-  },
-  statusSection: {
-    marginBottom: 24,
+  container: {
     padding: 16,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
+    paddingBottom: 120,
   },
-  sectionTitle: {
-    fontSize: 18,
+  sectionHeader: {
+    fontSize: 12,
     fontWeight: '600',
-    marginBottom: 12,
+    color: '#9E9E9E',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginTop: 24,
+    marginBottom: 8,
+    marginLeft: 4,
   },
-  statusRow: {
+  card: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+  },
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#2A2A2A',
+  },
+  rowText: {
+    flex: 1,
+    marginRight: 12,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginRight: 8,
+    fontSize: 15,
+    color: '#E0E0E0',
+    fontWeight: '500',
+  },
+  hint: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
   },
   value: {
     fontSize: 14,
-    color: '#333',
+    color: '#9E9E9E',
+    textTransform: 'capitalize',
   },
-  buttonSection: {
-    marginBottom: 24,
+  valueConnected: {
+    color: '#00C853',
   },
-  buttonSpacer: {
-    height: 12,
+  valueError: {
+    color: '#F44336',
   },
-  infoSection: {
-    padding: 16,
-    backgroundColor: '#e3f2fd',
-    borderRadius: 8,
-  },
-  infoTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  infoText: {
-    fontSize: 14,
-    marginBottom: 8,
-  },
-  infoNote: {
+  valueSmall: {
     fontSize: 12,
-    color: '#666',
-    fontStyle: 'italic',
+    color: '#9E9E9E',
+    maxWidth: 180,
+  },
+  segmentedWrapper: {
+    paddingTop: 8,
+    paddingBottom: 12,
   },
 });

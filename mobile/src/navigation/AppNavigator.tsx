@@ -1,64 +1,56 @@
-import React from 'react';
-import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import React, {useEffect} from 'react';
+import {View, StyleSheet, Easing} from 'react-native';
+import {BottomNavigation} from 'react-native-paper';
 import DashboardScreen from '../screens/DashboardScreen';
 import GearScreen from '../screens/GearScreen';
 import ChargerScreen from '../screens/ChargerScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import HUDScreen from '../screens/HUDScreen';
+import {FloatingIcons} from '../components/FloatingIcons';
+import {useAppStore} from '../store/useAppStore';
+import tabs from '../config/tabs.json';
 
-export type RootTabParamList = {
-  Dashboard: undefined;
-  Gear: undefined;
-  Charger: undefined;
-  Settings: undefined;
-};
-
-const Tab = createBottomTabNavigator<RootTabParamList>();
+const sceneMap = BottomNavigation.SceneMap({
+  dashboard: DashboardScreen,
+  charger: ChargerScreen,
+  gear: GearScreen,
+  settings: SettingsScreen,
+});
 
 export default function AppNavigator() {
+  const [index, setIndex] = React.useState(0);
+  const [showHUD, setShowHUD] = React.useState(false);
+  const showGearTab = useAppStore(state => state.showGearTab);
+
+  const routes = (
+    tabs.navigation as Array<{key: string; title: string; focusedIcon: string}>
+  ).filter(r => r.key !== 'gear' || showGearTab);
+
+  useEffect(() => {
+    if (index >= routes.length) {
+      setIndex(0);
+    }
+  }, [routes.length, index]);
+
   return (
-    <Tab.Navigator
-      screenOptions={{
-        headerShown: true,
-        tabBarActiveTintColor: '#2196F3',
-        tabBarInactiveTintColor: '#757575',
-      }}>
-      <Tab.Screen
-        name="Dashboard"
-        component={DashboardScreen}
-        options={{
-          tabBarIcon: ({color, size}) => (
-            <Icon name="view-dashboard" size={size} color={color} />
-          ),
-        }}
+    <View style={styles.container}>
+      <BottomNavigation
+        navigationState={{index, routes}}
+        onIndexChange={setIndex}
+        renderScene={sceneMap}
+        labelMaxFontSizeMultiplier={2}
+        sceneAnimationEnabled={true}
+        sceneAnimationType={'shifting'}
+        sceneAnimationEasing={Easing.ease}
       />
-      <Tab.Screen
-        name="Gear"
-        component={GearScreen}
-        options={{
-          tabBarIcon: ({color, size}) => (
-            <Icon name="car-shift-pattern" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="Charger"
-        component={ChargerScreen}
-        options={{
-          tabBarIcon: ({color, size}) => (
-            <Icon name="battery-charging" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tab.Screen
-        name="Settings"
-        component={SettingsScreen}
-        options={{
-          tabBarIcon: ({color, size}) => (
-            <Icon name="bluetooth-settings" size={size} color={color} />
-          ),
-        }}
-      />
-    </Tab.Navigator>
+      <FloatingIcons onOpenHUD={() => setShowHUD(true)} />
+      <HUDScreen visible={showHUD} onClose={() => setShowHUD(false)} />
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+});

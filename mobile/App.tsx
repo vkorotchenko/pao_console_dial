@@ -1,7 +1,7 @@
 import React from 'react';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {GestureHandlerRootView} from 'react-native-gesture-handler';
-import {NavigationContainer} from '@react-navigation/native';
+import {PaperProvider} from 'react-native-paper';
 import {StyleSheet} from 'react-native';
 import AppNavigator from './src/navigation/AppNavigator';
 
@@ -9,9 +9,9 @@ function App(): React.JSX.Element {
   return (
     <GestureHandlerRootView style={styles.container}>
       <SafeAreaProvider>
-        <NavigationContainer>
+        <PaperProvider>
           <AppNavigator />
-        </NavigationContainer>
+        </PaperProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
