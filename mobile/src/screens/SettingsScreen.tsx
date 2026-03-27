@@ -14,12 +14,12 @@ export default function SettingsScreen() {
   const chargerDeviceId = useAppStore(state => state.chargerDeviceId);
   const setChargerBleStatus = useAppStore(state => state.setChargerBleStatus);
   const setChargerData = useAppStore(state => state.setChargerData);
-  const connectionMode = useAppStore(state => state.connectionMode);
-  const setConnectionMode = useAppStore(state => state.setConnectionMode);
   const showGearTab = useAppStore(state => state.showGearTab);
   const setShowGearTab = useAppStore(state => state.setShowGearTab);
   const speedUnit = useAppStore(state => state.speedUnit);
   const setSpeedUnit = useAppStore(state => state.setSpeedUnit);
+  const hudAutoBrighten = useAppStore(state => state.hudAutoBrighten);
+  const setHudAutoBrighten = useAppStore(state => state.setHudAutoBrighten);
 
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [isRequestingChargerPermission, setIsRequestingChargerPermission] = useState(false);
@@ -113,139 +113,85 @@ export default function SettingsScreen() {
     setChargerData(null);
   };
 
-  const showPeripheralSection = connectionMode !== 'charger';
-  const showChargerSection = connectionMode === 'charger' || connectionMode === 'both';
-
   return (
     <ScrollView
       style={styles.scrollView}
       contentContainerStyle={styles.container}>
-      {/* Connection Mode Section */}
-      <Text style={styles.sectionHeader}>Connection Mode</Text>
+      {/* Bluetooth Section */}
+      <Text style={styles.sectionHeader}>Bluetooth</Text>
       <View style={styles.card}>
-        <View style={styles.segmentedWrapper}>
-          <SegmentedButtons
-            value={connectionMode}
-            onValueChange={val =>
-              setConnectionMode(val as 'peripheral' | 'charger' | 'both')
-            }
-            buttons={[
-              {value: 'peripheral', label: 'Peripheral'},
-              {value: 'charger', label: 'Charger'},
-              {value: 'both', label: 'Both'},
-            ]}
-          />
-        </View>
-      </View>
-
-      {/* Charger BLE Section */}
-      {showChargerSection && (
-        <>
-          <Text style={styles.sectionHeader}>Charger Connection</Text>
-          <View style={styles.card}>
-            <View style={styles.row}>
-              <Text style={styles.label}>Status</Text>
-              <View style={styles.statusContainer}>
-                {(isScanningCharger || isRequestingChargerPermission) && (
-                  <ActivityIndicator
-                    size="small"
-                    color="#FFC107"
-                    style={styles.spinner}
-                  />
-                )}
-                <Text style={[styles.value, {color: chargerStatusColor}]}>
-                  {chargerBleStatus}
-                </Text>
-              </View>
-            </View>
-
-            {chargerDeviceId ? (
-              <View style={styles.row}>
-                <Text style={styles.label}>Device ID</Text>
-                <Text style={styles.valueSmall} numberOfLines={1}>
-                  {chargerDeviceId}
-                </Text>
-              </View>
-            ) : null}
-
-            <View style={styles.buttonRow}>
-              <Button
-                mode="contained"
-                onPress={handleScanCharger}
-                disabled={!canScanCharger || isRequestingChargerPermission}
-                style={styles.actionButton}
-                contentStyle={styles.actionButtonContent}
-                labelStyle={styles.actionButtonLabel}>
-                Scan for Charger
-              </Button>
-              <Button
-                mode="outlined"
-                onPress={handleDisconnectCharger}
-                disabled={!canDisconnectCharger}
-                style={styles.actionButton}
-                contentStyle={styles.actionButtonContent}
-                labelStyle={styles.actionButtonLabel}>
-                Disconnect Charger
-              </Button>
-            </View>
-          </View>
-        </>
-      )}
-
-      {/* Peripheral BLE Connection Section */}
-      {showPeripheralSection && (
-        <>
-          <Text style={styles.sectionHeader}>Connection</Text>
-          <View style={styles.card}>
-            {/* Status row */}
-            <View style={styles.row}>
-              <Text style={styles.label}>Status</Text>
-              <View style={styles.statusContainer}>
-                {(isScanning || isRequestingPermission) && (
-                  <ActivityIndicator
-                    size="small"
-                    color="#FFC107"
-                    style={styles.spinner}
-                  />
-                )}
-                <Text style={[styles.value, {color: statusColor}]}>{bleStatus}</Text>
-              </View>
-            </View>
-
-            {/* Device ID row */}
+        {/* Peripheral */}
+        <View style={styles.bleRow}>
+          <View style={styles.bleRowLeft}>
+            <Text style={styles.label}>Peripheral</Text>
             {deviceId ? (
-              <View style={styles.row}>
-                <Text style={styles.label}>Device ID</Text>
-                <Text style={styles.valueSmall} numberOfLines={1}>
-                  {deviceId}
-                </Text>
-              </View>
+              <Text style={styles.hint} numberOfLines={1}>{deviceId}</Text>
             ) : null}
-
-            {/* Action buttons row */}
-            <View style={styles.buttonRow}>
-              <Button
-                mode="contained"
-                onPress={handleScan}
-                disabled={!canScan || isRequestingPermission}
-                style={styles.actionButton}
-                contentStyle={styles.actionButtonContent}
-                labelStyle={styles.actionButtonLabel}>
-                Scan
-              </Button>
+          </View>
+          <View style={styles.bleRowRight}>
+            <View style={styles.statusIndicator}>
+              {(isScanning || isRequestingPermission) ? (
+                <ActivityIndicator size="small" color="#FFC107" />
+              ) : (
+                <View style={[styles.statusDot, {backgroundColor: statusColor}]} />
+              )}
+            </View>
+            {canDisconnect ? (
               <Button
                 mode="outlined"
                 onPress={handleDisconnect}
-                disabled={!canDisconnect}
-                style={styles.actionButton}
-                contentStyle={styles.actionButtonContent}
-                labelStyle={styles.actionButtonLabel}>
+                style={styles.bleButton}>
                 Disconnect
               </Button>
-            </View>
+            ) : (
+              <Button
+                mode="contained"
+                onPress={handleScan}
+                disabled={isScanning || isRequestingPermission}
+                style={styles.bleButton}>
+                {isScanning || isRequestingPermission ? 'Scanning…' : 'Connect'}
+              </Button>
+            )}
           </View>
-        </>
-      )}
+        </View>
+
+        <View style={styles.divider} />
+
+        {/* Charger */}
+        <View style={styles.bleRow}>
+          <View style={styles.bleRowLeft}>
+            <Text style={styles.label}>Charger</Text>
+            {chargerDeviceId ? (
+              <Text style={styles.hint} numberOfLines={1}>{chargerDeviceId}</Text>
+            ) : null}
+          </View>
+          <View style={styles.bleRowRight}>
+            <View style={styles.statusIndicator}>
+              {(isScanningCharger || isRequestingChargerPermission) ? (
+                <ActivityIndicator size="small" color="#FFC107" />
+              ) : (
+                <View style={[styles.statusDot, {backgroundColor: chargerStatusColor}]} />
+              )}
+            </View>
+            {canDisconnectCharger ? (
+              <Button
+                mode="outlined"
+                onPress={handleDisconnectCharger}
+                style={styles.bleButton}>
+                Disconnect
+              </Button>
+            ) : (
+              <Button
+                mode="contained"
+                onPress={handleScanCharger}
+                disabled={isScanningCharger || isRequestingChargerPermission}
+                style={styles.bleButton}>
+                {isScanningCharger || isRequestingChargerPermission ? 'Scanning…' : 'Connect'}
+              </Button>
+            )}
+          </View>
+        </View>
+      </View>
 
       {/* Navigation Section */}
       <Text style={styles.sectionHeader}>Navigation</Text>
@@ -285,6 +231,18 @@ export default function SettingsScreen() {
               {value: 'kmh', label: 'km/h'},
               {value: 'mph', label: 'mph'},
             ]}
+          />
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>Auto-brighten HUD</Text>
+            <Text style={styles.hint}>Only applies when phone is charging</Text>
+          </View>
+          <Switch
+            value={hudAutoBrighten}
+            onValueChange={setHudAutoBrighten}
+            color="#00C853"
           />
         </View>
       </View>
@@ -339,38 +297,44 @@ const styles = StyleSheet.create({
     color: '#666',
     marginTop: 2,
   },
-  value: {
-    fontSize: 14,
-    textTransform: 'capitalize',
-  },
-  valueSmall: {
-    fontSize: 12,
-    color: '#9E9E9E',
-    maxWidth: 180,
-  },
-  statusContainer: {
+  bleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
   },
-  spinner: {
-    marginRight: 6,
+  bleRowLeft: {
+    width: 90,
+    flexShrink: 0,
   },
-  buttonRow: {
+  statusIndicator: {
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bleRowRight: {
     flexDirection: 'row',
-    gap: 10,
-    paddingVertical: 12,
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
   },
-  actionButton: {
-    flex: 1,
+  statusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 4,
   },
-  actionButtonContent: {
-    height: 40,
-  },
-  actionButtonLabel: {
-    fontSize: 13,
+  bleButton: {
+    width: 120,
   },
   segmentedWrapper: {
     paddingTop: 8,
     paddingBottom: 12,
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#2A2A2A',
+    marginVertical: 4,
   },
 });

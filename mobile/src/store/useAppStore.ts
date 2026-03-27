@@ -23,6 +23,7 @@ interface AppState {
   showGearTab: boolean;
   speedUnit: 'kmh' | 'mph';
   connectionMode: 'peripheral' | 'charger' | 'both';
+  hudAutoBrighten: boolean;
 
   // Actions (peripheral)
   setBleStatus: (status: BleStatus) => void;
@@ -41,6 +42,7 @@ interface AppState {
   setShowGearTab: (show: boolean) => void;
   setSpeedUnit: (unit: 'kmh' | 'mph') => void;
   setConnectionMode: (m: 'peripheral' | 'charger' | 'both') => void;
+  setHudAutoBrighten: (v: boolean) => void;
   reset: () => void;
 }
 
@@ -63,7 +65,8 @@ export const useAppStore = create<AppState>()(
       // Initial state — settings
       showGearTab: false,
       speedUnit: 'kmh',
-      connectionMode: 'peripheral',
+      connectionMode: 'both',
+      hudAutoBrighten: true,
 
       // Actions — peripheral
       setBleStatus: status => set({bleStatus: status}),
@@ -82,6 +85,7 @@ export const useAppStore = create<AppState>()(
       setShowGearTab: show => set({showGearTab: show}),
       setSpeedUnit: unit => set({speedUnit: unit}),
       setConnectionMode: m => set({connectionMode: m}),
+      setHudAutoBrighten: v => set({hudAutoBrighten: v}),
       reset: () =>
         set({
           bleStatus: 'disconnected',
@@ -102,6 +106,7 @@ export const useAppStore = create<AppState>()(
         showGearTab: state.showGearTab,
         speedUnit: state.speedUnit,
         connectionMode: state.connectionMode,
+        hudAutoBrighten: state.hudAutoBrighten,
       }),
     },
   ),

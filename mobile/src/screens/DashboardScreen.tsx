@@ -68,6 +68,44 @@ export default function DashboardScreen() {
       )}
       
       <ScrollView style={styles.scrollView}>
+        <View style={styles.statusRow}>
+          <Text style={styles.statusLabel}>Motor: </Text>
+          <Text style={styles.statusValue}>{getMotorStateLabel(telemetry?.motorState)}</Text>
+
+          <Text style={[styles.statusLabel, {marginLeft: 16}]}>Gear: </Text>
+          <Text style={styles.statusValue}>{getGearLabel(telemetry?.gear)}</Text>
+
+          <Text style={[styles.statusLabel, {marginLeft: 16}]}>Charge: </Text>
+          <Text style={styles.statusValue}>{getChargeStateLabel(telemetry?.chargeState)}</Text>
+        </View>
+
+        <View style={styles.flagsRow}>
+          <View style={styles.flagContainer}>
+            <View style={[styles.flagDot, telemetry?.statusFlags.running && styles.flagGreen]} />
+            <Text style={styles.flagLabel}>Running</Text>
+          </View>
+          <View style={styles.flagContainer}>
+            <View style={[styles.flagDot, telemetry?.statusFlags.fault && styles.flagRed]} />
+            <Text style={styles.flagLabel}>Fault</Text>
+          </View>
+          <View style={styles.flagContainer}>
+            <View style={[styles.flagDot, telemetry?.statusFlags.warning && styles.flagYellow]} />
+            <Text style={styles.flagLabel}>Warning</Text>
+          </View>
+          <View style={styles.flagContainer}>
+            <View style={[styles.flagDot, telemetry?.statusFlags.ready && styles.flagGreen]} />
+            <Text style={styles.flagLabel}>Ready</Text>
+          </View>
+          <View style={styles.flagContainer}>
+            <View style={[styles.flagDot, telemetry?.statusFlags.gpsFix && styles.flagBlue]} />
+            <Text style={styles.flagLabel}>GPS</Text>
+          </View>
+          <View style={styles.flagContainer}>
+            <View style={[styles.flagDot, telemetry?.statusFlags.canConnected && styles.flagGreen]} />
+            <Text style={styles.flagLabel}>CAN</Text>
+          </View>
+        </View>
+
         <View style={styles.gridContainer}>
           <View style={styles.card}>
             <Text style={styles.cardLabel}>Speed</Text>
@@ -141,44 +179,6 @@ export default function DashboardScreen() {
             <Text style={styles.cardUnit}>%</Text>
           </View>
         </View>
-
-        <View style={styles.statusRow}>
-          <Text style={styles.statusLabel}>Motor: </Text>
-          <Text style={styles.statusValue}>{getMotorStateLabel(telemetry?.motorState)}</Text>
-          
-          <Text style={[styles.statusLabel, {marginLeft: 16}]}>Gear: </Text>
-          <Text style={styles.statusValue}>{getGearLabel(telemetry?.gear)}</Text>
-          
-          <Text style={[styles.statusLabel, {marginLeft: 16}]}>Charge: </Text>
-          <Text style={styles.statusValue}>{getChargeStateLabel(telemetry?.chargeState)}</Text>
-        </View>
-
-        <View style={styles.flagsRow}>
-          <View style={styles.flagContainer}>
-            <View style={[styles.flagDot, telemetry?.statusFlags.running && styles.flagGreen]} />
-            <Text style={styles.flagLabel}>Running</Text>
-          </View>
-          <View style={styles.flagContainer}>
-            <View style={[styles.flagDot, telemetry?.statusFlags.fault && styles.flagRed]} />
-            <Text style={styles.flagLabel}>Fault</Text>
-          </View>
-          <View style={styles.flagContainer}>
-            <View style={[styles.flagDot, telemetry?.statusFlags.warning && styles.flagYellow]} />
-            <Text style={styles.flagLabel}>Warning</Text>
-          </View>
-          <View style={styles.flagContainer}>
-            <View style={[styles.flagDot, telemetry?.statusFlags.ready && styles.flagGreen]} />
-            <Text style={styles.flagLabel}>Ready</Text>
-          </View>
-          <View style={styles.flagContainer}>
-            <View style={[styles.flagDot, telemetry?.statusFlags.gpsFix && styles.flagBlue]} />
-            <Text style={styles.flagLabel}>GPS</Text>
-          </View>
-          <View style={styles.flagContainer}>
-            <View style={[styles.flagDot, telemetry?.statusFlags.canConnected && styles.flagGreen]} />
-            <Text style={styles.flagLabel}>CAN</Text>
-          </View>
-        </View>
       </ScrollView>
     </View>
   );
@@ -207,6 +207,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
+    marginTop: 12,
   },
   card: {
     width: '48%',
@@ -236,7 +237,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A1A1A',
     padding: 12,
     borderRadius: 8,
-    marginTop: 8,
     flexWrap: 'wrap',
   },
   statusLabel: {
@@ -254,13 +254,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A1A1A',
     padding: 12,
     borderRadius: 8,
-    marginTop: 12,
-    marginBottom: 16,
+    marginTop: 8,
+    marginBottom: 8,
   },
   flagContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginRight: 16,
+    width: '33%',
     marginBottom: 8,
   },
   flagDot: {

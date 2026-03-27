@@ -65,7 +65,10 @@ export class ChargerBleManager {
       null,
       (error: BleError | null, device: Device | null) => {
         if (error) {
-          console.error('ChargerBle scan error:', error);
+          if (error.message?.includes('Cannot start scanning operation')) {
+            return;
+          }
+          console.warn('ChargerBle scan error:', error);
           useAppStore.getState().setChargerBleStatus('error');
           useAppStore.getState().setChargerError(error.message);
           return;

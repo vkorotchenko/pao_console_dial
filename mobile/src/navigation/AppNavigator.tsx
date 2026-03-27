@@ -1,5 +1,6 @@
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {View, StyleSheet} from 'react-native';
+import Orientation from 'react-native-orientation-locker';
 import DashboardScreen from '../screens/DashboardScreen';
 import GearScreen from '../screens/GearScreen';
 import ChargerScreen from '../screens/ChargerScreen';
@@ -14,6 +15,10 @@ export default function AppNavigator() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('dashboard');
   const [showHUD, setShowHUD] = useState(true); // HUD is default on launch
   const showGearTab = useAppStore(state => state.showGearTab);
+
+  useEffect(() => {
+    Orientation.lockToPortrait();
+  }, []);
 
   const navigate = (screen: string) => {
     if (screen === 'hud') {

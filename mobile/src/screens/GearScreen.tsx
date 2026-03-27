@@ -6,74 +6,39 @@ import {Gear} from '../types';
 import {paoBleManager} from '../ble/PaoBleManager';
 
 export default function GearScreen() {
-  const {bleStatus, telemetry} = useAppStore();
+  const {bleStatus} = useAppStore();
   const chargerBleStatus = useAppStore(s => s.chargerBleStatus);
-  const [sending, setSending] = useState(false);
+  const [pendingGear, setPendingGear] = useState<Gear | null>(null);
+  const [confirmingGear, setConfirmingGear] = useState<Gear | null>(null);
 
   const isGearBlocked = chargerBleStatus === 'connected' && bleStatus !== 'connected';
 
-  const currentGear = telemetry?.gear;
-
-  const getGearLabel = (gear?: Gear): string => {
-    switch (gear) {
-      case Gear.NEUTRAL: return 'N';
-      case Gear.DRIVE: return 'D';
-      case Gear.REVERSE: return 'R';
-      case Gear.PARK: return 'P';
-      default: return '—';
-    }
-  };
-
-  const getGearFullLabel = (gear?: Gear): string => {
-    switch (gear) {
-      case Gear.NEUTRAL: return 'NEUTRAL';
-      case Gear.DRIVE: return 'DRIVE';
-      case Gear.REVERSE: return 'REVERSE';
-      case Gear.PARK: return 'PARK';
-      default: return '—';
-    }
-  };
-
   const handleGearPress = async (gear: Gear) => {
-    if (bleStatus !== 'connected') {
-      Alert.alert('Error', 'Not connected to device');
+    if (bleStatus !== 'connected' || isGearBlocked) return;
+
+    if (pendingGear !== gear) {
+      // First tap (or tapping a different gear) → highlight orange
+      setPendingGear(gear);
       return;
     }
 
-    if (sending) return;
-
-    const shiftGear = async () => {
-      setSending(true);
-      try {
-        await paoBleManager.writeGearCommand(gear);
-      } catch (error: any) {
-        Alert.alert('Error', error.message || 'Failed to shift gear');
-      } finally {
-        setSending(false);
-      }
-    };
-
-    if (gear === Gear.DRIVE) {
-      Alert.alert(
-        'Confirm',
-        'Shift to DRIVE?',
-        [
-          {text: 'Cancel', style: 'cancel'},
-          {text: 'Confirm', onPress: shiftGear},
-        ]
-      );
-    } else if (gear === Gear.REVERSE) {
-      Alert.alert(
-        'Confirm',
-        'Shift to REVERSE?',
-        [
-          {text: 'Cancel', style: 'cancel'},
-          {text: 'Confirm', onPress: shiftGear},
-        ]
-      );
-    } else {
-      await shiftGear();
+    // Second tap on same gear → confirm: highlight blue, send command
+    setPendingGear(null);
+    setConfirmingGear(gear);
+    try {
+      await paoBleManager.writeGearCommand(gear);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to shift gear');
+    } finally {
+      setConfirmingGear(null);
     }
+  };
+
+  const labels: Record<Gear, string> = {
+    [Gear.DRIVE]: 'D',
+    [Gear.NEUTRAL]: 'N',
+    [Gear.REVERSE]: 'R',
+    [Gear.PARK]: 'P',
   };
 
   return (
@@ -93,59 +58,57 @@ export default function GearScreen() {
             </Text>
           </View>
         )}
-        <Text style={styles.currentLabel}>Current Gear</Text>
-        <Text style={styles.currentGear}>
-          {getGearFullLabel(currentGear)}
-        </Text>
 
-        {sending && (
-          <Text style={styles.sendingText}>Sending…</Text>
-        )}
+        <View style={styles.gearLayout}>
+          {/* Left column */}
+          <View style={styles.leftColumn}>
+            {[Gear.DRIVE, Gear.NEUTRAL, Gear.REVERSE].map(gear => {
+              const isPending = pendingGear === gear;
+              const isConfirming = confirmingGear === gear;
+              const isDisabled = bleStatus !== 'connected' || isGearBlocked;
+              return (
+                <TouchableOpacity
+                  key={gear}
+                  style={[
+                    styles.gearButton,
+                    isConfirming && styles.gearButtonConfirming,
+                    isPending && styles.gearButtonPending,
+                  ]}
+                  onPress={() => handleGearPress(gear)}
+                  disabled={isDisabled}
+                  activeOpacity={0.7}>
+                  <Text style={[styles.gearButtonText, isDisabled && styles.gearButtonTextDisabled]}>
+                    {labels[gear]}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
 
-        <View style={styles.gearGrid}>
-          <TouchableOpacity
-            style={[
-              styles.gearButton,
-              currentGear === Gear.PARK && styles.gearButtonActive,
-            ]}
-            onPress={() => handleGearPress(Gear.PARK)}
-            disabled={sending}
-          >
-            <Text style={styles.gearButtonText}>P</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.gearButton,
-              currentGear === Gear.NEUTRAL && styles.gearButtonActive,
-            ]}
-            onPress={() => handleGearPress(Gear.NEUTRAL)}
-            disabled={sending}
-          >
-            <Text style={styles.gearButtonText}>N</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.gearButton,
-              currentGear === Gear.DRIVE && styles.gearButtonActive,
-            ]}
-            onPress={() => handleGearPress(Gear.DRIVE)}
-            disabled={sending}
-          >
-            <Text style={styles.gearButtonText}>D</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.gearButton,
-              currentGear === Gear.REVERSE && styles.gearButtonActive,
-            ]}
-            onPress={() => handleGearPress(Gear.REVERSE)}
-            disabled={sending}
-          >
-            <Text style={styles.gearButtonText}>R</Text>
-          </TouchableOpacity>
+          {/* Right column — Park centred to align with Neutral */}
+          <View style={styles.rightColumn}>
+            {(() => {
+              const gear = Gear.PARK;
+              const isPending = pendingGear === gear;
+              const isConfirming = confirmingGear === gear;
+              const isDisabled = bleStatus !== 'connected' || isGearBlocked;
+              return (
+                <TouchableOpacity
+                  style={[
+                    styles.gearButton,
+                    isConfirming && styles.gearButtonConfirming,
+                    isPending && styles.gearButtonPending,
+                  ]}
+                  onPress={() => handleGearPress(gear)}
+                  disabled={isDisabled}
+                  activeOpacity={0.7}>
+                  <Text style={[styles.gearButtonText, isDisabled && styles.gearButtonTextDisabled]}>
+                    P
+                  </Text>
+                </TouchableOpacity>
+              );
+            })()}
+          </View>
         </View>
       </View>
     </View>
@@ -178,46 +141,43 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-  currentLabel: {
-    fontSize: 16,
-    color: '#9E9E9E',
-    marginBottom: 8,
-  },
-  currentGear: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginBottom: 32,
-  },
-  sendingText: {
-    fontSize: 14,
-    color: '#FFD600',
-    marginBottom: 16,
-  },
-  gearGrid: {
+  gearLayout: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    width: 260,
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 20,
+  },
+  leftColumn: {
+    flexDirection: 'column',
+    gap: 20,
+  },
+  rightColumn: {
+    justifyContent: 'center',
   },
   gearButton: {
-    width: 120,
-    height: 120,
+    width: 130,
+    height: 130,
     backgroundColor: '#1A1A1A',
     borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 20,
     borderWidth: 3,
     borderColor: 'transparent',
   },
-  gearButtonActive: {
-    borderColor: '#00C853',
+  gearButtonPending: {
+    backgroundColor: '#2D1A00',
+    borderColor: '#FF8C00',
+  },
+  gearButtonConfirming: {
+    backgroundColor: '#001D26',
+    borderColor: '#87CEEB',
   },
   gearButtonText: {
-    fontSize: 48,
+    fontSize: 52,
     fontWeight: 'bold',
     color: '#FFFFFF',
+  },
+  gearButtonTextDisabled: {
+    color: '#444444',
   },
   blockedOverlay: {
     position: 'absolute',

@@ -6,8 +6,8 @@ import {
   StyleSheet,
   StatusBar,
   TouchableOpacity,
-  SafeAreaView,
 } from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
 import Orientation from 'react-native-orientation-locker';
 import ScreenBrightness from 'react-native-screen-brightness';
 import {isBatteryCharging} from 'react-native-device-info';
@@ -107,6 +107,7 @@ function VerticalBar({
 export default function HUDScreen({visible, onClose}: HUDScreenProps) {
   const telemetry = useAppStore(state => state.telemetry);
   const speedUnit = useAppStore(state => state.speedUnit);
+  const hudAutoBrighten = useAppStore(state => state.hudAutoBrighten);
 
   // --- Brightness control ---
   const [isPhoneCharging, setIsPhoneCharging] = useState(false);
@@ -129,7 +130,7 @@ export default function HUDScreen({visible, onClose}: HUDScreenProps) {
     let active = true;
 
     const applyBrightness = async () => {
-      if (isPhoneCharging) {
+      if (isPhoneCharging && hudAutoBrighten) {
         try {
           const current = await ScreenBrightness.getBrightness();
           if (active) {
@@ -156,7 +157,7 @@ export default function HUDScreen({visible, onClose}: HUDScreenProps) {
     return () => {
       active = false;
     };
-  }, [isPhoneCharging]);
+  }, [isPhoneCharging, hudAutoBrighten]);
 
   // Restore brightness on unmount
   useEffect(() => {
@@ -173,13 +174,9 @@ export default function HUDScreen({visible, onClose}: HUDScreenProps) {
       Orientation.lockToLandscapeLeft();
       StatusBar.setHidden(true, 'fade');
     } else {
-      Orientation.unlockAllOrientations();
+      Orientation.lockToPortrait();
       StatusBar.setHidden(false, 'fade');
     }
-    return () => {
-      Orientation.unlockAllOrientations();
-      StatusBar.setHidden(false, 'fade');
-    };
   }, [visible]);
 
   useEffect(() => {
@@ -202,7 +199,7 @@ export default function HUDScreen({visible, onClose}: HUDScreenProps) {
   }, [visible]);
 
   const handleClose = () => {
-    Orientation.unlockAllOrientations();
+    Orientation.lockToPortrait();
     StatusBar.setHidden(false, 'fade');
     onClose();
   };

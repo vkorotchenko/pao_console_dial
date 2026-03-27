@@ -34,6 +34,23 @@ export class PaoBleManager {
    * @param onDeviceFound - Callback when device is found
    */
   async scan(onDeviceFound: (device: Device) => void): Promise<void> {
+    // Guard: skip if already scanning, connecting, or connected
+    const currentStatus = useAppStore.getState().bleStatus;
+    if (
+      currentStatus === 'scanning' ||
+      currentStatus === 'connecting' ||
+      currentStatus === 'connected'
+    ) {
+      return;
+    }
+
+    // Guard: BLE must be powered on
+    const bleState = await this.manager.state();
+    if (bleState !== State.PoweredOn) {
+      console.warn('PaoBle: BLE not ready, state:', bleState);
+      return;
+    }
+
     useAppStore.getState().setBleStatus('scanning');
 
     this.manager.startDeviceScan(
@@ -41,7 +58,10 @@ export class PaoBleManager {
       null,
       (error: BleError | null, device: Device | null) => {
         if (error) {
-          console.error('Scan error:', error);
+          if (error.message?.includes('Cannot start scanning operation')) {
+            return;
+          }
+          console.warn('Scan error:', error);
           useAppStore.getState().setBleStatus('error');
           useAppStore.getState().setError(error.message);
           return;

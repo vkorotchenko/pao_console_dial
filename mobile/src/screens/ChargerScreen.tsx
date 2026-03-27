@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
 import {ProgressBar} from 'react-native-paper';
@@ -186,6 +187,9 @@ export default function ChargerScreen() {
             {backgroundColor: dataSource ? '#1A1A1A' : '#333333'},
           ]}>
             <Text style={styles.sourceBadgeText}>Source: {sourceLabel}</Text>
+            {dataSource === null && chargerBleStatus === 'scanning' && (
+              <ActivityIndicator size="small" color="#FFC107" style={styles.sourceBadgeSpinner} />
+            )}
           </View>
         </View>
 
@@ -385,8 +389,13 @@ const styles = StyleSheet.create({
   sourceBadge: {
     alignSelf: 'flex-start',
     borderRadius: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 4,
+  },
+  sourceBadgeSpinner: {
+    marginLeft: 6,
   },
   sourceBadgeText: {
     fontSize: 12,
