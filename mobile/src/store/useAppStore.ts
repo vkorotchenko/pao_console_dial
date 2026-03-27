@@ -1,53 +1,87 @@
 import {create} from 'zustand';
 import {persist, createJSONStorage} from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {BleStatus, Telemetry, ChargerConfig} from '../types';
+import {BleStatus, Telemetry, ChargerConfig, ChargerDirectData} from '../types';
 
 interface AppState {
-  // BLE connection state
+  // BLE connection state (peripheral)
   bleStatus: BleStatus;
   deviceId: string | null;
   error: string | null;
 
+  // BLE connection state (charger direct)
+  chargerBleStatus: BleStatus;
+  chargerDeviceId: string | null;
+  chargerError: string | null;
+
   // Data from BLE
   telemetry: Telemetry | null;
   chargerConfig: ChargerConfig | null;
+  chargerData: ChargerDirectData | null;
 
   // Persisted settings
   showGearTab: boolean;
   speedUnit: 'kmh' | 'mph';
+  connectionMode: 'peripheral' | 'charger' | 'both';
 
-  // Actions
+  // Actions (peripheral)
   setBleStatus: (status: BleStatus) => void;
   setDeviceId: (id: string | null) => void;
   setError: (error: string | null) => void;
   setTelemetry: (data: Telemetry | null) => void;
   setChargerConfig: (config: ChargerConfig | null) => void;
+
+  // Actions (charger direct)
+  setChargerBleStatus: (s: BleStatus) => void;
+  setChargerDeviceId: (id: string | null) => void;
+  setChargerError: (e: string | null) => void;
+  setChargerData: (d: ChargerDirectData | null) => void;
+
+  // Actions (settings)
   setShowGearTab: (show: boolean) => void;
   setSpeedUnit: (unit: 'kmh' | 'mph') => void;
+  setConnectionMode: (m: 'peripheral' | 'charger' | 'both') => void;
   reset: () => void;
 }
 
 export const useAppStore = create<AppState>()(
   persist(
     set => ({
-      // Initial state
+      // Initial state — peripheral
       bleStatus: 'disconnected',
       deviceId: null,
       error: null,
       telemetry: null,
       chargerConfig: null,
+
+      // Initial state — charger direct
+      chargerBleStatus: 'disconnected',
+      chargerDeviceId: null,
+      chargerError: null,
+      chargerData: null,
+
+      // Initial state — settings
       showGearTab: false,
       speedUnit: 'kmh',
+      connectionMode: 'peripheral',
 
-      // Actions
+      // Actions — peripheral
       setBleStatus: status => set({bleStatus: status}),
       setDeviceId: id => set({deviceId: id}),
       setError: error => set({error}),
       setTelemetry: data => set({telemetry: data}),
       setChargerConfig: config => set({chargerConfig: config}),
+
+      // Actions — charger direct
+      setChargerBleStatus: s => set({chargerBleStatus: s}),
+      setChargerDeviceId: id => set({chargerDeviceId: id}),
+      setChargerError: e => set({chargerError: e}),
+      setChargerData: d => set({chargerData: d}),
+
+      // Actions — settings
       setShowGearTab: show => set({showGearTab: show}),
       setSpeedUnit: unit => set({speedUnit: unit}),
+      setConnectionMode: m => set({connectionMode: m}),
       reset: () =>
         set({
           bleStatus: 'disconnected',
@@ -55,6 +89,10 @@ export const useAppStore = create<AppState>()(
           error: null,
           telemetry: null,
           chargerConfig: null,
+          chargerBleStatus: 'disconnected',
+          chargerDeviceId: null,
+          chargerError: null,
+          chargerData: null,
         }),
     }),
     {
@@ -63,6 +101,7 @@ export const useAppStore = create<AppState>()(
       partialize: state => ({
         showGearTab: state.showGearTab,
         speedUnit: state.speedUnit,
+        connectionMode: state.connectionMode,
       }),
     },
   ),

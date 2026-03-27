@@ -4,31 +4,74 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TextInput,
   TouchableOpacity,
   Alert,
 } from 'react-native';
+import Slider from '@react-native-community/slider';
 import {useAppStore} from '../store/useAppStore';
-import {ChargeState} from '../types';
+import {ChargeState, ChargerDirectData} from '../types';
 import {paoBleManager} from '../ble/PaoBleManager';
+import {chargerBleManager} from '../ble/ChargerBleManager';
 
 export default function ChargerScreen() {
-  const {bleStatus, telemetry, chargerConfig} = useAppStore();
-  
-  const [targetVoltage, setTargetVoltage] = useState('');
-  const [maxCurrent, setMaxCurrent] = useState('');
-  const [targetSoc, setTargetSoc] = useState('');
-  const [maxChargeTime, setMaxChargeTime] = useState('');
-  const [pending, setPending] = useState(false);
+  const chargerConfig = useAppStore(s => s.chargerConfig);
+  const chargerData = useAppStore(s => s.chargerData);
+  const bleStatus = useAppStore(s => s.bleStatus);
+  const chargerBleStatus = useAppStore(s => s.chargerBleStatus);
+  const telemetry = useAppStore(s => s.telemetry);
 
+  const isPeripheralConnected = bleStatus === 'connected';
+
+  // Use peripheral data if available, otherwise charger direct data
+  const activeData = isPeripheralConnected ? chargerConfig : chargerData;
+  const dataSource: 'peripheral' | 'charger' | null = isPeripheralConnected
+    ? 'peripheral'
+    : chargerBleStatus === 'connected'
+    ? 'charger'
+    : null;
+
+  // Draft state (changes as slider moves) + committed state (last applied value)
+  const [draftCurrent, setDraftCurrent] = useState(chargerConfig?.maxCurrentA ?? 5);
+  const [draftSoc, setDraftSoc] = useState(chargerConfig?.targetSocPercent ?? 80);
+  const [committedCurrent, setCommittedCurrent] = useState(chargerConfig?.maxCurrentA ?? 5);
+  const [committedSoc, setCommittedSoc] = useState(chargerConfig?.targetSocPercent ?? 80);
+
+  const [pendingCurrent, setPendingCurrent] = useState(false);
+  const [pendingSoc, setPendingSoc] = useState(false);
+
+  // Sync draft + committed when config arrives from BLE
   useEffect(() => {
-    if (chargerConfig && !targetVoltage) {
-      setTargetVoltage(chargerConfig.targetVoltageV.toString());
-      setMaxCurrent(chargerConfig.maxCurrentA.toString());
-      setTargetSoc(chargerConfig.targetSocPercent.toString());
-      setMaxChargeTime((chargerConfig.maxChargeTimeSeconds / 60).toString());
+    if (chargerConfig) {
+      setDraftCurrent(chargerConfig.maxCurrentA);
+      setCommittedCurrent(chargerConfig.maxCurrentA);
+      setDraftSoc(chargerConfig.targetSocPercent);
+      setCommittedSoc(chargerConfig.targetSocPercent);
     }
   }, [chargerConfig]);
+
+  useEffect(() => {
+    if (chargerBleStatus === 'disconnected' || chargerBleStatus === 'error') {
+      chargerBleManager.scan((deviceId, _deviceName) => {
+        useAppStore.getState().setChargerBleStatus('connecting');
+        chargerBleManager.connect(deviceId).then(() => {
+          useAppStore.getState().setChargerBleStatus('connected');
+          useAppStore.getState().setChargerDeviceId(deviceId);
+          chargerBleManager.subscribeToAll((partial) => {
+            const current = useAppStore.getState().chargerData ?? {};
+            useAppStore.getState().setChargerData({...current, ...partial} as ChargerDirectData);
+          });
+        }).catch(() => {
+          useAppStore.getState().setChargerBleStatus('error');
+        });
+      });
+    }
+    return () => {
+      if (useAppStore.getState().chargerBleStatus === 'scanning') {
+        chargerBleManager.stopScan();
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (bleStatus === 'connected') {
@@ -53,68 +96,93 @@ export default function ChargerScreen() {
     }
   };
 
-  const handleApply = async () => {
-    if (bleStatus !== 'connected') {
+  const nominalV = chargerData?.nominalVoltageV ?? 320;
+  const minMult = chargerData?.minMultiplier ?? 0.81;
+  const maxMult = chargerData?.maxMultiplier ?? 1.14;
+  // 0% SOC = nominalV × minMult, 100% SOC = nominalV × maxMult (linear)
+  const minV = nominalV * minMult;
+  const maxV = nominalV * maxMult;
+  const computedTargetV = minV + (draftSoc / 100) * (maxV - minV);
+
+  const isConnected = isPeripheralConnected || chargerBleStatus === 'connected';
+
+  const applyField = async (field: 'current' | 'soc') => {
+    if (!isConnected) {
       Alert.alert('Error', 'Not connected to device');
       return;
     }
-
-    const voltage = parseFloat(targetVoltage);
-    const current = parseFloat(maxCurrent);
-    const soc = parseInt(targetSoc, 10);
-    const timeMinutes = parseInt(maxChargeTime, 10);
-
-    if (isNaN(voltage) || voltage <= 0) {
-      Alert.alert('Error', 'Invalid target voltage');
-      return;
-    }
-    if (isNaN(current) || current <= 0) {
-      Alert.alert('Error', 'Invalid max current');
-      return;
-    }
-    if (isNaN(soc) || soc < 0 || soc > 100) {
-      Alert.alert('Error', 'Target SOC must be between 0 and 100');
-      return;
-    }
-    if (isNaN(timeMinutes) || timeMinutes <= 0) {
-      Alert.alert('Error', 'Invalid max charge time');
-      return;
-    }
-
+    const setPending = field === 'current' ? setPendingCurrent : setPendingSoc;
     setPending(true);
     try {
-      await paoBleManager.writeChargerConfig({
-        targetVoltageV: voltage,
-        maxCurrentA: current,
-        targetSocPercent: soc,
-        maxChargeTimeSeconds: timeMinutes * 60,
-      });
-      
-      setTimeout(() => {
-        setPending(false);
-      }, 3000);
+      if (isPeripheralConnected) {
+        await paoBleManager.writeChargerConfig({
+          targetVoltageV: chargerConfig?.targetVoltageV ?? nominalV * maxMult,
+          maxCurrentA: field === 'current' ? draftCurrent : committedCurrent,
+          targetSocPercent: Math.round(field === 'soc' ? draftSoc : committedSoc),
+          maxChargeTimeSeconds: chargerConfig?.maxChargeTimeSeconds ?? 14400,
+        });
+      } else {
+        if (field === 'current') {
+          await chargerBleManager.writeMaxCurrent(Math.round(draftCurrent * 10));
+        } else {
+          await chargerBleManager.writeTargetPct(Math.round(draftSoc * 1000));
+        }
+      }
+      if (field === 'current') { setCommittedCurrent(draftCurrent); }
+      else { setCommittedSoc(draftSoc); }
     } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to apply');
+    } finally {
       setPending(false);
-      Alert.alert('Error', error.message || 'Failed to apply configuration');
     }
   };
 
+  // Resolve readings from the active data source
+  const actualVoltage = isPeripheralConnected
+    ? chargerConfig?.actualVoltageV
+    : chargerData?.currentVoltageV;
+  const actualCurrent = isPeripheralConnected
+    ? chargerConfig?.actualCurrentA
+    : chargerData?.currentAmpsA;
+  const displayChargeState = isPeripheralConnected
+    ? telemetry?.chargeState
+    : chargerData?.chargeState;
+  const displayChargePercent = isPeripheralConnected
+    ? telemetry?.chargePercent
+    : chargerData?.socPercent;
+
+  const sourceLabel =
+    dataSource === 'peripheral'
+      ? 'Via Peripheral'
+      : dataSource === 'charger'
+      ? 'Direct BLE'
+      : 'Not connected';
+
   return (
     <View style={styles.container}>
-      {bleStatus !== 'connected' && (
+      {dataSource === null && (
         <View style={styles.banner}>
           <Text style={styles.bannerText}>Not connected</Text>
         </View>
       )}
 
-      <ScrollView style={styles.scrollView}>
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.sourceBadgeRow}>
+          <View style={[
+            styles.sourceBadge,
+            {backgroundColor: dataSource ? '#1A1A1A' : '#333333'},
+          ]}>
+            <Text style={styles.sourceBadgeText}>Source: {sourceLabel}</Text>
+          </View>
+        </View>
+
         <Text style={styles.sectionTitle}>Live Readings</Text>
-        
+
         <View style={styles.readingsContainer}>
           <View style={styles.readingCard}>
             <Text style={styles.readingLabel}>Actual Voltage</Text>
             <Text style={styles.readingValue}>
-              {chargerConfig?.actualVoltageV?.toFixed(1) ?? '—'}
+              {actualVoltage?.toFixed(1) ?? '—'}
             </Text>
             <Text style={styles.readingUnit}>V</Text>
           </View>
@@ -122,7 +190,7 @@ export default function ChargerScreen() {
           <View style={styles.readingCard}>
             <Text style={styles.readingLabel}>Actual Current</Text>
             <Text style={styles.readingValue}>
-              {chargerConfig?.actualCurrentA?.toFixed(1) ?? '—'}
+              {actualCurrent?.toFixed(1) ?? '—'}
             </Text>
             <Text style={styles.readingUnit}>A</Text>
           </View>
@@ -131,10 +199,10 @@ export default function ChargerScreen() {
             <Text style={styles.readingLabel}>Charge State</Text>
             <View style={[
               styles.stateBadge,
-              {backgroundColor: getChargeStateBadgeColor(telemetry?.chargeState)}
+              {backgroundColor: getChargeStateBadgeColor(displayChargeState)}
             ]}>
               <Text style={styles.stateBadgeText}>
-                {getChargeStateLabel(telemetry?.chargeState)}
+                {getChargeStateLabel(displayChargeState)}
               </Text>
             </View>
           </View>
@@ -142,7 +210,7 @@ export default function ChargerScreen() {
           <View style={styles.readingCard}>
             <Text style={styles.readingLabel}>Charge %</Text>
             <Text style={styles.readingValue}>
-              {telemetry?.chargePercent ?? '—'}
+              {displayChargePercent ?? '—'}
             </Text>
             <Text style={styles.readingUnit}>%</Text>
           </View>
@@ -151,63 +219,90 @@ export default function ChargerScreen() {
         <Text style={styles.sectionTitle}>Configuration</Text>
 
         <View style={styles.configContainer}>
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Target Voltage (V)</Text>
-            <TextInput
-              style={styles.input}
-              value={targetVoltage}
-              onChangeText={setTargetVoltage}
-              keyboardType="decimal-pad"
-              placeholder="320.0"
-              placeholderTextColor="#555555"
-            />
+
+          {/* Target Voltage — computed from SOC slider, read-only */}
+          <View style={styles.readonlyRow}>
+            <Text style={styles.readonlyLabel}>Target Voltage</Text>
+            <View style={styles.readonlyValueRow}>
+              <Text style={styles.readonlyValue}>{computedTargetV.toFixed(1)}</Text>
+              <Text style={styles.readonlyUnit}>V</Text>
+            </View>
           </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Max Current (A)</Text>
-            <TextInput
-              style={styles.input}
-              value={maxCurrent}
-              onChangeText={setMaxCurrent}
-              keyboardType="decimal-pad"
-              placeholder="15.0"
-              placeholderTextColor="#555555"
+          {/* Max Current */}
+          <View style={styles.sliderGroup}>
+            <Text style={styles.sliderLabel}>Max Current</Text>
+            <Text style={styles.sliderValue}>{draftCurrent.toFixed(0)} A</Text>
+            <Slider
+              style={styles.slider}
+              minimumValue={5}
+              maximumValue={20}
+              step={1}
+              value={draftCurrent}
+              onValueChange={setDraftCurrent}
+              minimumTrackTintColor="#87CEEB"
+              maximumTrackTintColor="#334455"
+              thumbTintColor="#87CEEB"
             />
+            <View style={styles.sliderBounds}>
+              <Text style={styles.sliderBoundText}>5 A</Text>
+              <Text style={styles.sliderBoundText}>20 A</Text>
+            </View>
+            {draftCurrent !== committedCurrent && (
+              <View style={styles.confirmRow}>
+                <TouchableOpacity
+                  style={[styles.confirmBtn, pendingCurrent && styles.confirmBtnDisabled]}
+                  onPress={() => applyField('current')}
+                  disabled={pendingCurrent}>
+                  <Text style={styles.confirmBtnText}>{pendingCurrent ? '…' : '✓ Confirm'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.cancelBtn}
+                  onPress={() => setDraftCurrent(committedCurrent)}
+                  disabled={pendingCurrent}>
+                  <Text style={styles.cancelBtnText}>✕ Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Target SOC (%)</Text>
-            <TextInput
-              style={styles.input}
-              value={targetSoc}
-              onChangeText={setTargetSoc}
-              keyboardType="number-pad"
-              placeholder="80"
-              placeholderTextColor="#555555"
+          {/* Target SOC */}
+          <View style={styles.sliderGroup}>
+            <Text style={styles.sliderLabel}>Target SOC</Text>
+            <Text style={styles.sliderValue}>{Math.round(draftSoc)} %</Text>
+            <Slider
+              style={styles.slider}
+              minimumValue={0}
+              maximumValue={100}
+              step={5}
+              value={draftSoc}
+              onValueChange={setDraftSoc}
+              minimumTrackTintColor="#87CEEB"
+              maximumTrackTintColor="#334455"
+              thumbTintColor="#87CEEB"
             />
+            <View style={styles.sliderBounds}>
+              <Text style={styles.sliderBoundText}>0%</Text>
+              <Text style={styles.sliderBoundText}>100%</Text>
+            </View>
+            {draftSoc !== committedSoc && (
+              <View style={styles.confirmRow}>
+                <TouchableOpacity
+                  style={[styles.confirmBtn, pendingSoc && styles.confirmBtnDisabled]}
+                  onPress={() => applyField('soc')}
+                  disabled={pendingSoc}>
+                  <Text style={styles.confirmBtnText}>{pendingSoc ? '…' : '✓ Confirm'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.cancelBtn}
+                  onPress={() => setDraftSoc(committedSoc)}
+                  disabled={pendingSoc}>
+                  <Text style={styles.cancelBtnText}>✕ Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Max Charge Time (min)</Text>
-            <TextInput
-              style={styles.input}
-              value={maxChargeTime}
-              onChangeText={setMaxChargeTime}
-              keyboardType="number-pad"
-              placeholder="120"
-              placeholderTextColor="#555555"
-            />
-          </View>
-
-          <TouchableOpacity
-            style={[styles.applyButton, pending && styles.applyButtonDisabled]}
-            onPress={handleApply}
-            disabled={pending}
-          >
-            <Text style={styles.applyButtonText}>
-              {pending ? 'Pending...' : 'Apply'}
-            </Text>
-          </TouchableOpacity>
         </View>
       </ScrollView>
     </View>
@@ -232,6 +327,23 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
     padding: 16,
+  },
+  scrollContent: {
+    paddingBottom: 200, // clearance for floating FAB
+  },
+  sourceBadgeRow: {
+    marginBottom: 8,
+  },
+  sourceBadge: {
+    alignSelf: 'flex-start',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  sourceBadgeText: {
+    fontSize: 12,
+    color: '#9E9E9E',
+    fontWeight: '500',
   },
   sectionTitle: {
     fontSize: 18,
@@ -286,36 +398,111 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 24,
   },
-  inputGroup: {
-    marginBottom: 16,
+  sliderGroup: {
+    marginBottom: 24,
   },
-  inputLabel: {
+  sliderLabel: {
     fontSize: 14,
     color: '#9E9E9E',
-    marginBottom: 8,
+    marginBottom: 4,
   },
-  input: {
-    backgroundColor: '#0D0D0D',
+  sliderValue: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#87CEEB',
+    textAlign: 'right',
+    marginBottom: 6,
+  },
+  slider: {
+    width: '100%',
+    height: 40,
+  },
+  sliderBounds: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 2,
+  },
+  sliderBoundText: {
+    fontSize: 11,
+    color: '#556677',
+  },
+  confirmRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
+  confirmBtn: {
+    flex: 1,
+    backgroundColor: '#87CEEB',
     borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    color: '#FFFFFF',
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  confirmBtnDisabled: {
+    opacity: 0.5,
+  },
+  confirmBtnText: {
+    color: '#000',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  cancelBtn: {
+    flex: 1,
+    backgroundColor: '#1E2A33',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#333333',
+    borderColor: '#334455',
+  },
+  cancelBtnText: {
+    color: '#87CEEB',
+    fontWeight: '600',
+    fontSize: 14,
   },
   applyButton: {
-    backgroundColor: '#00C853',
-    borderRadius: 8,
-    padding: 16,
+    backgroundColor: '#87CEEB',
+    borderRadius: 10,
+    padding: 18,
     alignItems: 'center',
     marginTop: 8,
   },
   applyButtonDisabled: {
-    backgroundColor: '#555555',
+    backgroundColor: '#334455',
   },
   applyButtonText: {
-    fontSize: 16,
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#000000',
+    letterSpacing: 0.5,
+  },
+  readonlyRow: {
+    backgroundColor: '#111111',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#222222',
+  },
+  readonlyLabel: {
+    fontSize: 14,
+    color: '#9E9E9E',
+  },
+  readonlyValueRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 4,
+  },
+  readonlyValue: {
+    fontSize: 22,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  readonlyUnit: {
+    fontSize: 14,
+    color: '#9E9E9E',
   },
 });

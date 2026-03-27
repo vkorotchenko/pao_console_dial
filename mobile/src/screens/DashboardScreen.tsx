@@ -1,10 +1,27 @@
-import React from 'react';
+import React, {useEffect} from 'react';
 import {View, Text, StyleSheet, ScrollView} from 'react-native';
 import {useAppStore} from '../store/useAppStore';
 import {MotorState, Gear, ChargeState} from '../types';
+import {paoBleManager} from '../ble/PaoBleManager';
 
 export default function DashboardScreen() {
   const {bleStatus, telemetry} = useAppStore();
+
+  useEffect(() => {
+    if (bleStatus === 'disconnected' || bleStatus === 'error') {
+      paoBleManager.scan((device) => {
+        paoBleManager.connect(device.id).then(() => {
+          paoBleManager.subscribeToTelemetry(() => {});
+        }).catch(console.error);
+      });
+    }
+    return () => {
+      if (useAppStore.getState().bleStatus === 'scanning') {
+        paoBleManager.stopScan();
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const getMotorStateLabel = (state?: MotorState): string => {
     switch (state) {

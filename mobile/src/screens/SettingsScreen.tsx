@@ -4,18 +4,27 @@ import {Switch, SegmentedButtons, Button} from 'react-native-paper';
 import {Device} from 'react-native-ble-plx';
 import {useAppStore} from '../store/useAppStore';
 import {paoBleManager} from '../ble/PaoBleManager';
+import {chargerBleManager} from '../ble/ChargerBleManager';
 import {requestBlePermissions} from '../utils/permissions';
 
 export default function SettingsScreen() {
   const bleStatus = useAppStore(state => state.bleStatus);
   const deviceId = useAppStore(state => state.deviceId);
+  const chargerBleStatus = useAppStore(state => state.chargerBleStatus);
+  const chargerDeviceId = useAppStore(state => state.chargerDeviceId);
+  const setChargerBleStatus = useAppStore(state => state.setChargerBleStatus);
+  const setChargerData = useAppStore(state => state.setChargerData);
+  const connectionMode = useAppStore(state => state.connectionMode);
+  const setConnectionMode = useAppStore(state => state.setConnectionMode);
   const showGearTab = useAppStore(state => state.showGearTab);
   const setShowGearTab = useAppStore(state => state.setShowGearTab);
   const speedUnit = useAppStore(state => state.speedUnit);
   const setSpeedUnit = useAppStore(state => state.setSpeedUnit);
 
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
+  const [isRequestingChargerPermission, setIsRequestingChargerPermission] = useState(false);
 
+  // Peripheral BLE helpers
   const canScan = bleStatus === 'disconnected' || bleStatus === 'error';
   const canDisconnect =
     bleStatus === 'connected' || bleStatus === 'connecting' || bleStatus === 'scanning';
@@ -26,7 +35,22 @@ export default function SettingsScreen() {
       ? '#4cff91'
       : bleStatus === 'scanning' || bleStatus === 'connecting'
       ? '#FFC107'
-      : '#F44336'; // disconnected / error
+      : '#F44336';
+
+  // Charger BLE helpers
+  const canScanCharger = chargerBleStatus === 'disconnected' || chargerBleStatus === 'error';
+  const canDisconnectCharger =
+    chargerBleStatus === 'connected' ||
+    chargerBleStatus === 'connecting' ||
+    chargerBleStatus === 'scanning';
+  const isScanningCharger = chargerBleStatus === 'scanning';
+
+  const chargerStatusColor =
+    chargerBleStatus === 'connected'
+      ? '#4cff91'
+      : chargerBleStatus === 'scanning' || chargerBleStatus === 'connecting'
+      ? '#FFC107'
+      : '#F44336';
 
   const handleScan = async () => {
     setIsRequestingPermission(true);
@@ -55,60 +79,173 @@ export default function SettingsScreen() {
     paoBleManager.disconnect();
   };
 
+  const handleScanCharger = async () => {
+    setIsRequestingChargerPermission(true);
+    let granted = false;
+    try {
+      granted = await requestBlePermissions();
+    } finally {
+      setIsRequestingChargerPermission(false);
+    }
+
+    if (!granted) {
+      Alert.alert(
+        'Bluetooth Permission Required',
+        'Please grant Bluetooth permissions to connect to the charger.',
+        [{text: 'OK'}],
+      );
+      return;
+    }
+
+    setChargerBleStatus('scanning');
+    chargerBleManager.scan((deviceId, _deviceName) => {
+      chargerBleManager.connect(deviceId).then(() => {
+        chargerBleManager.subscribeToAll(partial => {
+          const current = useAppStore.getState().chargerData;
+          setChargerData({...({} as any), ...current, ...partial});
+        });
+      }).catch(console.error);
+    });
+  };
+
+  const handleDisconnectCharger = () => {
+    chargerBleManager.disconnect();
+    setChargerData(null);
+  };
+
+  const showPeripheralSection = connectionMode !== 'charger';
+  const showChargerSection = connectionMode === 'charger' || connectionMode === 'both';
+
   return (
     <ScrollView
       style={styles.scrollView}
       contentContainerStyle={styles.container}>
-      {/* BLE Connection Section */}
-      <Text style={styles.sectionHeader}>Connection</Text>
+      {/* Connection Mode Section */}
+      <Text style={styles.sectionHeader}>Connection Mode</Text>
       <View style={styles.card}>
-        {/* Status row */}
-        <View style={styles.row}>
-          <Text style={styles.label}>Status</Text>
-          <View style={styles.statusContainer}>
-            {(isScanning || isRequestingPermission) && (
-              <ActivityIndicator
-                size="small"
-                color="#FFC107"
-                style={styles.spinner}
-              />
-            )}
-            <Text style={[styles.value, {color: statusColor}]}>{bleStatus}</Text>
-          </View>
-        </View>
-
-        {/* Device ID row */}
-        {deviceId ? (
-          <View style={styles.row}>
-            <Text style={styles.label}>Device ID</Text>
-            <Text style={styles.valueSmall} numberOfLines={1}>
-              {deviceId}
-            </Text>
-          </View>
-        ) : null}
-
-        {/* Action buttons row */}
-        <View style={styles.buttonRow}>
-          <Button
-            mode="contained"
-            onPress={handleScan}
-            disabled={!canScan || isRequestingPermission}
-            style={styles.actionButton}
-            contentStyle={styles.actionButtonContent}
-            labelStyle={styles.actionButtonLabel}>
-            Scan
-          </Button>
-          <Button
-            mode="outlined"
-            onPress={handleDisconnect}
-            disabled={!canDisconnect}
-            style={styles.actionButton}
-            contentStyle={styles.actionButtonContent}
-            labelStyle={styles.actionButtonLabel}>
-            Disconnect
-          </Button>
+        <View style={styles.segmentedWrapper}>
+          <SegmentedButtons
+            value={connectionMode}
+            onValueChange={val =>
+              setConnectionMode(val as 'peripheral' | 'charger' | 'both')
+            }
+            buttons={[
+              {value: 'peripheral', label: 'Peripheral'},
+              {value: 'charger', label: 'Charger'},
+              {value: 'both', label: 'Both'},
+            ]}
+          />
         </View>
       </View>
+
+      {/* Charger BLE Section */}
+      {showChargerSection && (
+        <>
+          <Text style={styles.sectionHeader}>Charger Connection</Text>
+          <View style={styles.card}>
+            <View style={styles.row}>
+              <Text style={styles.label}>Status</Text>
+              <View style={styles.statusContainer}>
+                {(isScanningCharger || isRequestingChargerPermission) && (
+                  <ActivityIndicator
+                    size="small"
+                    color="#FFC107"
+                    style={styles.spinner}
+                  />
+                )}
+                <Text style={[styles.value, {color: chargerStatusColor}]}>
+                  {chargerBleStatus}
+                </Text>
+              </View>
+            </View>
+
+            {chargerDeviceId ? (
+              <View style={styles.row}>
+                <Text style={styles.label}>Device ID</Text>
+                <Text style={styles.valueSmall} numberOfLines={1}>
+                  {chargerDeviceId}
+                </Text>
+              </View>
+            ) : null}
+
+            <View style={styles.buttonRow}>
+              <Button
+                mode="contained"
+                onPress={handleScanCharger}
+                disabled={!canScanCharger || isRequestingChargerPermission}
+                style={styles.actionButton}
+                contentStyle={styles.actionButtonContent}
+                labelStyle={styles.actionButtonLabel}>
+                Scan for Charger
+              </Button>
+              <Button
+                mode="outlined"
+                onPress={handleDisconnectCharger}
+                disabled={!canDisconnectCharger}
+                style={styles.actionButton}
+                contentStyle={styles.actionButtonContent}
+                labelStyle={styles.actionButtonLabel}>
+                Disconnect Charger
+              </Button>
+            </View>
+          </View>
+        </>
+      )}
+
+      {/* Peripheral BLE Connection Section */}
+      {showPeripheralSection && (
+        <>
+          <Text style={styles.sectionHeader}>Connection</Text>
+          <View style={styles.card}>
+            {/* Status row */}
+            <View style={styles.row}>
+              <Text style={styles.label}>Status</Text>
+              <View style={styles.statusContainer}>
+                {(isScanning || isRequestingPermission) && (
+                  <ActivityIndicator
+                    size="small"
+                    color="#FFC107"
+                    style={styles.spinner}
+                  />
+                )}
+                <Text style={[styles.value, {color: statusColor}]}>{bleStatus}</Text>
+              </View>
+            </View>
+
+            {/* Device ID row */}
+            {deviceId ? (
+              <View style={styles.row}>
+                <Text style={styles.label}>Device ID</Text>
+                <Text style={styles.valueSmall} numberOfLines={1}>
+                  {deviceId}
+                </Text>
+              </View>
+            ) : null}
+
+            {/* Action buttons row */}
+            <View style={styles.buttonRow}>
+              <Button
+                mode="contained"
+                onPress={handleScan}
+                disabled={!canScan || isRequestingPermission}
+                style={styles.actionButton}
+                contentStyle={styles.actionButtonContent}
+                labelStyle={styles.actionButtonLabel}>
+                Scan
+              </Button>
+              <Button
+                mode="outlined"
+                onPress={handleDisconnect}
+                disabled={!canDisconnect}
+                style={styles.actionButton}
+                contentStyle={styles.actionButtonContent}
+                labelStyle={styles.actionButtonLabel}>
+                Disconnect
+              </Button>
+            </View>
+          </View>
+        </>
+      )}
 
       {/* Navigation Section */}
       <Text style={styles.sectionHeader}>Navigation</Text>

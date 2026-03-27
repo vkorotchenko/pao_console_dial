@@ -86,18 +86,25 @@ bool PaoBleService::isConnected() const {
 
 void PaoBleService::GearCallbacks::onWrite(NimBLECharacteristic* pCharacteristic) {
     std::string value = pCharacteristic->getValue();
-    
+
     if (value.length() != 1) {
         Serial.println("PAO BLE: Invalid gear command length");
         return;
     }
 
     uint8_t gearByte = (uint8_t)value[0];
-    
+
     // Validate gear value (0-3)
     if (gearByte > 3) {
         Serial.print("PAO BLE: Invalid gear value: ");
         Serial.println(gearByte);
+        return;
+    }
+
+    // Reject gear changes while actively charging (chargeState 1 = CHARGING)
+    auto& state = GlobalState::getInstance();
+    if (state.getChargeState() == 1) {
+        // Silently reject — do not update gear
         return;
     }
 

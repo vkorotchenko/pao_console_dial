@@ -75,7 +75,7 @@ export function encodeGearCommand(gear: Gear): string {
 }
 
 /**
- * Decode charger config packet from BLE (12 bytes, big-endian)
+ * Decode charger config packet from BLE (12 bytes, big-endian).
  * @param base64 - Base64 string from react-native-ble-plx
  */
 export function decodeChargerConfig(base64: string): ChargerConfig {

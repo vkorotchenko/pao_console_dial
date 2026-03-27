@@ -7,9 +7,11 @@ import {
   StatusBar,
   TouchableOpacity,
   SafeAreaView,
+  Platform,
 } from 'react-native';
 import Orientation from 'react-native-orientation-locker';
 import {useAppStore} from '../store/useAppStore';
+import {paoBleManager} from '../ble/PaoBleManager';
 
 interface HUDScreenProps {
   visible: boolean;
@@ -18,6 +20,8 @@ interface HUDScreenProps {
 
 const TORQUE_MAX = 200; // ±200 Nm bipolar range
 const RPM_MAX = 6000;
+
+const TECH_FONT = Platform.OS === 'android' ? 'monospace' : 'Courier New';
 
 /** Clamp a value between min and max. */
 function clamp(value: number, min: number, max: number): number {
@@ -47,7 +51,7 @@ function VerticalBar({
   valueText,
   valueColor = '#87CEEB',
 }: VerticalBarProps) {
-  const BAR_HEIGHT = 140;
+  const BAR_HEIGHT = 200;
 
   let filledHeight: number;
   let barTop: number; // offset from top of track where filled region starts
@@ -73,10 +77,7 @@ function VerticalBar({
 
   return (
     <View style={barStyles.wrapper}>
-      {/* Numeric value above bar */}
-      <Text style={[barStyles.valueText, {color: valueColor}]}>{valueText}</Text>
-
-      {/* Track + filled region */}
+      {/* Track + filled region — bar on TOP */}
       <View style={[barStyles.track, {height: BAR_HEIGHT}]}>
         {bipolar && (
           <View style={[barStyles.centreLine, {top: BAR_HEIGHT / 2}]} />
@@ -93,7 +94,10 @@ function VerticalBar({
         />
       </View>
 
-      {/* Text label below bar */}
+      {/* Numeric value below bar */}
+      <Text style={[barStyles.valueText, {color: valueColor}]}>{valueText}</Text>
+
+      {/* Text label below value */}
       <Text style={barStyles.labelText}>{label}</Text>
     </View>
   );
@@ -114,6 +118,25 @@ export default function HUDScreen({visible, onClose}: HUDScreenProps) {
     return () => {
       Orientation.unlockAllOrientations();
       StatusBar.setHidden(false, 'fade');
+    };
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    const currentStatus = useAppStore.getState().bleStatus;
+    if (currentStatus === 'disconnected' || currentStatus === 'error') {
+      paoBleManager.scan((device) => {
+        paoBleManager.connect(device.id).then(() => {
+          paoBleManager.subscribeToTelemetry(() => {});
+        }).catch(console.error);
+      });
+    }
+    return () => {
+      if (useAppStore.getState().bleStatus === 'scanning') {
+        paoBleManager.stopScan();
+      }
     };
   }, [visible]);
 
@@ -162,8 +185,17 @@ export default function HUDScreen({visible, onClose}: HUDScreenProps) {
           {/* ── Two-column layout ── */}
           <View style={styles.columns}>
 
-            {/* LEFT: three vertical metric bars */}
+            {/* LEFT: speed (flex:2) */}
             <View style={styles.leftHalf}>
+              <Text style={styles.speedNumber}>{Math.round(speed)}</Text>
+              <Text style={styles.speedUnit}>{speedLabel}</Text>
+            </View>
+
+            {/* Vertical divider */}
+            <View style={styles.columnDivider} />
+
+            {/* RIGHT: three vertical metric bars (flex:1) */}
+            <View style={styles.rightHalf}>
               <VerticalBar
                 fill={batteryFill}
                 label="BATTERY"
@@ -184,15 +216,6 @@ export default function HUDScreen({visible, onClose}: HUDScreenProps) {
               />
             </View>
 
-            {/* Vertical divider */}
-            <View style={styles.columnDivider} />
-
-            {/* RIGHT: speed */}
-            <View style={styles.rightHalf}>
-              <Text style={styles.speedNumber}>{Math.round(speed)}</Text>
-              <Text style={styles.speedUnit}>{speedLabel}</Text>
-            </View>
-
           </View>
         </View>
       </SafeAreaView>
@@ -210,13 +233,15 @@ const barStyles = StyleSheet.create({
     paddingVertical: 4,
   },
   valueText: {
-    fontSize: 18,
+    fontFamily: TECH_FONT,
+    fontSize: 22,
     fontWeight: '600',
-    marginBottom: 2,
+    marginTop: 6,
     letterSpacing: 0.5,
+    textTransform: 'uppercase',
   },
   track: {
-    width: 18,
+    width: 26,
     backgroundColor: '#1a1a1a',
     borderRadius: 4,
     overflow: 'hidden',
@@ -239,9 +264,10 @@ const barStyles = StyleSheet.create({
     zIndex: 1,
   },
   labelText: {
+    fontFamily: TECH_FONT,
     color: '#5BA8C4',
-    fontSize: 10,
-    marginTop: 2,
+    fontSize: 13,
+    marginTop: 4,
     textTransform: 'uppercase',
     letterSpacing: 1.5,
   },
@@ -280,25 +306,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   leftHalf: {
-    flex: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'stretch',
-    paddingHorizontal: 12,
-    paddingVertical: 24,
+    flex: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   speedNumber: {
+    fontFamily: TECH_FONT,
     color: '#87CEEB',
-    fontSize: 144,
+    fontSize: 200,
     fontWeight: '700',
-    lineHeight: 144,
-    letterSpacing: -4,
+    lineHeight: 200,
+    letterSpacing: 3,
   },
   speedUnit: {
+    fontFamily: TECH_FONT,
     color: '#5BA8C4',
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '400',
-    letterSpacing: 2,
+    letterSpacing: 3,
     textTransform: 'uppercase',
     marginTop: 4,
   },
@@ -308,8 +333,11 @@ const styles = StyleSheet.create({
     marginVertical: 24,
   },
   rightHalf: {
-    flex: 2,
-    justifyContent: 'center',
-    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'stretch',
+    paddingHorizontal: 12,
+    paddingVertical: 24,
   },
 });

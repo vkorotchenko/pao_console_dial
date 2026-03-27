@@ -1,12 +1,16 @@
 import React, {useState} from 'react';
 import {View, Text, StyleSheet, TouchableOpacity, Alert} from 'react-native';
+import {Icon} from 'react-native-paper';
 import {useAppStore} from '../store/useAppStore';
 import {Gear} from '../types';
 import {paoBleManager} from '../ble/PaoBleManager';
 
 export default function GearScreen() {
   const {bleStatus, telemetry} = useAppStore();
+  const chargerBleStatus = useAppStore(s => s.chargerBleStatus);
   const [sending, setSending] = useState(false);
+
+  const isGearBlocked = chargerBleStatus === 'connected' && bleStatus !== 'connected';
 
   const currentGear = telemetry?.gear;
 
@@ -81,6 +85,14 @@ export default function GearScreen() {
       )}
 
       <View style={styles.centeredContent}>
+        {isGearBlocked && (
+          <View style={styles.blockedOverlay}>
+            <Icon source="lightning-bolt" size={48} color="#87CEEB" />
+            <Text style={styles.blockedText}>
+              Gear control unavailable{'\n'}while connected to charger
+            </Text>
+          </View>
+        )}
         <Text style={styles.currentLabel}>Current Gear</Text>
         <Text style={styles.currentGear}>
           {getGearFullLabel(currentGear)}
@@ -206,5 +218,23 @@ const styles = StyleSheet.create({
     fontSize: 48,
     fontWeight: 'bold',
     color: '#FFFFFF',
+  },
+  blockedOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  blockedText: {
+    fontSize: 16,
+    color: '#FFFFFF',
+    textAlign: 'center',
+    marginTop: 16,
+    lineHeight: 24,
   },
 });
