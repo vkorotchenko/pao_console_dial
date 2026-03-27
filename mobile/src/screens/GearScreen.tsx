@@ -24,7 +24,9 @@ export default function GearScreen() {
     ? gearReadbackLabels[telemetry.gear] ?? '---'
     : '---';
 
-  const isGearBlocked = chargerBleStatus === 'connected' && bleStatus !== 'connected';
+  const isChargerBlocked = chargerBleStatus === 'connected' && bleStatus !== 'connected';
+  const isSpeedBlocked = (telemetry?.gpsSpeedKmh ?? 0) >= 5;
+  const isGearBlocked = isChargerBlocked || isSpeedBlocked;
 
   const handleGearPress = async (gear: Gear) => {
     if (bleStatus !== 'connected' || isGearBlocked) return;
@@ -60,9 +62,15 @@ export default function GearScreen() {
       <View style={styles.centeredContent}>
         {isGearBlocked && (
           <View style={styles.blockedOverlay}>
-            <Icon source="lightning-bolt" size={48} color="#87CEEB" />
+            <Icon
+              source={isSpeedBlocked ? 'speedometer' : 'lightning-bolt'}
+              size={48}
+              color="#87CEEB"
+            />
             <Text style={styles.blockedText}>
-              Gear control unavailable{'\n'}while connected to charger
+              {isSpeedBlocked
+                ? 'Reduce speed below 5 km/h\nto change gears'
+                : 'Gear control unavailable\nwhile connected to charger'}
             </Text>
           </View>
         )}

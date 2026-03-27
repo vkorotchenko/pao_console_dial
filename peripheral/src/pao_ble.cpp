@@ -111,10 +111,16 @@ void PaoBleService::GearCallbacks::onWrite(NimBLECharacteristic* pCharacteristic
         return;
     }
 
-    // Reject gear changes while actively charging (chargeState 1 = CHARGING)
     auto& state = GlobalState::getInstance();
+
+    // Reject gear changes while actively charging (chargeState 1 = CHARGING)
     if (state.getChargeState() == 1) {
-        // Silently reject — do not update gear
+        return;
+    }
+
+    // Reject gear changes while moving (GPS speed >= 5 km/h)
+    if (state.getGpsSpeed() >= 5.0f) {
+        Serial.println("PAO BLE: Gear change rejected — speed >= 5 km/h");
         return;
     }
 

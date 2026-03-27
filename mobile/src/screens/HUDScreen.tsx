@@ -266,11 +266,6 @@ export default function HUDScreen({onClose}: HUDScreenProps) {
             {/* RIGHT: three vertical metric bars (flex:1) */}
             <View style={styles.rightHalf}>
               <VerticalBar
-                fill={batteryFill}
-                label="BATTERY"
-                valueText={`${battery}%`}
-              />
-              <VerticalBar
                 fill={torqueFill}
                 bipolar
                 zeroPoint={TORQUE_ZERO_POINT}
@@ -283,6 +278,11 @@ export default function HUDScreen({onClose}: HUDScreenProps) {
                 fill={rpmFill}
                 label="RPM"
                 valueText={String(rpm)}
+              />
+              <VerticalBar
+                fill={batteryFill}
+                label="BATTERY"
+                valueText={`${battery}%`}
               />
             </View>
 
