@@ -104,6 +104,11 @@ android {
             signingConfig = signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+            android.applicationVariants.all { variant ->
+                variant.outputs.all {
+                    outputFileName = "PaoConsole-${variant.versionName}.apk"
+                }
+            }
         }
     }
 }

@@ -64,30 +64,6 @@ export default function ChargerScreen() {
   }, [chargerConfig]);
 
   useEffect(() => {
-    if (chargerBleStatus === 'disconnected' || chargerBleStatus === 'error') {
-      chargerBleManager.scan((deviceId, _deviceName) => {
-        useAppStore.getState().setChargerBleStatus('connecting');
-        chargerBleManager.connect(deviceId).then(() => {
-          useAppStore.getState().setChargerBleStatus('connected');
-          useAppStore.getState().setChargerDeviceId(deviceId);
-          chargerBleManager.subscribeToAll((partial) => {
-            const current = useAppStore.getState().chargerData ?? {};
-            useAppStore.getState().setChargerData({...current, ...partial} as ChargerDirectData);
-          });
-        }).catch(() => {
-          useAppStore.getState().setChargerBleStatus('error');
-        });
-      });
-    }
-    return () => {
-      if (useAppStore.getState().chargerBleStatus === 'scanning') {
-        chargerBleManager.stopScan();
-      }
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
     if (bleStatus === 'connected') {
       paoBleManager.readChargerConfig();
     }

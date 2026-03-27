@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {View, Text, StyleSheet, ScrollView, Alert, ActivityIndicator} from 'react-native';
 import {Switch, SegmentedButtons, Button} from 'react-native-paper';
 import {Device} from 'react-native-ble-plx';
@@ -6,6 +6,8 @@ import {useAppStore} from '../store/useAppStore';
 import {paoBleManager} from '../ble/PaoBleManager';
 import {chargerBleManager} from '../ble/ChargerBleManager';
 import {requestBlePermissions} from '../utils/permissions';
+import _ScreenBrightness from 'react-native-screen-brightness';
+const ScreenBrightness = _ScreenBrightness as any;
 
 export default function SettingsScreen() {
   const bleStatus = useAppStore(state => state.bleStatus);
@@ -20,12 +22,26 @@ export default function SettingsScreen() {
   const setSpeedUnit = useAppStore(state => state.setSpeedUnit);
   const hudAutoBrighten = useAppStore(state => state.hudAutoBrighten);
   const setHudAutoBrighten = useAppStore(state => state.setHudAutoBrighten);
+  const [hasWriteSettings, setHasWriteSettings] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    ScreenBrightness.hasPermission().then(setHasWriteSettings).catch(() => setHasWriteSettings(false));
+  }, []);
+
+  const requestWriteSettings = async () => {
+    await ScreenBrightness.requestPermission();
+    // Re-check after returning from settings
+    setTimeout(async () => {
+      const has = await ScreenBrightness.hasPermission().catch(() => false);
+      setHasWriteSettings(has);
+    }, 500);
+  };
 
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [isRequestingChargerPermission, setIsRequestingChargerPermission] = useState(false);
 
   // Peripheral BLE helpers
-  const canScan = bleStatus === 'disconnected' || bleStatus === 'error';
+  // const canScan = bleStatus === 'disconnected' || bleStatus === 'error';
   const canDisconnect =
     bleStatus === 'connected' || bleStatus === 'connecting' || bleStatus === 'scanning';
   const isScanning = bleStatus === 'scanning';
@@ -38,7 +54,7 @@ export default function SettingsScreen() {
       : '#F44336';
 
   // Charger BLE helpers
-  const canScanCharger = chargerBleStatus === 'disconnected' || chargerBleStatus === 'error';
+  // const canScanCharger = chargerBleStatus === 'disconnected' || chargerBleStatus === 'error';
   const canDisconnectCharger =
     chargerBleStatus === 'connected' ||
     chargerBleStatus === 'connecting' ||
@@ -237,7 +253,7 @@ export default function SettingsScreen() {
         <View style={styles.row}>
           <View style={styles.rowText}>
             <Text style={styles.label}>Auto-brighten HUD</Text>
-            <Text style={styles.hint}>Only applies when phone is charging</Text>
+            <Text style={styles.hint}>Maximizes screen brightness while HUD is open and charging</Text>
           </View>
           <Switch
             value={hudAutoBrighten}
@@ -245,6 +261,16 @@ export default function SettingsScreen() {
             color="#00C853"
           />
         </View>
+        {hudAutoBrighten && hasWriteSettings === false && (
+          <View style={styles.row}>
+            <View style={styles.rowText}>
+              <Text style={styles.hint}>Grant "Modify system settings" for full brightness</Text>
+            </View>
+            <Button mode="outlined" onPress={requestWriteSettings} style={styles.bleButton}>
+              Grant
+            </Button>
+          </View>
+        )}
       </View>
     </ScrollView>
   );

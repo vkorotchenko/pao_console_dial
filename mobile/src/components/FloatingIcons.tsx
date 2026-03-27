@@ -31,7 +31,7 @@ export const FloatingIcons: React.FC<FloatingIconsProps> = ({onNavigate, showGea
     <Portal>
       <FAB.Group
         open={open}
-        visible={true}
+        visible={!isHUD}
         icon={open ? 'close' : 'menu'}
         actions={navActions}
         onStateChange={({open: isOpen}) => setOpen(isOpen)}

@@ -1,21 +1,17 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
-  Modal,
   View,
   Text,
   StyleSheet,
-  StatusBar,
   TouchableOpacity,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
-import Orientation from 'react-native-orientation-locker';
-import ScreenBrightness from 'react-native-screen-brightness';
+import _ScreenBrightness from 'react-native-screen-brightness';
+const ScreenBrightness = _ScreenBrightness as any;
 import {isBatteryCharging} from 'react-native-device-info';
 import {useAppStore} from '../store/useAppStore';
-import {paoBleManager} from '../ble/PaoBleManager';
 
 interface HUDScreenProps {
-  visible: boolean;
   onClose: () => void;
 }
 
@@ -104,22 +100,21 @@ function VerticalBar({
   );
 }
 
-export default function HUDScreen({visible, onClose}: HUDScreenProps) {
+export default function HUDScreen({onClose}: HUDScreenProps) {
   const telemetry = useAppStore(state => state.telemetry);
   const speedUnit = useAppStore(state => state.speedUnit);
   const hudAutoBrighten = useAppStore(state => state.hudAutoBrighten);
 
   // --- Brightness control ---
   const [isPhoneCharging, setIsPhoneCharging] = useState(false);
-  const originalBrightness = useRef<number | null>(null);
+  const originalAppBrightness = useRef<number | null>(null);
+  const originalSysBrightness = useRef<number | null>(null);
+  const originalAutoBrightness = useRef<boolean | null>(null);
+  const permissionRequested = useRef(false);
 
-  // Poll charging state every 1 seconds
   useEffect(() => {
     const check = async () => {
-      try {
-        const charging = await isBatteryCharging();
-        setIsPhoneCharging(charging);
-      } catch {}
+      try { setIsPhoneCharging(await isBatteryCharging()); } catch {}
     };
     check();
     const id = setInterval(check, 1000);
@@ -132,23 +127,37 @@ export default function HUDScreen({visible, onClose}: HUDScreenProps) {
     const applyBrightness = async () => {
       if (isPhoneCharging && hudAutoBrighten) {
         try {
-          const current = await ScreenBrightness.getBrightness();
-          if (active) {
-            originalBrightness.current = current;
-            await ScreenBrightness.setBrightness(1.0);
+          if (originalAppBrightness.current === null) {
+            originalAppBrightness.current = await ScreenBrightness.getAppBrightness();
+          }
+          if (originalSysBrightness.current === null) {
+            originalSysBrightness.current = await ScreenBrightness.getSystemBrightness();
+          }
+          if (!active) { return; }
+          // Set window-level brightness (no permission needed)
+          await ScreenBrightness.setAppBrightness(1.0);
+          // Boost system brightness + disable auto-brightness — requires WRITE_SETTINGS
+          const hasPerm = await ScreenBrightness.hasPermission();
+          if (hasPerm) {
+            if (originalAutoBrightness.current === null) {
+              originalAutoBrightness.current = await ScreenBrightness.getAutoBrightnessEnabled();
+            }
+            await ScreenBrightness.setAutoBrightnessEnabled(false);
+            await ScreenBrightness.setSystemBrightness(1.0);
+          } else if (!permissionRequested.current) {
+            permissionRequested.current = true;
+            ScreenBrightness.requestPermission();
           }
         } catch (e) {
-          console.warn('Brightness control error:', e);
+          console.warn('[HUD Brightness] Error:', e);
         }
       } else {
-        if (originalBrightness.current !== null) {
-          try {
-            await ScreenBrightness.setBrightness(originalBrightness.current);
-          } catch (e) {
-            console.warn('Brightness restore error:', e);
-          }
-          originalBrightness.current = null;
-        }
+        // Phone stopped charging — hand brightness back to system immediately
+        originalAppBrightness.current = null;
+        originalSysBrightness.current = null;
+        originalAutoBrightness.current = null;
+        ScreenBrightness.setAppBrightness(-1).catch(() => {});
+        ScreenBrightness.setAutoBrightnessEnabled(true).catch(() => {});
       }
     };
 
@@ -159,48 +168,25 @@ export default function HUDScreen({visible, onClose}: HUDScreenProps) {
     };
   }, [isPhoneCharging, hudAutoBrighten]);
 
-  // Restore brightness on unmount
+  // Restore brightness when component unmounts
   useEffect(() => {
     return () => {
-      if (originalBrightness.current !== null) {
-        ScreenBrightness.setBrightness(originalBrightness.current).catch(() => {});
-        originalBrightness.current = null;
+      if (originalAutoBrightness.current !== null) {
+        ScreenBrightness.setAutoBrightnessEnabled(originalAutoBrightness.current).catch(() => {});
+        originalAutoBrightness.current = null;
+      }
+      if (originalSysBrightness.current !== null) {
+        ScreenBrightness.setSystemBrightness(originalSysBrightness.current).catch(() => {});
+        originalSysBrightness.current = null;
+      }
+      if (originalAppBrightness.current !== null) {
+        ScreenBrightness.setAppBrightness(originalAppBrightness.current).catch(() => {});
+        originalAppBrightness.current = null;
       }
     };
   }, []);
 
-  useEffect(() => {
-    if (visible) {
-      Orientation.lockToLandscapeLeft();
-      StatusBar.setHidden(true, 'fade');
-    } else {
-      Orientation.lockToPortrait();
-      StatusBar.setHidden(false, 'fade');
-    }
-  }, [visible]);
-
-  useEffect(() => {
-    if (!visible) {
-      return;
-    }
-    const currentStatus = useAppStore.getState().bleStatus;
-    if (currentStatus === 'disconnected' || currentStatus === 'error') {
-      paoBleManager.scan((device) => {
-        paoBleManager.connect(device.id).then(() => {
-          paoBleManager.subscribeToTelemetry(() => {});
-        }).catch(console.error);
-      });
-    }
-    return () => {
-      if (useAppStore.getState().bleStatus === 'scanning') {
-        paoBleManager.stopScan();
-      }
-    };
-  }, [visible]);
-
   const handleClose = () => {
-    Orientation.lockToPortrait();
-    StatusBar.setHidden(false, 'fade');
     onClose();
   };
 
@@ -222,11 +208,7 @@ export default function HUDScreen({visible, onClose}: HUDScreenProps) {
   const rpmFill = clamp(rpm / RPM_MAX, 0, 1);
 
   return (
-    <Modal
-      visible={visible}
-      animationType="fade"
-      statusBarTranslucent
-      onRequestClose={handleClose}>
+    <View style={styles.safeArea}>
       <SafeAreaView style={styles.safeArea}>
         {/* Root mirror — entire HUD is horizontally flipped for windshield projection */}
         <View style={styles.mirror}>
@@ -277,7 +259,7 @@ export default function HUDScreen({visible, onClose}: HUDScreenProps) {
           </View>
         </View>
       </SafeAreaView>
-    </Modal>
+    </View>
   );
 }
 
