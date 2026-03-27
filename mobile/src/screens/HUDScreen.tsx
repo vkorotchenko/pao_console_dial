@@ -1,4 +1,4 @@
-import React, {useEffect} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {
   Modal,
   View,
@@ -7,9 +7,10 @@ import {
   StatusBar,
   TouchableOpacity,
   SafeAreaView,
-  Platform,
 } from 'react-native';
 import Orientation from 'react-native-orientation-locker';
+import ScreenBrightness from 'react-native-screen-brightness';
+import {isBatteryCharging} from 'react-native-device-info';
 import {useAppStore} from '../store/useAppStore';
 import {paoBleManager} from '../ble/PaoBleManager';
 
@@ -21,7 +22,7 @@ interface HUDScreenProps {
 const TORQUE_MAX = 200; // ±200 Nm bipolar range
 const RPM_MAX = 6000;
 
-const TECH_FONT = Platform.OS === 'android' ? 'monospace' : 'Courier New';
+const TECH_FONT = 'Astron Valley';
 
 /** Clamp a value between min and max. */
 function clamp(value: number, min: number, max: number): number {
@@ -106,6 +107,66 @@ function VerticalBar({
 export default function HUDScreen({visible, onClose}: HUDScreenProps) {
   const telemetry = useAppStore(state => state.telemetry);
   const speedUnit = useAppStore(state => state.speedUnit);
+
+  // --- Brightness control ---
+  const [isPhoneCharging, setIsPhoneCharging] = useState(false);
+  const originalBrightness = useRef<number | null>(null);
+
+  // Poll charging state every 1 seconds
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const charging = await isBatteryCharging();
+        setIsPhoneCharging(charging);
+      } catch {}
+    };
+    check();
+    const id = setInterval(check, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const applyBrightness = async () => {
+      if (isPhoneCharging) {
+        try {
+          const current = await ScreenBrightness.getBrightness();
+          if (active) {
+            originalBrightness.current = current;
+            await ScreenBrightness.setBrightness(1.0);
+          }
+        } catch (e) {
+          console.warn('Brightness control error:', e);
+        }
+      } else {
+        if (originalBrightness.current !== null) {
+          try {
+            await ScreenBrightness.setBrightness(originalBrightness.current);
+          } catch (e) {
+            console.warn('Brightness restore error:', e);
+          }
+          originalBrightness.current = null;
+        }
+      }
+    };
+
+    applyBrightness();
+
+    return () => {
+      active = false;
+    };
+  }, [isPhoneCharging]);
+
+  // Restore brightness on unmount
+  useEffect(() => {
+    return () => {
+      if (originalBrightness.current !== null) {
+        ScreenBrightness.setBrightness(originalBrightness.current).catch(() => {});
+        originalBrightness.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (visible) {
@@ -233,7 +294,6 @@ const barStyles = StyleSheet.create({
     paddingVertical: 4,
   },
   valueText: {
-    fontFamily: TECH_FONT,
     fontSize: 22,
     fontWeight: '600',
     marginTop: 6,
@@ -264,7 +324,6 @@ const barStyles = StyleSheet.create({
     zIndex: 1,
   },
   labelText: {
-    fontFamily: TECH_FONT,
     color: '#5BA8C4',
     fontSize: 13,
     marginTop: 4,
@@ -319,7 +378,6 @@ const styles = StyleSheet.create({
     letterSpacing: 3,
   },
   speedUnit: {
-    fontFamily: TECH_FONT,
     color: '#5BA8C4',
     fontSize: 32,
     fontWeight: '400',

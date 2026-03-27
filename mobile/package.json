@@ -7,7 +7,8 @@
     "ios": "react-native run-ios",
     "start": "react-native start",
     "test": "jest",
-    "lint": "eslint . --ext .js,.jsx,.ts,.tsx"
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^1.24.0",
@@ -19,12 +20,12 @@
     "react": "19.2.3",
     "react-native": "0.84.1",
     "react-native-ble-plx": "^3.5.1",
-    "react-native-brightness": "^1.0.3",
     "react-native-device-info": "^15.0.2",
     "react-native-gesture-handler": "^2.30.0",
     "react-native-orientation-locker": "^1.7.0",
     "react-native-paper": "^5.14.0",
     "react-native-safe-area-context": "^5.7.0",
+    "react-native-screen-brightness": "^2.0.0-alpha",
     "react-native-screens": "^4.24.0",
     "react-native-vector-icons": "^10.3.0",
     "zustand": "^5.0.12"
@@ -45,6 +46,7 @@
     "babel-jest": "^30.3.0",
     "eslint": "^8.57.1",
     "jest": "^30.3.0",
+    "patch-package": "^8.0.1",
     "prettier": "3.8.1",
     "react-test-renderer": "19.2.3",
     "typescript": "^6.0.2"

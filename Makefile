@@ -82,7 +82,7 @@ clean: clean-peripheral clean-controller clean-charger ## Clean all firmware pro
 JAVA_HOME_17 := /Library/Java/JavaVirtualMachines/jdk-17.jdk/Contents/Home
 NODE_DIR     := $(shell dirname $(shell which node))
 
-.PHONY: mobile-install mobile-android mobile-android-fresh mobile-ios mobile-start mobile-metro reset-android-cache
+.PHONY: mobile-install mobile-android mobile-android-fresh mobile-android-release mobile-android-bundle mobile-ios mobile-start mobile-metro reset-android-cache
 
 mobile-install: ## Install mobile app dependencies (npm install)
 	cd mobile && npm install
@@ -103,6 +103,16 @@ mobile-android-fresh: ## Full USB Android workflow: adb reverse + Metro in backg
 	sleep 8
 	adb reverse tcp:8081 tcp:8081
 	cd mobile && JAVA_HOME=$(JAVA_HOME_17) PATH="$(NODE_DIR):$$PATH" npx react-native run-android
+
+mobile-android-release: ## Build release APK for sideloading (output: mobile/android/app/build/outputs/apk/release/)
+	cd mobile/android && JAVA_HOME=$(JAVA_HOME_17) PATH="$(NODE_DIR):$$PATH" ./gradlew assembleRelease
+	@echo ""
+	@echo "✅ Release APK: mobile/android/app/build/outputs/apk/release/app-release.apk"
+
+mobile-android-bundle: ## Build release AAB for Play Store (output: mobile/android/app/build/outputs/bundle/release/)
+	cd mobile/android && JAVA_HOME=$(JAVA_HOME_17) PATH="$(NODE_DIR):$$PATH" ./gradlew bundleRelease
+	@echo ""
+	@echo "✅ Release AAB: mobile/android/app/build/outputs/bundle/release/app-release.aab"
 
 mobile-ios: ## Build and run mobile app on iOS
 	cd mobile && npx react-native run-ios
