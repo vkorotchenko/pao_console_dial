@@ -15,10 +15,11 @@ interface HUDScreenProps {
   onClose: () => void;
 }
 
-const TORQUE_MAX = 200; // ±200 Nm bipolar range
+const TORQUE_MAX = 120;  // Nm
+const TORQUE_MIN = -20;  // Nm
 const RPM_MAX = 6000;
 
-const TECH_FONT = 'Astron Valley';
+const TECH_FONT = 'espacion.regular';
 
 /** Clamp a value between min and max. */
 function clamp(value: number, min: number, max: number): number {
@@ -30,6 +31,8 @@ interface VerticalBarProps {
   fill: number;
   /** When true the bar is bipolar: fill is –1…+1, centred at midpoint */
   bipolar?: boolean;
+  /** 0–1 position of the zero line when bipolar (default 0.5 = centre) */
+  zeroPoint?: number;
   /** Override bar fill colour */
   fillColor?: string;
   /** Label shown below the bar */
@@ -43,41 +46,44 @@ interface VerticalBarProps {
 function VerticalBar({
   fill,
   bipolar = false,
+  zeroPoint = 0.5,
   fillColor = '#87CEEB',
   label,
   valueText,
   valueColor = '#87CEEB',
 }: VerticalBarProps) {
-  const BAR_HEIGHT = 200;
+  const [trackHeight, setTrackHeight] = useState(200);
 
   let filledHeight: number;
   let barTop: number; // offset from top of track where filled region starts
 
   if (bipolar) {
-    // fill is in range –1…+1; midpoint is BAR_HEIGHT / 2
-    const mid = BAR_HEIGHT / 2;
+    // zeroPoint (0–1 from bottom) converted to pixels from top
+    const zeroFromTop = trackHeight * (1 - zeroPoint);
     const clamped = clamp(fill, -1, 1);
     if (clamped >= 0) {
-      // positive: fill upward from centre
-      filledHeight = clamped * mid;
-      barTop = mid - filledHeight;
+      // positive: fill upward from zero line
+      filledHeight = clamped * trackHeight * zeroPoint;
+      barTop = zeroFromTop - filledHeight;
     } else {
-      // negative: fill downward from centre
-      filledHeight = -clamped * mid;
-      barTop = mid;
+      // negative: fill downward from zero line
+      filledHeight = -clamped * trackHeight * (1 - zeroPoint);
+      barTop = zeroFromTop;
     }
   } else {
     const clamped = clamp(fill, 0, 1);
-    filledHeight = clamped * BAR_HEIGHT;
-    barTop = BAR_HEIGHT - filledHeight;
+    filledHeight = clamped * trackHeight;
+    barTop = trackHeight - filledHeight;
   }
 
   return (
     <View style={barStyles.wrapper}>
-      {/* Track + filled region — bar on TOP */}
-      <View style={[barStyles.track, {height: BAR_HEIGHT}]}>
+      {/* Track + filled region */}
+      <View
+        style={barStyles.track}
+        onLayout={e => setTrackHeight(e.nativeEvent.layout.height)}>
         {bipolar && (
-          <View style={[barStyles.centreLine, {top: BAR_HEIGHT / 2}]} />
+          <View style={[barStyles.centreLine, {top: trackHeight * (1 - zeroPoint)}]} />
         )}
         <View
           style={[
@@ -199,7 +205,11 @@ export default function HUDScreen({onClose}: HUDScreenProps) {
   const batteryFill = clamp(battery / 100, 0, 1);
 
   const torque = telemetry?.torqueNm ?? 0;
-  const torqueFill = clamp(torque / TORQUE_MAX, -1, 1); // –1…+1
+  // bipolar fill: positive = 0→+1 (up to TORQUE_MAX), negative = 0→-1 (down to TORQUE_MIN)
+  const torqueFill = torque >= 0
+    ? clamp(torque / TORQUE_MAX, 0, 1)
+    : clamp(torque / (-TORQUE_MIN), -1, 0);
+  const TORQUE_ZERO_POINT = (-TORQUE_MIN) / (TORQUE_MAX - TORQUE_MIN); // 20/140
   const torqueText = (torque >= 0 ? '+' : '') + torque.toFixed(1);
   const torqueColor = torque < 0 ? '#ff6b6b' : '#87CEEB';
   const torqueFillColor = torque < 0 ? '#ff6b6b' : '#87CEEB';
@@ -227,7 +237,9 @@ export default function HUDScreen({onClose}: HUDScreenProps) {
 
             {/* LEFT: speed (flex:2) */}
             <View style={styles.leftHalf}>
-              <Text style={styles.speedNumber}>{Math.round(speed)}</Text>
+              <Text style={styles.speedNumber}>
+                {Math.round(speed) < 5 ? '- -' : String(Math.round(speed)).padStart(3, '0')}
+              </Text>
               <Text style={styles.speedUnit}>{speedLabel}</Text>
             </View>
 
@@ -244,8 +256,9 @@ export default function HUDScreen({onClose}: HUDScreenProps) {
               <VerticalBar
                 fill={torqueFill}
                 bipolar
+                zeroPoint={TORQUE_ZERO_POINT}
                 fillColor={torqueFillColor}
-                label="TORQUE"
+                label="TORQUE Nm"
                 valueText={torqueText}
                 valueColor={torqueColor}
               />
@@ -269,8 +282,6 @@ const barStyles = StyleSheet.create({
   wrapper: {
     alignItems: 'center',
     flex: 1,
-    justifyContent: 'flex-end',
-    paddingVertical: 4,
   },
   valueText: {
     fontSize: 22,
@@ -280,6 +291,7 @@ const barStyles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   track: {
+    flex: 1,
     width: 26,
     backgroundColor: '#1a1a1a',
     borderRadius: 4,
@@ -352,7 +364,6 @@ const styles = StyleSheet.create({
     fontFamily: TECH_FONT,
     color: '#87CEEB',
     fontSize: 240,
-    fontWeight: '700',
     lineHeight: 240,
     letterSpacing: 3,
   },
@@ -375,6 +386,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-around',
     alignItems: 'stretch',
     paddingHorizontal: 12,
-    paddingVertical: 24,
+    paddingVertical: 0,
   },
 });

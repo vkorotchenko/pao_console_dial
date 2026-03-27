@@ -7,6 +7,7 @@ import {paoBleManager} from '../ble/PaoBleManager';
 import {chargerBleManager} from '../ble/ChargerBleManager';
 import {requestBlePermissions} from '../utils/permissions';
 import _ScreenBrightness from 'react-native-screen-brightness';
+import {PageHeader} from '../components/PageHeader';
 const ScreenBrightness = _ScreenBrightness as any;
 
 export default function SettingsScreen() {
@@ -133,6 +134,7 @@ export default function SettingsScreen() {
     <ScrollView
       style={styles.scrollView}
       contentContainerStyle={styles.container}>
+      <PageHeader title="Settings" bleSource="peripheral" style={{paddingHorizontal: 0}} />
       {/* Bluetooth Section */}
       <Text style={styles.sectionHeader}>Bluetooth</Text>
       <View style={styles.card}>

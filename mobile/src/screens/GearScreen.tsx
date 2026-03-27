@@ -4,6 +4,7 @@ import {Icon} from 'react-native-paper';
 import {useAppStore} from '../store/useAppStore';
 import {Gear} from '../types';
 import {paoBleManager} from '../ble/PaoBleManager';
+import {PageHeader} from '../components/PageHeader';
 
 export default function GearScreen() {
   const {bleStatus} = useAppStore();
@@ -43,12 +44,7 @@ export default function GearScreen() {
 
   return (
     <View style={styles.container}>
-      {bleStatus !== 'connected' && (
-        <View style={styles.overlay}>
-          <Text style={styles.overlayText}>Not connected</Text>
-        </View>
-      )}
-
+      <PageHeader title="Gear" bleSource="peripheral" />
       <View style={styles.centeredContent}>
         {isGearBlocked && (
           <View style={styles.blockedOverlay}>
@@ -93,19 +89,23 @@ export default function GearScreen() {
               const isConfirming = confirmingGear === gear;
               const isDisabled = bleStatus !== 'connected' || isGearBlocked;
               return (
-                <TouchableOpacity
-                  style={[
-                    styles.gearButton,
-                    isConfirming && styles.gearButtonConfirming,
-                    isPending && styles.gearButtonPending,
-                  ]}
-                  onPress={() => handleGearPress(gear)}
-                  disabled={isDisabled}
-                  activeOpacity={0.7}>
-                  <Text style={[styles.gearButtonText, isDisabled && styles.gearButtonTextDisabled]}>
-                    P
-                  </Text>
-                </TouchableOpacity>
+                <>
+                  <View style={styles.gearSpacer} />
+                  <TouchableOpacity
+                    style={[
+                      styles.gearButton,
+                      isConfirming && styles.gearButtonConfirming,
+                      isPending && styles.gearButtonPending,
+                    ]}
+                    onPress={() => handleGearPress(gear)}
+                    disabled={isDisabled}
+                    activeOpacity={0.7}>
+                    <Text style={[styles.gearButtonText, isDisabled && styles.gearButtonTextDisabled]}>
+                      P
+                    </Text>
+                  </TouchableOpacity>
+                  <View style={styles.gearSpacer} />
+                </>
               );
             })()}
           </View>
@@ -137,31 +137,34 @@ const styles = StyleSheet.create({
   },
   centeredContent: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+    padding: 16,
   },
   gearLayout: {
+    flex: 1,
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 20,
+    gap: 16,
   },
   leftColumn: {
+    flex: 1,
     flexDirection: 'column',
-    gap: 20,
+    gap: 16,
   },
   rightColumn: {
-    justifyContent: 'center',
+    flex: 1,
+    flexDirection: 'column',
+    gap: 16,
+  },
+  gearSpacer: {
+    flex: 1,
   },
   gearButton: {
-    width: 130,
-    height: 130,
+    flex: 1,
     backgroundColor: '#1A1A1A',
     borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 3,
-    borderColor: 'transparent',
+    borderWidth: 2,
+    borderColor: '#2A2A2A',
   },
   gearButtonPending: {
     backgroundColor: '#2D1A00',

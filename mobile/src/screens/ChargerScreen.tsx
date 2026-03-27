@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
-  ActivityIndicator,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
 import {ProgressBar} from 'react-native-paper';
@@ -14,6 +13,7 @@ import {useAppStore} from '../store/useAppStore';
 import {ChargeState, ChargerDirectData} from '../types';
 import {paoBleManager} from '../ble/PaoBleManager';
 import {chargerBleManager} from '../ble/ChargerBleManager';
+import {PageHeader} from '../components/PageHeader';
 
 const FAULT_BITS: {bit: number; label: string}[] = [
   {bit: 0x01, label: 'Hardware failure'},
@@ -141,34 +141,12 @@ export default function ChargerScreen() {
     ? telemetry?.chargePercent
     : chargerData?.socPercent;
 
-  const sourceLabel =
-    dataSource === 'peripheral'
-      ? 'Via Peripheral'
-      : dataSource === 'charger'
-      ? 'Direct BLE'
-      : 'Not connected';
-
   return (
     <View style={styles.container}>
-      {dataSource === null && (
-        <View style={styles.banner}>
-          <Text style={styles.bannerText}>Not connected</Text>
-        </View>
-      )}
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        <View style={styles.sourceBadgeRow}>
-          <View style={[
-            styles.sourceBadge,
-            {backgroundColor: dataSource ? '#1A1A1A' : '#333333'},
-          ]}>
-            <Text style={styles.sourceBadgeText}>Source: {sourceLabel}</Text>
-            {dataSource === null && chargerBleStatus === 'scanning' && (
-              <ActivityIndicator size="small" color="#FFC107" style={styles.sourceBadgeSpinner} />
-            )}
-          </View>
-        </View>
 
+        <PageHeader title="Charging" bleSource="charger" style={{paddingHorizontal: 0}} />
         <Text style={styles.sectionTitle}>Live Readings</Text>
 
         {/* SOC progress bar card */}
@@ -358,25 +336,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 200, // clearance for floating FAB
-  },
-  sourceBadgeRow: {
-    marginBottom: 8,
-  },
-  sourceBadge: {
-    alignSelf: 'flex-start',
-    borderRadius: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  sourceBadgeSpinner: {
-    marginLeft: 6,
-  },
-  sourceBadgeText: {
-    fontSize: 12,
-    color: '#9E9E9E',
-    fontWeight: '500',
   },
   sectionTitle: {
     fontSize: 18,

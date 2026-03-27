@@ -2,6 +2,7 @@ import React from 'react';
 import {View, Text, StyleSheet, ScrollView} from 'react-native';
 import {useAppStore} from '../store/useAppStore';
 import {MotorState, Gear, ChargeState} from '../types';
+import {PageHeader} from '../components/PageHeader';
 
 export default function DashboardScreen() {
   const {bleStatus, telemetry} = useAppStore();
@@ -44,13 +45,8 @@ export default function DashboardScreen() {
 
   return (
     <View style={styles.container}>
-      {bleStatus !== 'connected' && (
-        <View style={styles.banner}>
-          <Text style={styles.bannerText}>Not connected</Text>
-        </View>
-      )}
-      
       <ScrollView style={styles.scrollView}>
+        <PageHeader title="Live Data" bleSource="peripheral" />
         <View style={styles.statusRow}>
           <Text style={styles.statusLabel}>Motor: </Text>
           <Text style={styles.statusValue}>{getMotorStateLabel(telemetry?.motorState)}</Text>
