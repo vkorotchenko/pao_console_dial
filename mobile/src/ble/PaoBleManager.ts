@@ -1,5 +1,6 @@
 import {BleManager, Device, BleError, Subscription, State} from 'react-native-ble-plx';
 import {Platform} from 'react-native';
+import {Buffer} from 'buffer';
 import {useAppStore} from '../store/useAppStore';
 import {
   decodeTelemetry,
@@ -13,6 +14,7 @@ const PAO_SERVICE_UUID = 'c909d45a-0560-4725-85e7-c20a9bbb74c2';
 const TELEMETRY_CHAR_UUID = 'c169df83-5127-46df-a18b-066672243018';
 const GEAR_CHAR_UUID = 'b2b08d43-7ec9-40c4-add2-a3a899756607';
 const CHARGER_CHAR_UUID = '06ad7ea2-24cc-46fe-b791-78167b76693e';
+const SPEED_UNIT_CHAR_UUID = 'd3b4f172-9e8a-4c0b-a1d2-7f3e8c5b2a91';
 const DEVICE_NAME = 'PAO Console';
 
 export class PaoBleManager {
@@ -21,6 +23,7 @@ export class PaoBleManager {
   private telemetrySubscription: Subscription | null = null;
   private chargerSubscription: Subscription | null = null;
   private disconnectSubscription: Subscription | null = null;
+  private speedUnitSubscription: Subscription | null = null;
 
   constructor() {
     this.manager = new BleManager();
@@ -88,6 +91,19 @@ export class PaoBleManager {
       useAppStore.getState().setBleStatus('connected');
       useAppStore.getState().setDeviceId(deviceId);
 
+      // Read speed unit preference from peripheral
+      try {
+        const su = await device.readCharacteristicForService(PAO_SERVICE_UUID, SPEED_UNIT_CHAR_UUID);
+        if (su.value) {
+          const buf = Buffer.from(su.value, 'base64');
+          const unit = buf[0] === 0 ? 'kmh' : 'mph';
+          useAppStore.getState().setSpeedUnit(unit);
+        }
+      } catch (e) {
+        console.warn('PaoBle: could not read speed unit:', e);
+      }
+
+      this.subscribeToSpeedUnit();
       this.setupDisconnectHandler(deviceId);
 
       console.log('Connected successfully');
@@ -191,6 +207,40 @@ export class PaoBleManager {
       console.error('Gear command write error:', error);
       throw error;
     }
+  }
+
+  /**
+   * Subscribe to speed unit notifications from peripheral
+   */
+  subscribeToSpeedUnit(): void {
+    if (!this.connectedDevice) return;
+    this.speedUnitSubscription = this.connectedDevice.monitorCharacteristicForService(
+      PAO_SERVICE_UUID,
+      SPEED_UNIT_CHAR_UUID,
+      (error, characteristic) => {
+        if (error) return;
+        if (characteristic?.value) {
+          const buf = Buffer.from(characteristic.value, 'base64');
+          const unit = buf[0] === 0 ? 'kmh' : 'mph';
+          useAppStore.getState().setSpeedUnit(unit);
+        }
+      },
+    );
+  }
+
+  /**
+   * Write speed unit preference to peripheral
+   * @param unit - 'kmh' (0) or 'mph' (1)
+   */
+  async writeSpeedUnit(unit: 'kmh' | 'mph'): Promise<void> {
+    if (!this.connectedDevice) throw new Error('No device connected');
+    const buf = Buffer.alloc(1);
+    buf.writeUInt8(unit === 'kmh' ? 0 : 1, 0);
+    await this.connectedDevice.writeCharacteristicWithResponseForService(
+      PAO_SERVICE_UUID,
+      SPEED_UNIT_CHAR_UUID,
+      buf.toString('base64'),
+    );
   }
 
   /**
@@ -310,6 +360,9 @@ export class PaoBleManager {
 
     this.chargerSubscription?.remove();
     this.chargerSubscription = null;
+
+    this.speedUnitSubscription?.remove();
+    this.speedUnitSubscription = null;
 
     this.disconnectSubscription?.remove();
     this.disconnectSubscription = null;

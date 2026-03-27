@@ -58,6 +58,16 @@ void PaoBleService::begin() {
     );
     _chargerChar->setCallbacks(&_chargerCallbacks);
 
+    // Speed unit (Read + Write encrypted + Notify): 1 byte, 0=km/h, 1=mph
+    _speedUnitChar = paoService->createCharacteristic(
+        PAO_SPEED_UNIT_CHAR_UUID,
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE_ENC | NIMBLE_PROPERTY::NOTIFY
+    );
+    _speedUnitChar->setCallbacks(&_speedUnitCallbacks);
+    // Set initial value from GlobalState
+    uint8_t initialUnit = GlobalState::getInstance().getUseMetricUnits() ? 0 : 1;
+    _speedUnitChar->setValue(&initialUnit, 1);
+
     paoService->start();
 
     // Start advertising
@@ -197,6 +207,33 @@ void PaoBleService::ChargerCallbacks::onWrite(NimBLECharacteristic* pCharacteris
     }
 
     Serial.println("PAO BLE: Charger config write complete (no changes or pending command)");
+}
+
+void PaoBleService::SpeedUnitCallbacks::onRead(NimBLECharacteristic* pCharacteristic) {
+    auto& state = GlobalState::getInstance();
+    uint8_t unit = state.getUseMetricUnits() ? 0 : 1;  // 0=km/h, 1=mph
+    pCharacteristic->setValue(&unit, 1);
+}
+
+void PaoBleService::SpeedUnitCallbacks::onWrite(NimBLECharacteristic* pCharacteristic) {
+    std::string val = pCharacteristic->getValue();
+    if (val.length() >= 1) {
+        bool isMetric = (val[0] == 0);  // 0=km/h (metric), 1=mph
+        GlobalState::getInstance().setUseMetricUnits(isMetric);
+        // Notify the new value back
+        uint8_t unit = isMetric ? 0 : 1;
+        pCharacteristic->setValue(&unit, 1);
+        pCharacteristic->notify();
+        Serial.print("PAO BLE: Speed unit changed to ");
+        Serial.println(isMetric ? "km/h (metric)" : "mph (imperial)");
+    }
+}
+
+void PaoBleService::notifySpeedUnit() {
+    if (!_connected || !_speedUnitChar) return;
+    uint8_t unit = GlobalState::getInstance().getUseMetricUnits() ? 0 : 1;
+    _speedUnitChar->setValue(&unit, 1);
+    _speedUnitChar->notify();
 }
 
 void PaoBleService::packTelemetry(uint8_t* buffer) {

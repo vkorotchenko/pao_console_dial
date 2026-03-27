@@ -270,7 +270,17 @@ export default function SettingsScreen() {
         <View style={styles.segmentedWrapper}>
           <SegmentedButtons
             value={speedUnit}
-            onValueChange={val => setSpeedUnit(val as 'kmh' | 'mph')}
+            onValueChange={async val => {
+              const unit = val as 'kmh' | 'mph';
+              setSpeedUnit(unit);
+              if (bleStatus === 'connected') {
+                try {
+                  await paoBleManager.writeSpeedUnit(unit);
+                } catch (e) {
+                  console.warn('Could not write speed unit to peripheral:', e);
+                }
+              }
+            }}
             buttons={[
               {value: 'kmh', label: 'km/h'},
               {value: 'mph', label: 'mph'},

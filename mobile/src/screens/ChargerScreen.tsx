@@ -8,10 +8,23 @@ import {
   Alert,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
+import {ProgressBar} from 'react-native-paper';
 import {useAppStore} from '../store/useAppStore';
 import {ChargeState, ChargerDirectData} from '../types';
 import {paoBleManager} from '../ble/PaoBleManager';
 import {chargerBleManager} from '../ble/ChargerBleManager';
+
+const FAULT_BITS: {bit: number; label: string}[] = [
+  {bit: 0x01, label: 'Hardware failure'},
+  {bit: 0x02, label: 'Overheating'},
+  {bit: 0x04, label: 'Input voltage out of range'},
+  {bit: 0x08, label: 'Charger off (reverse polarity protection)'},
+  {bit: 0x10, label: 'Communication timeout'},
+];
+
+function getActiveFaults(errorState: number): string[] {
+  return FAULT_BITS.filter(f => (errorState & f.bit) !== 0).map(f => f.label);
+}
 
 export default function ChargerScreen() {
   const chargerConfig = useAppStore(s => s.chargerConfig);
@@ -178,43 +191,75 @@ export default function ChargerScreen() {
 
         <Text style={styles.sectionTitle}>Live Readings</Text>
 
-        <View style={styles.readingsContainer}>
-          <View style={styles.readingCard}>
-            <Text style={styles.readingLabel}>Actual Voltage</Text>
-            <Text style={styles.readingValue}>
-              {actualVoltage?.toFixed(1) ?? '—'}
+        {/* SOC progress bar card */}
+        <View style={styles.socCard}>
+          <View style={styles.socHeader}>
+            <Text style={styles.readingLabel}>State of Charge</Text>
+            <Text style={styles.socPercent}>{displayChargePercent ?? '—'}%</Text>
+          </View>
+          <ProgressBar
+            progress={(displayChargePercent ?? 0) / 100}
+            color="#00C853"
+            style={styles.progressBar}
+          />
+        </View>
+
+        {/* Key readings — full width, prominent */}
+        <View style={styles.keyReadingsRow}>
+          <View style={styles.keyReadingCard}>
+            <Text style={styles.readingLabel}>Charger Target</Text>
+            <Text style={styles.keyReadingValue}>
+              {(isPeripheralConnected
+                ? chargerConfig?.targetVoltageV
+                : chargerData?.targetVoltageV
+              )?.toFixed(1) ?? '—'}
             </Text>
             <Text style={styles.readingUnit}>V</Text>
+            <Text style={styles.readingCaption}>From device</Text>
           </View>
-
-          <View style={styles.readingCard}>
+          <View style={styles.keyReadingCard}>
             <Text style={styles.readingLabel}>Actual Current</Text>
-            <Text style={styles.readingValue}>
+            <Text style={styles.keyReadingValue}>
               {actualCurrent?.toFixed(1) ?? '—'}
             </Text>
             <Text style={styles.readingUnit}>A</Text>
           </View>
+        </View>
 
+        {/* Secondary readings */}
+        <View style={styles.readingsContainer}>
+          <View style={styles.readingCard}>
+            <Text style={styles.readingLabel}>Actual Voltage</Text>
+            <Text style={styles.readingValue}>{actualVoltage?.toFixed(1) ?? '—'}</Text>
+            <Text style={styles.readingUnit}>V</Text>
+          </View>
           <View style={styles.readingCard}>
             <Text style={styles.readingLabel}>Charge State</Text>
-            <View style={[
-              styles.stateBadge,
-              {backgroundColor: getChargeStateBadgeColor(displayChargeState)}
-            ]}>
-              <Text style={styles.stateBadgeText}>
-                {getChargeStateLabel(displayChargeState)}
-              </Text>
+            <View style={[styles.stateBadge, {backgroundColor: getChargeStateBadgeColor(displayChargeState)}]}>
+              <Text style={styles.stateBadgeText}>{getChargeStateLabel(displayChargeState)}</Text>
             </View>
           </View>
-
-          <View style={styles.readingCard}>
-            <Text style={styles.readingLabel}>Charge %</Text>
-            <Text style={styles.readingValue}>
-              {displayChargePercent ?? '—'}
-            </Text>
-            <Text style={styles.readingUnit}>%</Text>
-          </View>
         </View>
+
+        {/* Fault display — only shown when faults are present */}
+        {(() => {
+          const errorState = isPeripheralConnected
+            ? chargerConfig?.chargeErrorState
+            : chargerData?.errorState;
+          const faults = getActiveFaults(errorState ?? 0);
+          if (faults.length === 0) return null;
+          return (
+            <View style={styles.faultCard}>
+              <Text style={styles.faultTitle}>Active Faults</Text>
+              {faults.map((fault, i) => (
+                <View key={i} style={styles.faultRow}>
+                  <Text style={styles.faultBullet}>•</Text>
+                  <Text style={styles.faultText}>{fault}</Text>
+                </View>
+              ))}
+            </View>
+          );
+        })()}
 
         <Text style={styles.sectionTitle}>Configuration</Text>
 
@@ -222,10 +267,13 @@ export default function ChargerScreen() {
 
           {/* Target Voltage — computed from SOC slider, read-only */}
           <View style={styles.readonlyRow}>
-            <Text style={styles.readonlyLabel}>Target Voltage</Text>
-            <View style={styles.readonlyValueRow}>
-              <Text style={styles.readonlyValue}>{computedTargetV.toFixed(1)}</Text>
-              <Text style={styles.readonlyUnit}>V</Text>
+            <Text style={styles.readonlyLabel}>Target if Applied</Text>
+            <View style={styles.readonlyValueColumn}>
+              <View style={styles.readonlyValueRow}>
+                <Text style={styles.readonlyValue}>{computedTargetV.toFixed(1)}</Text>
+                <Text style={styles.readonlyUnit}>V</Text>
+              </View>
+              <Text style={styles.readonlyCaption}>Computed from SOC</Text>
             </View>
           </View>
 
@@ -352,11 +400,55 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 12,
   },
+  // SOC progress bar card
+  socCard: {
+    width: '100%',
+    backgroundColor: '#1A1A1A',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 12,
+  },
+  socHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  socPercent: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#00C853',
+  },
+  progressBar: {
+    height: 12,
+    borderRadius: 6,
+  },
+  // Key readings (target voltage + actual current) — prominent
+  keyReadingsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  keyReadingCard: {
+    width: '48%',
+    backgroundColor: '#0D2030',
+    borderRadius: 8,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#87CEEB33',
+  },
+  keyReadingValue: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    color: '#87CEEB',
+    marginBottom: 4,
+  },
+  // Secondary readings grid
   readingsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginBottom: 24,
+    marginBottom: 12,
   },
   readingCard: {
     width: '48%',
@@ -392,6 +484,41 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
+  // Fault display
+  faultCard: {
+    backgroundColor: '#2D0A0A',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#F44336',
+  },
+  faultTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#F44336',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  faultRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 4,
+  },
+  faultBullet: {
+    color: '#F44336',
+    fontSize: 14,
+    marginRight: 8,
+    lineHeight: 20,
+  },
+  faultText: {
+    color: '#FFCDD2',
+    fontSize: 13,
+    flex: 1,
+    lineHeight: 20,
+  },
+  // Configuration section
   configContainer: {
     backgroundColor: '#1A1A1A',
     borderRadius: 8,
@@ -460,22 +587,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 14,
   },
-  applyButton: {
-    backgroundColor: '#87CEEB',
-    borderRadius: 10,
-    padding: 18,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  applyButtonDisabled: {
-    backgroundColor: '#334455',
-  },
-  applyButtonText: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#000000',
-    letterSpacing: 0.5,
-  },
   readonlyRow: {
     backgroundColor: '#111111',
     borderRadius: 8,
@@ -504,5 +615,19 @@ const styles = StyleSheet.create({
   readonlyUnit: {
     fontSize: 14,
     color: '#9E9E9E',
+  },
+  readonlyValueColumn: {
+    alignItems: 'flex-end',
+  },
+  readingCaption: {
+    fontSize: 10,
+    color: '#556677',
+    marginTop: 2,
+  },
+  readonlyCaption: {
+    fontSize: 10,
+    color: '#556677',
+    marginTop: 4,
+    textAlign: 'right',
   },
 });

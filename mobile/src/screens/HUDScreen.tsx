@@ -247,7 +247,7 @@ const barStyles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
     borderWidth: 1,
-    borderColor: '#1a2a35',
+    borderColor: '#FFFFFF',
   },
   filled: {
     position: 'absolute',
@@ -313,9 +313,9 @@ const styles = StyleSheet.create({
   speedNumber: {
     fontFamily: TECH_FONT,
     color: '#87CEEB',
-    fontSize: 200,
+    fontSize: 240,
     fontWeight: '700',
-    lineHeight: 200,
+    lineHeight: 240,
     letterSpacing: 3,
   },
   speedUnit: {
