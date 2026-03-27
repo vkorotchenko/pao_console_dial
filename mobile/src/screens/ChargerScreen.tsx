@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,8 @@ import {
 } from 'react-native';
 import Slider from '@react-native-community/slider';
 import {ProgressBar} from 'react-native-paper';
+import Brightness from 'react-native-brightness';
+import {useIsBatteryCharging} from 'react-native-device-info';
 import {useAppStore} from '../store/useAppStore';
 import {ChargeState, ChargerDirectData} from '../types';
 import {paoBleManager} from '../ble/PaoBleManager';
@@ -118,6 +120,54 @@ export default function ChargerScreen() {
   const computedTargetV = minV + (draftSoc / 100) * (maxV - minV);
 
   const isConnected = isPeripheralConnected || chargerBleStatus === 'connected';
+
+  // --- Brightness control ---
+  const isPhoneCharging = useIsBatteryCharging();
+  const originalBrightness = useRef<number | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const applyBrightness = async () => {
+      if (isPhoneCharging) {
+        try {
+          const current = await Brightness.getBrightness();
+          if (active) {
+            originalBrightness.current = current;
+            await Brightness.setBrightness(1.0); // max
+          }
+        } catch (e) {
+          console.warn('Brightness control error:', e);
+        }
+      } else {
+        // Phone stopped charging — restore
+        if (originalBrightness.current !== null) {
+          try {
+            await Brightness.setBrightness(originalBrightness.current);
+          } catch (e) {
+            console.warn('Brightness restore error:', e);
+          }
+          originalBrightness.current = null;
+        }
+      }
+    };
+
+    applyBrightness();
+
+    return () => {
+      active = false;
+    };
+  }, [isPhoneCharging]);
+
+  // Restore brightness on unmount regardless of charging state
+  useEffect(() => {
+    return () => {
+      if (originalBrightness.current !== null) {
+        Brightness.setBrightness(originalBrightness.current).catch(() => {});
+        originalBrightness.current = null;
+      }
+    };
+  }, []);
 
   const applyField = async (field: 'current' | 'soc') => {
     if (!isConnected) {

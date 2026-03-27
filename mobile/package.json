@@ -19,6 +19,8 @@
     "react": "19.2.3",
     "react-native": "0.84.1",
     "react-native-ble-plx": "^3.5.1",
+    "react-native-brightness": "^1.0.3",
+    "react-native-device-info": "^15.0.2",
     "react-native-gesture-handler": "^2.30.0",
     "react-native-orientation-locker": "^1.7.0",
     "react-native-paper": "^5.14.0",
