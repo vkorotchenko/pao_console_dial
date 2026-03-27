@@ -10,6 +10,8 @@ import _ScreenBrightness from 'react-native-screen-brightness';
 const ScreenBrightness = _ScreenBrightness as any;
 import {isBatteryCharging} from 'react-native-device-info';
 import {useAppStore} from '../store/useAppStore';
+import {Gear} from '../types';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface HUDScreenProps {
   onClose: () => void;
@@ -210,12 +212,15 @@ export default function HUDScreen({onClose}: HUDScreenProps) {
     ? clamp(torque / TORQUE_MAX, 0, 1)
     : clamp(torque / (-TORQUE_MIN), -1, 0);
   const TORQUE_ZERO_POINT = (-TORQUE_MIN) / (TORQUE_MAX - TORQUE_MIN); // 20/140
-  const torqueText = (torque >= 0 ? '+' : '') + torque.toFixed(1);
+  const torqueText = `${torque.toFixed(0)} Nm`;
   const torqueColor = torque < 0 ? '#ff6b6b' : '#87CEEB';
   const torqueFillColor = torque < 0 ? '#ff6b6b' : '#87CEEB';
 
   const rpm = telemetry?.speedRpm ?? 0;
   const rpmFill = clamp(rpm / RPM_MAX, 0, 1);
+
+  // --- Status flags ---
+  const flags = telemetry?.statusFlags;
 
   return (
     <View style={styles.safeArea}>
@@ -230,6 +235,18 @@ export default function HUDScreen({onClose}: HUDScreenProps) {
                 <Text style={styles.closeText}>✕</Text>
               </View>
             </TouchableOpacity>
+          </View>
+
+          {/* ── Status icon strip — always visible, left edge (screen-right due to mirror) ── */}
+          <View style={styles.sideAlertStrip}>
+            <View style={[styles.counterMirror, styles.iconColumn]}>
+              <Icon name="engine"          size={26} color={flags?.running       ? '#4cff91' : '#333'} style={styles.alertIcon} />
+              <Icon name="alert-octagon"   size={26} color={flags?.fault         ? '#F44336' : '#333'} style={styles.alertIcon} />
+              <Icon name="alert"           size={26} color={flags?.warning       ? '#FF8C00' : '#333'} style={styles.alertIcon} />
+              <Icon name="crosshairs-gps"  size={26} color={flags?.gpsFix        ? '#4cff91' : '#333'} style={styles.alertIcon} />
+              <Icon name="network"         size={26} color={flags?.canConnected  ? '#4cff91' : '#333'} style={styles.alertIcon} />
+              <Icon name="lightning-bolt"  size={26} color={flags?.preChargeReady ? '#4cff91' : '#333'} style={styles.alertIcon} />
+            </View>
           </View>
 
           {/* ── Two-column layout ── */}
@@ -258,7 +275,7 @@ export default function HUDScreen({onClose}: HUDScreenProps) {
                 bipolar
                 zeroPoint={TORQUE_ZERO_POINT}
                 fillColor={torqueFillColor}
-                label="TORQUE Nm"
+                label="TORQUE"
                 valueText={torqueText}
                 valueColor={torqueColor}
               />
@@ -375,6 +392,30 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginTop: 4,
   },
+  gearLetter: {
+    fontFamily: TECH_FONT,
+    color: '#87CEEB',
+    fontSize: 72,
+    lineHeight: 80,
+    marginTop: 8,
+    letterSpacing: 2,
+    opacity: 0.85,
+  },
+  sideAlertStrip: {
+    position: 'absolute',
+    left: 16,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  alertIcon: {
+    opacity: 0.9,
+  },
+  iconColumn: {
+    gap: 20,
+  },
   columnDivider: {
     width: 1,
     backgroundColor: '#1a2a35',
@@ -383,9 +424,10 @@ const styles = StyleSheet.create({
   rightHalf: {
     flex: 1,
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    justifyContent: 'center',
     alignItems: 'stretch',
     paddingHorizontal: 12,
-    paddingVertical: 0,
+    paddingVertical: 15,
+    gap: 16,
   },
 });

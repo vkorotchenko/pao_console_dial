@@ -23,8 +23,31 @@ const FAULT_BITS: {bit: number; label: string}[] = [
   {bit: 0x10, label: 'Communication timeout'},
 ];
 
+const MAX_TIME_SLIDER_MIN = 900;   // 15 minutes
+const MAX_TIME_SLIDER_MAX = 87300; // 24h + 1 step sentinel = "No Limit"
+const MAX_TIME_SLIDER_STEP = 900;  // 15-minute increments
+
 function getActiveFaults(errorState: number): string[] {
   return FAULT_BITS.filter(f => (errorState & f.bit) !== 0).map(f => f.label);
+}
+
+/**
+ * Format a duration in seconds to a human-readable string.
+ * e.g. 5000 → "1h 23m", 2700 → "45m", 30 → "< 1m"
+ */
+function formatDuration(seconds: number): string {
+  if (seconds < 60) {
+    return '< 1m';
+  }
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h === 0) {
+    return `${m}m`;
+  }
+  if (m === 0) {
+    return `${h}h`;
+  }
+  return `${h}h ${m.toString().padStart(2, '0')}m`;
 }
 
 export default function ChargerScreen() {
@@ -53,6 +76,18 @@ export default function ChargerScreen() {
   const [pendingCurrent, setPendingCurrent] = useState(false);
   const [pendingSoc, setPendingSoc] = useState(false);
 
+  // Max charge time — draft + committed, pending write state
+  // 0 from firmware = no limit; mapped to/from MAX_TIME_SLIDER_MAX sentinel
+  const toSlider = (secs: number) => secs === 0 ? MAX_TIME_SLIDER_MAX : secs;
+  const fromSlider = (secs: number) => secs >= MAX_TIME_SLIDER_MAX ? 0 : secs;
+  const [draftMaxTime, setDraftMaxTime] = useState(
+    toSlider(chargerConfig?.maxChargeTimeSeconds ?? 14400),
+  );
+  const [committedMaxTime, setCommittedMaxTime] = useState(
+    toSlider(chargerConfig?.maxChargeTimeSeconds ?? 14400),
+  );
+  const [pendingMaxTime, setPendingMaxTime] = useState(false);
+
   // Sync draft + committed when config arrives from BLE
   useEffect(() => {
     if (chargerConfig) {
@@ -60,6 +95,8 @@ export default function ChargerScreen() {
       setCommittedCurrent(chargerConfig.maxCurrentA);
       setDraftSoc(chargerConfig.targetSocPercent);
       setCommittedSoc(chargerConfig.targetSocPercent);
+      setDraftMaxTime(toSlider(chargerConfig.maxChargeTimeSeconds));
+      setCommittedMaxTime(toSlider(chargerConfig.maxChargeTimeSeconds));
     }
   }, [chargerConfig]);
 
@@ -109,7 +146,7 @@ export default function ChargerScreen() {
           targetVoltageV: chargerConfig?.targetVoltageV ?? nominalV * maxMult,
           maxCurrentA: field === 'current' ? draftCurrent : committedCurrent,
           targetSocPercent: Math.round(field === 'soc' ? draftSoc : committedSoc),
-          maxChargeTimeSeconds: chargerConfig?.maxChargeTimeSeconds ?? 14400,
+          maxChargeTimeSeconds: committedMaxTime,
         });
       } else {
         if (field === 'current') {
@@ -124,6 +161,32 @@ export default function ChargerScreen() {
       Alert.alert('Error', error.message || 'Failed to apply');
     } finally {
       setPending(false);
+    }
+  };
+
+  const applyMaxTime = async (seconds: number) => {
+    if (!isConnected) {
+      Alert.alert('Error', 'Not connected to device');
+      return;
+    }
+    setPendingMaxTime(true);
+    try {
+      if (isPeripheralConnected) {
+        await paoBleManager.writeChargerConfig({
+          targetVoltageV: chargerConfig?.targetVoltageV ?? nominalV * maxMult,
+          maxCurrentA: committedCurrent,
+          targetSocPercent: Math.round(committedSoc),
+          maxChargeTimeSeconds: seconds,
+        });
+      } else {
+        await chargerBleManager.writeMaxTime(seconds);
+      }
+      setDraftMaxTime(seconds);
+      setCommittedMaxTime(seconds);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to apply');
+    } finally {
+      setPendingMaxTime(false);
     }
   };
 
@@ -153,7 +216,14 @@ export default function ChargerScreen() {
         <View style={styles.socCard}>
           <View style={styles.socHeader}>
             <Text style={styles.readingLabel}>State of Charge</Text>
-            <Text style={styles.socPercent}>{displayChargePercent ?? '—'}%</Text>
+            <View style={styles.socHeaderRight}>
+              {chargerData != null && (
+                <Text style={styles.runningTime}>
+                  {formatDuration(chargerData.runningTimeSeconds)}
+                </Text>
+              )}
+              <Text style={styles.socPercent}>{displayChargePercent ?? '—'}%</Text>
+            </View>
           </View>
           <ProgressBar
             progress={(displayChargePercent ?? 0) / 100}
@@ -176,11 +246,16 @@ export default function ChargerScreen() {
             <Text style={styles.readingCaption}>From device</Text>
           </View>
           <View style={styles.keyReadingCard}>
-            <Text style={styles.readingLabel}>Actual Current</Text>
+            <Text style={styles.readingLabel}>Current</Text>
             <Text style={styles.keyReadingValue}>
               {actualCurrent?.toFixed(1) ?? '—'}
             </Text>
             <Text style={styles.readingUnit}>A</Text>
+            {chargerData != null && chargerData.targetAmpsA != null && (
+              <Text style={styles.readingCaption}>
+                of {chargerData.targetAmpsA.toFixed(1)} A target
+              </Text>
+            )}
           </View>
         </View>
 
@@ -223,15 +298,17 @@ export default function ChargerScreen() {
 
         <View style={styles.configContainer}>
 
-          {/* Target Voltage — computed from SOC slider, read-only */}
+          {/* Charge Voltage — computed from SOC slider, read-only */}
           <View style={styles.readonlyRow}>
-            <Text style={styles.readonlyLabel}>Target if Applied</Text>
+            <View>
+              <Text style={styles.readonlyLabel}>Charge Voltage</Text>
+              <Text style={styles.readonlySubLabel}>at selected SOC</Text>
+            </View>
             <View style={styles.readonlyValueColumn}>
               <View style={styles.readonlyValueRow}>
                 <Text style={styles.readonlyValue}>{computedTargetV.toFixed(1)}</Text>
                 <Text style={styles.readonlyUnit}>V</Text>
               </View>
-              <Text style={styles.readonlyCaption}>Computed from SOC</Text>
             </View>
           </View>
 
@@ -309,6 +386,51 @@ export default function ChargerScreen() {
             )}
           </View>
 
+          {/* Max Charge Time */}
+          <View style={styles.maxTimeGroup}>
+            <View style={styles.maxTimeHeader}>
+              <Text style={styles.sliderLabel}>Max Charge Time</Text>
+              <Text style={styles.maxTimeValue}>
+                {pendingMaxTime
+                  ? '…'
+                  : draftMaxTime >= MAX_TIME_SLIDER_MAX
+                  ? 'NO LIMIT'
+                  : formatDuration(draftMaxTime)}
+              </Text>
+            </View>
+            <Slider
+              style={styles.slider}
+              minimumValue={MAX_TIME_SLIDER_MIN}
+              maximumValue={MAX_TIME_SLIDER_MAX}
+              step={MAX_TIME_SLIDER_STEP}
+              value={draftMaxTime}
+              onValueChange={val => setDraftMaxTime(val)}
+              minimumTrackTintColor="#87CEEB"
+              maximumTrackTintColor="#334455"
+              thumbTintColor="#87CEEB"
+            />
+            <View style={styles.sliderBounds}>
+              <Text style={styles.sliderBoundText}>15m</Text>
+              <Text style={styles.sliderBoundText}>∞</Text>
+            </View>
+            {draftMaxTime !== committedMaxTime && (
+              <View style={styles.confirmRow}>
+                <TouchableOpacity
+                  style={[styles.confirmBtn, pendingMaxTime && styles.confirmBtnDisabled]}
+                  onPress={() => applyMaxTime(fromSlider(draftMaxTime))}
+                  disabled={pendingMaxTime}>
+                  <Text style={styles.confirmBtnText}>{pendingMaxTime ? '…' : '✓ Confirm'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.cancelBtn}
+                  onPress={() => setDraftMaxTime(committedMaxTime)}
+                  disabled={pendingMaxTime}>
+                  <Text style={styles.cancelBtnText}>✕ Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+
         </View>
       </ScrollView>
     </View>
@@ -357,6 +479,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 10,
+  },
+  socHeaderRight: {
+    alignItems: 'flex-end',
+    gap: 2,
+  },
+  runningTime: {
+    fontSize: 12,
+    color: '#9E9E9E',
+    fontVariant: ['tabular-nums'],
   },
   socPercent: {
     fontSize: 22,
@@ -546,6 +677,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#9E9E9E',
   },
+  readonlySubLabel: {
+    fontSize: 11,
+    color: '#556677',
+    marginTop: 2,
+  },
   readonlyValueRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
@@ -573,5 +709,20 @@ const styles = StyleSheet.create({
     color: '#556677',
     marginTop: 4,
     textAlign: 'right',
+  },
+  // Max charge time control
+  maxTimeGroup: {
+    marginBottom: 8,
+  },
+  maxTimeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  maxTimeValue: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#87CEEB',
   },
 });

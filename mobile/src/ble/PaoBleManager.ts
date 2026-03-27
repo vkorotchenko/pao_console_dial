@@ -1,4 +1,5 @@
-import {BleManager, Device, BleError, Subscription, State} from 'react-native-ble-plx';
+import {Device, BleError, Subscription, State} from 'react-native-ble-plx';
+import {sharedBleManager} from './bleInstance';
 import {Platform} from 'react-native';
 import {Buffer} from 'buffer';
 import {useAppStore} from '../store/useAppStore';
@@ -18,16 +19,12 @@ const SPEED_UNIT_CHAR_UUID = 'd3b4f172-9e8a-4c0b-a1d2-7f3e8c5b2a91';
 const DEVICE_NAME = 'PAO Console';
 
 export class PaoBleManager {
-  private manager: BleManager;
+  private manager = sharedBleManager;
   private connectedDevice: Device | null = null;
   private telemetrySubscription: Subscription | null = null;
   private chargerSubscription: Subscription | null = null;
   private disconnectSubscription: Subscription | null = null;
   private speedUnitSubscription: Subscription | null = null;
-
-  constructor() {
-    this.manager = new BleManager();
-  }
 
   /**
    * Scan for PAO Console devices

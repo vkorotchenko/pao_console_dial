@@ -22,7 +22,6 @@ interface AppState {
   // Persisted settings
   showGearTab: boolean;
   speedUnit: 'kmh' | 'mph';
-  connectionMode: 'peripheral' | 'charger' | 'both';
   hudAutoBrighten: boolean;
 
   // Actions (peripheral)
@@ -41,7 +40,6 @@ interface AppState {
   // Actions (settings)
   setShowGearTab: (show: boolean) => void;
   setSpeedUnit: (unit: 'kmh' | 'mph') => void;
-  setConnectionMode: (m: 'peripheral' | 'charger' | 'both') => void;
   setHudAutoBrighten: (v: boolean) => void;
   reset: () => void;
 }
@@ -65,7 +63,6 @@ export const useAppStore = create<AppState>()(
       // Initial state — settings
       showGearTab: false,
       speedUnit: 'kmh',
-      connectionMode: 'both',
       hudAutoBrighten: true,
 
       // Actions — peripheral
@@ -84,7 +81,6 @@ export const useAppStore = create<AppState>()(
       // Actions — settings
       setShowGearTab: show => set({showGearTab: show}),
       setSpeedUnit: unit => set({speedUnit: unit}),
-      setConnectionMode: m => set({connectionMode: m}),
       setHudAutoBrighten: v => set({hudAutoBrighten: v}),
       reset: () =>
         set({
@@ -105,7 +101,6 @@ export const useAppStore = create<AppState>()(
       partialize: state => ({
         showGearTab: state.showGearTab,
         speedUnit: state.speedUnit,
-        connectionMode: state.connectionMode,
         hudAutoBrighten: state.hudAutoBrighten,
       }),
     },

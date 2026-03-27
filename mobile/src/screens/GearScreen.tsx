@@ -6,11 +6,23 @@ import {Gear} from '../types';
 import {paoBleManager} from '../ble/PaoBleManager';
 import {PageHeader} from '../components/PageHeader';
 
+const gearReadbackLabels: Record<Gear, string> = {
+  [Gear.DRIVE]: 'DRIVE',
+  [Gear.NEUTRAL]: 'NEUTRAL',
+  [Gear.REVERSE]: 'REVERSE',
+  [Gear.PARK]: 'PARK',
+};
+
 export default function GearScreen() {
   const {bleStatus} = useAppStore();
   const chargerBleStatus = useAppStore(s => s.chargerBleStatus);
+  const telemetry = useAppStore(s => s.telemetry);
   const [pendingGear, setPendingGear] = useState<Gear | null>(null);
   const [confirmingGear, setConfirmingGear] = useState<Gear | null>(null);
+
+  const currentGearLabel = telemetry != null
+    ? gearReadbackLabels[telemetry.gear] ?? '---'
+    : '---';
 
   const isGearBlocked = chargerBleStatus === 'connected' && bleStatus !== 'connected';
 
@@ -54,6 +66,12 @@ export default function GearScreen() {
             </Text>
           </View>
         )}
+
+        {/* Current gear readback */}
+        <View style={styles.readbackRow}>
+          <Text style={styles.readbackLabel}>CURRENT GEAR</Text>
+          <Text style={styles.readbackValue}>{currentGearLabel}</Text>
+        </View>
 
         <View style={styles.gearLayout}>
           {/* Left column */}
@@ -138,6 +156,28 @@ const styles = StyleSheet.create({
   centeredContent: {
     flex: 1,
     padding: 16,
+  },
+  readbackRow: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A2A35',
+  },
+  readbackLabel: {
+    color: '#5BA8C4',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  readbackValue: {
+    color: '#87CEEB',
+    fontSize: 36,
+    fontWeight: '700',
+    letterSpacing: 4,
+    textTransform: 'uppercase',
   },
   gearLayout: {
     flex: 1,

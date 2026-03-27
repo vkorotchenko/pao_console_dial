@@ -134,7 +134,7 @@ export default function SettingsScreen() {
     <ScrollView
       style={styles.scrollView}
       contentContainerStyle={styles.container}>
-      <PageHeader title="Settings" bleSource="peripheral" style={{paddingHorizontal: 0}} />
+      <PageHeader title="Settings" bleSource="peripheral" showBleIndicator={false} style={{paddingHorizontal: 0}} />
       {/* Bluetooth Section */}
       <Text style={styles.sectionHeader}>Bluetooth</Text>
       <View style={styles.card}>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useState, useEffect} from 'react';
 import {View, Text, StyleSheet, ScrollView} from 'react-native';
 import {useAppStore} from '../store/useAppStore';
 import {MotorState, Gear, ChargeState} from '../types';
@@ -6,6 +6,18 @@ import {PageHeader} from '../components/PageHeader';
 
 export default function DashboardScreen() {
   const {bleStatus, telemetry} = useAppStore();
+  const [isStale, setIsStale] = useState(false);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (telemetry) {
+        setIsStale(Date.now() - telemetry.timestamp > 3000);
+      } else {
+        setIsStale(false);
+      }
+    }, 500);
+    return () => clearInterval(interval);
+  }, [telemetry]);
 
   const getMotorStateLabel = (state?: MotorState): string => {
     switch (state) {
@@ -47,6 +59,13 @@ export default function DashboardScreen() {
     <View style={styles.container}>
       <ScrollView style={styles.scrollView}>
         <PageHeader title="Live Data" bleSource="peripheral" />
+
+        {isStale && (
+          <View style={styles.staleIndicator}>
+            <Text style={styles.staleText}>● STALE</Text>
+          </View>
+        )}
+
         <View style={styles.statusRow}>
           <Text style={styles.statusLabel}>Motor: </Text>
           <Text style={styles.statusValue}>{getMotorStateLabel(telemetry?.motorState)}</Text>
@@ -82,6 +101,10 @@ export default function DashboardScreen() {
           <View style={styles.flagContainer}>
             <View style={[styles.flagDot, telemetry?.statusFlags.canConnected && styles.flagGreen]} />
             <Text style={styles.flagLabel}>CAN</Text>
+          </View>
+          <View style={styles.flagContainer}>
+            <View style={[styles.flagDot, telemetry?.statusFlags.preChargeReady && styles.flagGreen]} />
+            <Text style={styles.flagLabel}>PreChg</Text>
           </View>
         </View>
 
@@ -135,6 +158,14 @@ export default function DashboardScreen() {
           </View>
 
           <View style={styles.card}>
+            <Text style={styles.cardLabel}>DC Power</Text>
+            <Text style={styles.cardValue}>
+              {telemetry ? (telemetry.dcVoltageV * telemetry.dcCurrentA / 1000).toFixed(1) : '—'}
+            </Text>
+            <Text style={styles.cardUnit}>kW</Text>
+          </View>
+
+          <View style={styles.card}>
             <Text style={styles.cardLabel}>GPS Speed</Text>
             <Text style={styles.cardValue}>
               {telemetry ? telemetry.gpsSpeedKmh.toFixed(0) : '—'}
@@ -181,6 +212,16 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
     padding: 16,
+  },
+  staleIndicator: {
+    alignItems: 'flex-end',
+    marginBottom: 6,
+  },
+  staleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FF8C00',
+    letterSpacing: 1,
   },
   gridContainer: {
     flexDirection: 'row',

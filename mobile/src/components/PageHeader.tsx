@@ -6,6 +6,7 @@ import {useAppStore} from '../store/useAppStore';
 interface PageHeaderProps {
   title: string;
   bleSource: 'peripheral' | 'charger';
+  showBleIndicator?: boolean;
   style?: ViewStyle;
 }
 
@@ -19,7 +20,7 @@ function BleIndicator({status}: {status: string}) {
   return <Icon name="bluetooth-off" size={18} color="#444" />;
 }
 
-export function PageHeader({title, bleSource, style}: PageHeaderProps) {
+export function PageHeader({title, bleSource, showBleIndicator = true, style}: PageHeaderProps) {
   const bleStatus = useAppStore(state => state.bleStatus);
   const chargerBleStatus = useAppStore(state => state.chargerBleStatus);
   const status = bleSource === 'charger' ? chargerBleStatus : bleStatus;
@@ -27,7 +28,7 @@ export function PageHeader({title, bleSource, style}: PageHeaderProps) {
   return (
     <View style={[styles.container, style]}>
       <Text style={styles.title}>{title}</Text>
-      <BleIndicator status={status} />
+      {showBleIndicator && <BleIndicator status={status} />}
     </View>
   );
 }

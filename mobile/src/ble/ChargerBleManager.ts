@@ -1,4 +1,5 @@
-import {BleManager, Device, BleError, Subscription} from 'react-native-ble-plx';
+import {Device, BleError, Subscription} from 'react-native-ble-plx';
+import {sharedBleManager} from './bleInstance';
 import {Buffer} from 'buffer';
 import {useAppStore} from '../store/useAppStore';
 import {ChargerDirectData, ChargeState} from '../types';
@@ -45,14 +46,10 @@ function encodeBigEndian16(value: number): string {
 }
 
 export class ChargerBleManager {
-  private manager: BleManager;
+  private manager = sharedBleManager;
   private connectedDevice: Device | null = null;
   private subscriptions: Subscription[] = [];
   private disconnectSubscription: Subscription | null = null;
-
-  constructor() {
-    this.manager = new BleManager();
-  }
 
   /**
    * Scan for charger devices advertising the charger service UUID.
