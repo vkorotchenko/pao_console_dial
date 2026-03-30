@@ -23,6 +23,8 @@ export default function SettingsScreen() {
   const setSpeedUnit = useAppStore(state => state.setSpeedUnit);
   const hudAutoBrighten = useAppStore(state => state.hudAutoBrighten);
   const setHudAutoBrighten = useAppStore(state => state.setHudAutoBrighten);
+  const hudBrightenOnlyWhenCharging = useAppStore(state => state.hudBrightenOnlyWhenCharging);
+  const setHudBrightenOnlyWhenCharging = useAppStore(state => state.setHudBrightenOnlyWhenCharging);
   const [hasWriteSettings, setHasWriteSettings] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -255,7 +257,7 @@ export default function SettingsScreen() {
         <View style={styles.row}>
           <View style={styles.rowText}>
             <Text style={styles.label}>Auto-brighten HUD</Text>
-            <Text style={styles.hint}>Maximizes screen brightness while HUD is open and charging</Text>
+            <Text style={styles.hint}>Maximizes screen brightness while HUD</Text>
           </View>
           <Switch
             value={hudAutoBrighten}
@@ -263,6 +265,19 @@ export default function SettingsScreen() {
             color="#00C853"
           />
         </View>
+        {hudAutoBrighten && (
+          <View style={[styles.row, styles.subRow]}>
+            <View style={styles.rowText}>
+              <Text style={styles.label}>Only while charging</Text>
+              <Text style={styles.hint}>Limit brightness boost to when the phone is plugged in</Text>
+            </View>
+            <Switch
+              value={hudBrightenOnlyWhenCharging}
+              onValueChange={setHudBrightenOnlyWhenCharging}
+              color="#00C853"
+            />
+          </View>
+        )}
         {hudAutoBrighten && hasWriteSettings === false && (
           <View style={styles.row}>
             <View style={styles.rowText}>
@@ -314,6 +329,12 @@ const styles = StyleSheet.create({
   rowText: {
     flex: 1,
     marginRight: 12,
+  },
+  subRow: {
+    marginLeft: 16,
+    borderLeftWidth: 2,
+    borderLeftColor: '#2A2A2A',
+    paddingLeft: 12,
   },
   label: {
     fontSize: 15,

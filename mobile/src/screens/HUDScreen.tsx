@@ -112,6 +112,7 @@ export default function HUDScreen({onClose}: HUDScreenProps) {
   const telemetry = useAppStore(state => state.telemetry);
   const speedUnit = useAppStore(state => state.speedUnit);
   const hudAutoBrighten = useAppStore(state => state.hudAutoBrighten);
+  const hudBrightenOnlyWhenCharging = useAppStore(state => state.hudBrightenOnlyWhenCharging);
 
   // --- Brightness control ---
   const [isPhoneCharging, setIsPhoneCharging] = useState(false);
@@ -133,7 +134,9 @@ export default function HUDScreen({onClose}: HUDScreenProps) {
     let active = true;
 
     const applyBrightness = async () => {
-      if (isPhoneCharging && hudAutoBrighten) {
+      const shouldBrighten = hudAutoBrighten &&
+        (!hudBrightenOnlyWhenCharging || isPhoneCharging);
+      if (shouldBrighten) {
         try {
           if (originalAppBrightness.current === null) {
             originalAppBrightness.current = await ScreenBrightness.getAppBrightness();
@@ -174,7 +177,7 @@ export default function HUDScreen({onClose}: HUDScreenProps) {
     return () => {
       active = false;
     };
-  }, [isPhoneCharging, hudAutoBrighten]);
+  }, [isPhoneCharging, hudAutoBrighten, hudBrightenOnlyWhenCharging]);
 
   // Restore brightness when component unmounts
   useEffect(() => {
