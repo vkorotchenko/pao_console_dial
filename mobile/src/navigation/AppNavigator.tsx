@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {View, StyleSheet, StatusBar} from 'react-native';
 import Orientation from 'react-native-orientation-locker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -15,6 +15,7 @@ import {chargerBleManager, CHARGER_SERVICE_UUID} from '../ble/ChargerBleManager'
 import {sharedBleManager} from '../ble/bleInstance';
 import {ChargerDirectData} from '../types';
 import {requestBlePermissions} from '../utils/permissions';
+import PagerView from 'react-native-pager-view';
 import MediaControl from '../native/MediaControl';
 import _ScreenBrightness from 'react-native-screen-brightness';
 const ScreenBrightness = _ScreenBrightness as any;
@@ -40,6 +41,14 @@ export default function AppNavigator() {
   // scanTrigger lives in the store so Settings screen "Connect" buttons can
   // increment it without starting their own independent scans.
   const scanTrigger = useAppStore(state => state.scanTrigger);
+
+  const pagerRef = useRef<PagerView>(null);
+
+  const swipeScreens = useMemo<Screen[]>(() => {
+    const base: Screen[] = ['dashboard', 'charger', 'settings'];
+    if (showGearTab) { base.splice(1, 0, 'gear'); }
+    return base;
+  }, [showGearTab]);
 
   const paoRetries = useRef(0);
   const chargerRetries = useRef(0);
@@ -121,6 +130,12 @@ export default function AppNavigator() {
       ScreenBrightness.setAutoBrightnessEnabled(true).catch(() => {});
     }
   }, [currentScreen]);
+
+  useEffect(() => {
+    if (currentScreen === 'hud') { return; }
+    const idx = swipeScreens.indexOf(currentScreen);
+    if (idx >= 0) { pagerRef.current?.setPage(idx); }
+  }, [currentScreen, swipeScreens]);
 
   // On mount: request BLE permissions, restore known device IDs, attempt direct
   // reconnect, then subscribe to BLE state changes for late Bluetooth enable.
@@ -422,8 +437,8 @@ export default function AppNavigator() {
     setCurrentScreen(screen as Screen);
   };
 
-  const renderScreen = () => {
-    switch (currentScreen) {
+  const renderScreen = (screen: Screen) => {
+    switch (screen) {
       case 'hud': return <HUDScreen onClose={() => { Orientation.lockToPortrait(); setCurrentScreen('dashboard'); }} />;
       case 'charger': return <ChargerScreen />;
       case 'gear': return <GearScreen />;
@@ -432,14 +447,39 @@ export default function AppNavigator() {
     }
   };
 
+  if (currentScreen === 'hud') {
+    return (
+      <View style={styles.container}>
+        {renderScreen('hud')}
+        <FloatingIcons onNavigate={navigate} showGearTab={showGearTab} currentScreen={currentScreen} isHUD={true} />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      {renderScreen()}
-      <FloatingIcons onNavigate={navigate} showGearTab={showGearTab} currentScreen={currentScreen} isHUD={currentScreen === 'hud'} />
+      <PagerView
+        ref={pagerRef}
+        style={styles.pager}
+        initialPage={Math.max(0, swipeScreens.indexOf(currentScreen))}
+        onPageSelected={e => {
+          const screen = swipeScreens[e.nativeEvent.position];
+          if (screen) { setCurrentScreen(screen); }
+        }}
+      >
+        {swipeScreens.map(screen => (
+          <View key={screen} style={styles.page}>
+            {renderScreen(screen)}
+          </View>
+        ))}
+      </PagerView>
+      <FloatingIcons onNavigate={navigate} showGearTab={showGearTab} currentScreen={currentScreen} isHUD={false} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {flex: 1},
+  pager: {flex: 1},
+  page: {flex: 1},
 });

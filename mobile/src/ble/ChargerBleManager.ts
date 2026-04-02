@@ -23,10 +23,13 @@ const CHAR_MIN_MULT       = '0000ff22-0000-1000-8000-00805f9b34fb'; // 1-byte AS
 const CHAR_ABSOLUTE_MAX_V = '0000ff23-0000-1000-8000-00805f9b34fb'; // nominalV × maxMult, uint16 big-endian ASCII hex, ÷10
 const CHAR_ABSOLUTE_MIN_V = '0000ff24-0000-1000-8000-00805f9b34fb'; // nominalV × minMult, uint16 big-endian ASCII hex, ÷10
 
-// Write characteristics
+// Read-only config characteristics (PROPERTIES=0x12 Read+Notify — no longer writable)
 const CHAR_MAX_CURRENT    = '0000ff01-0000-1000-8000-00805f9b34fb';
 const CHAR_TARGET_PCT     = '0000ff02-0000-1000-8000-00805f9b34fb';
 const CHAR_MAX_TIME       = '0000ff03-0000-1000-8000-00805f9b34fb';
+
+// Command characteristic (Write-with-response, 4 bytes)
+const CHAR_CONFIG_CMD     = '0000ff05-0000-1000-8000-00805f9b34fb';
 
 /**
  * Decode a BLE characteristic value from base64.
@@ -61,14 +64,6 @@ function decodeCharValue(base64Value: string): number {
   return val;
 }
 
-/**
- * Encode a 16-bit big-endian value as base64 for BLE write.
- */
-function encodeBigEndian16(value: number): string {
-  const buf = Buffer.alloc(2);
-  buf.writeUInt16BE(value, 0);
-  return buf.toString('base64');
-}
 
 export class ChargerBleManager {
   private manager = sharedBleManager;
@@ -255,26 +250,16 @@ export class ChargerBleManager {
     };
   }
 
-  /**
-   * Write max current (2 bytes big-endian, value in ampsX10).
-   */
   async writeMaxCurrent(ampsX10: number): Promise<void> {
-    await this.writeChar(CHAR_MAX_CURRENT, ampsX10);
+    await this.writeConfigCmd(1, ampsX10);
   }
 
-  /**
-   * Write target SOC percentage (2 bytes big-endian, value × 10).
-   * e.g. 80% → pass 800. Firmware decodes as val / 1000 = 0.80.
-   */
   async writeTargetPct(pctX10: number): Promise<void> {
-    await this.writeChar(CHAR_TARGET_PCT, pctX10);
+    await this.writeConfigCmd(2, pctX10);
   }
 
-  /**
-   * Write max charge time (2 bytes big-endian, seconds).
-   */
   async writeMaxTime(seconds: number): Promise<void> {
-    await this.writeChar(CHAR_MAX_TIME, seconds);
+    await this.writeConfigCmd(3, seconds);
   }
 
   /**
@@ -303,20 +288,22 @@ export class ChargerBleManager {
     return this.connectedDevice !== null;
   }
 
-  private async writeChar(charUUID: string, value: number): Promise<void> {
+  private async writeConfigCmd(cmdId: number, value: number): Promise<void> {
     if (!this.connectedDevice) {
       throw new Error('ChargerBle: No device connected');
     }
-
-    const encoded = encodeBigEndian16(value);
+    const buf = Buffer.alloc(4);
+    buf[0] = cmdId;
+    buf[1] = 0;
+    buf.writeUInt16BE(value, 2);
     try {
       await this.connectedDevice.writeCharacteristicWithResponseForService(
         CHARGER_SERVICE_UUID,
-        charUUID,
-        encoded,
+        CHAR_CONFIG_CMD,
+        buf.toString('base64'),
       );
     } catch (error: any) {
-      console.error(`ChargerBle write error (${charUUID}):`, error);
+      console.error(`ChargerBle writeConfigCmd error (cmd=${cmdId}):`, error);
       throw error;
     }
   }
