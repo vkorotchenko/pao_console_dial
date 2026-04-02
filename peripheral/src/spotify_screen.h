@@ -26,6 +26,7 @@ public:
 private:
     unsigned long lastVolumeKeyTime = 0;
     static const unsigned long VOLUME_RATE_LIMIT_MS = 150;  // max one volume key per 150ms
+    bool _touchActive = false;
 };
 
 #endif /* SPOTIFY_SCREEN_H_ */

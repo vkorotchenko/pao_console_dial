@@ -29,8 +29,25 @@ bool SpotifyScreen::onClick(TFT_eSprite *sprite)
 
 void SpotifyScreen::onTouch(int x, int y, TFT_eSprite *sprite)
 {
-    // BLE keyboard functionality disabled
-    // UI remains functional for future implementation
+    if (x < 0 || y < 0) {
+        _touchActive = false;
+        return;
+    }
+    if (_touchActive) return;   // already handled this press
+    _touchActive = true;
+
+    auto inRange = [](int tx, int ty, int cx, int cy) {
+        int dx = tx - cx, dy = ty - cy;
+        return (dx*dx + dy*dy) <= (64*64);
+    };
+
+    uint8_t cmd = 0;
+    if      (inRange(x, y, 240, 245)) cmd = 0x01; // play/pause
+    else if (inRange(x, y,  95, 245)) cmd = 0x03; // prev
+    else if (inRange(x, y, 385, 245)) cmd = 0x02; // next
+    else if (inRange(x, y, 240, 405)) cmd = 0x06; // mute
+
+    if (cmd != 0) paoBle().notifyMediaCommand(cmd);
 };
 
 void SpotifyScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
@@ -75,6 +92,14 @@ void SpotifyScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
 
 void SpotifyScreen::onScroll(int x, TFT_eSprite *sprite)
 {
-    // BLE keyboard functionality disabled
-    // UI remains functional for future implementation
+    unsigned long now = millis();
+    if (now - lastVolumeKeyTime < VOLUME_RATE_LIMIT_MS) return;
+
+    int delta = x - lastScrollX;
+    lastScrollX = x;
+    if (delta == 0) return;
+
+    lastVolumeKeyTime = now;
+    uint8_t cmd = (delta > 0) ? 0x04 : 0x05;  // 0x04=vol_up, 0x05=vol_down
+    paoBle().notifyMediaCommand(cmd);
 };

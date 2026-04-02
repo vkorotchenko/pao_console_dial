@@ -11,11 +11,12 @@ import {
 } from './packets';
 import {Gear, ChargerConfig} from '../types';
 
-const PAO_SERVICE_UUID = 'c909d45a-0560-4725-85e7-c20a9bbb74c2';
+export const PAO_SERVICE_UUID = 'c909d45a-0560-4725-85e7-c20a9bbb74c2';
 const TELEMETRY_CHAR_UUID = 'c169df83-5127-46df-a18b-066672243018';
 const GEAR_CHAR_UUID = 'b2b08d43-7ec9-40c4-add2-a3a899756607';
 const CHARGER_CHAR_UUID = '06ad7ea2-24cc-46fe-b791-78167b76693e';
 const SPEED_UNIT_CHAR_UUID = 'd3b4f172-9e8a-4c0b-a1d2-7f3e8c5b2a91';
+const MEDIA_CMD_CHAR_UUID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567891';
 const DEVICE_NAME = 'PAO Console';
 
 export class PaoBleManager {
@@ -25,6 +26,7 @@ export class PaoBleManager {
   private chargerSubscription: Subscription | null = null;
   private disconnectSubscription: Subscription | null = null;
   private speedUnitSubscription: Subscription | null = null;
+  private mediaCmdSubscription: Subscription | null = null;
 
   /**
    * Scan for PAO Console devices
@@ -246,6 +248,23 @@ export class PaoBleManager {
   }
 
   /**
+   * Subscribe to media command notifications from peripheral (Spotify screen)
+   * @param callback - Called with the raw command byte when a notification arrives
+   */
+  subscribeToMediaCommands(callback: (cmd: number) => void): void {
+    if (!this.connectedDevice) return;
+    this.mediaCmdSubscription = this.connectedDevice.monitorCharacteristicForService(
+      PAO_SERVICE_UUID,
+      MEDIA_CMD_CHAR_UUID,
+      (error, characteristic) => {
+        if (error || !characteristic?.value) return;
+        const buf = Buffer.from(characteristic.value, 'base64');
+        if (buf.length >= 1) callback(buf[0]);
+      },
+    );
+  }
+
+  /**
    * Write speed unit preference to peripheral
    * @param unit - 'kmh' (0) or 'mph' (1)
    */
@@ -380,6 +399,9 @@ export class PaoBleManager {
 
     this.speedUnitSubscription?.remove();
     this.speedUnitSubscription = null;
+
+    this.mediaCmdSubscription?.remove();
+    this.mediaCmdSubscription = null;
 
     this.disconnectSubscription?.remove();
     this.disconnectSubscription = null;

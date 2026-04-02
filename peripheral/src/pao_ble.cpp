@@ -68,6 +68,12 @@ void PaoBleService::begin() {
     uint8_t initialUnit = GlobalState::getInstance().getUseMetricUnits() ? 0 : 1;
     _speedUnitChar->setValue(&initialUnit, 1);
 
+    // Media command characteristic (Notify only — peripheral pushes commands to mobile)
+    _mediaCmdChar = paoService->createCharacteristic(
+        PAO_MEDIA_CMD_CHAR_UUID,
+        NIMBLE_PROPERTY::NOTIFY
+    );
+
     paoService->start();
 
     // Start advertising
@@ -240,6 +246,13 @@ void PaoBleService::notifySpeedUnit() {
     uint8_t unit = GlobalState::getInstance().getUseMetricUnits() ? 0 : 1;
     _speedUnitChar->setValue(&unit, 1);
     _speedUnitChar->notify();
+}
+
+void PaoBleService::notifyMediaCommand(uint8_t cmd) {
+    if (!_connected || !_mediaCmdChar) return;
+    if (_mediaCmdChar->getSubscribedCount() == 0) return;
+    _mediaCmdChar->setValue(&cmd, 1);
+    _mediaCmdChar->notify();
 }
 
 void PaoBleService::packTelemetry(uint8_t* buffer) {

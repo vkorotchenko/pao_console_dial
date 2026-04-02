@@ -1,6 +1,8 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {View, StyleSheet, StatusBar} from 'react-native';
 import Orientation from 'react-native-orientation-locker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {State, Subscription} from 'react-native-ble-plx';
 import DashboardScreen from '../screens/DashboardScreen';
 import GearScreen from '../screens/GearScreen';
 import ChargerScreen from '../screens/ChargerScreen';
@@ -8,9 +10,12 @@ import SettingsScreen from '../screens/SettingsScreen';
 import HUDScreen from '../screens/HUDScreen';
 import {FloatingIcons} from '../components/FloatingIcons';
 import {useAppStore} from '../store/useAppStore';
-import {paoBleManager} from '../ble/PaoBleManager';
-import {chargerBleManager} from '../ble/ChargerBleManager';
+import {paoBleManager, PAO_SERVICE_UUID} from '../ble/PaoBleManager';
+import {chargerBleManager, CHARGER_SERVICE_UUID} from '../ble/ChargerBleManager';
+import {sharedBleManager} from '../ble/bleInstance';
 import {ChargerDirectData} from '../types';
+import {requestBlePermissions} from '../utils/permissions';
+import MediaControl from '../native/MediaControl';
 import _ScreenBrightness from 'react-native-screen-brightness';
 const ScreenBrightness = _ScreenBrightness as any;
 
@@ -19,19 +24,87 @@ type Screen = 'dashboard' | 'charger' | 'gear' | 'settings' | 'hud';
 const SCAN_TIMEOUT_MS = 15_000; // stop scanning after 15s if nothing found
 const MAX_RETRIES = 3;
 const BACKOFF_BASE_MS = 1_000;
+const DIRECT_CONNECT_TIMEOUT_MS = 5_000;
+const PAO_DEVICE_ID_KEY = 'pao_device_id';
+const CHARGER_DEVICE_ID_KEY = 'charger_device_id';
 
 export default function AppNavigator() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('hud');
+  // Bug 1 fix: track whether BLE permissions have been granted so scan effects
+  // never run before the system dialog has resolved.
+  const [permissionsGranted, setPermissionsGranted] = useState(false);
+
   const showGearTab = useAppStore(state => state.showGearTab);
   const bleStatus = useAppStore(state => state.bleStatus);
   const chargerBleStatus = useAppStore(state => state.chargerBleStatus);
 
   const paoRetries = useRef(0);
-  const paoBackoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const paoScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chargerRetries = useRef(0);
-  const chargerBackoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const chargerScanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Single shared timer refs for the unified scan effect
+  const backoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // helpers to persist known device IDs
+  const savePaoDeviceId = async (id: string) => {
+    try { await AsyncStorage.setItem(PAO_DEVICE_ID_KEY, id); } catch {}
+  };
+  const saveChargerDeviceId = async (id: string) => {
+    try { await AsyncStorage.setItem(CHARGER_DEVICE_ID_KEY, id); } catch {}
+  };
+
+  // attempt direct reconnect to a known device ID; fall back to scan if
+  // connection times out or fails.
+  const connectPaoDirectOrScan = async (knownId: string) => {
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      // Direct connect timed out — let the scan effect handle it
+      useAppStore.getState().setBleStatus('disconnected');
+    }, DIRECT_CONNECT_TIMEOUT_MS);
+
+    try {
+      await paoBleManager.connect(knownId);
+      clearTimeout(timer);
+      if (!timedOut) {
+        await savePaoDeviceId(knownId);
+        paoBleManager.subscribeToTelemetry(() => {});
+        paoBleManager.subscribeToMediaCommands(cmd => {
+          MediaControl.dispatch(cmd);
+        });
+      }
+    } catch {
+      clearTimeout(timer);
+      if (!timedOut) {
+        // Connection failed — fall through to scan by resetting to disconnected
+        useAppStore.getState().setBleStatus('disconnected');
+      }
+    }
+  };
+
+  const connectChargerDirectOrScan = async (knownId: string) => {
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      useAppStore.getState().setChargerBleStatus('disconnected');
+    }, DIRECT_CONNECT_TIMEOUT_MS);
+
+    try {
+      await chargerBleManager.connect(knownId);
+      clearTimeout(timer);
+      if (!timedOut) {
+        await saveChargerDeviceId(knownId);
+        chargerBleManager.subscribeToAll(partial => {
+          const current = useAppStore.getState().chargerData;
+          useAppStore.getState().setChargerData({...({} as any), ...current, ...partial} as ChargerDirectData);
+        });
+      }
+    } catch {
+      clearTimeout(timer);
+      if (!timedOut) {
+        useAppStore.getState().setChargerBleStatus('disconnected');
+      }
+    }
+  };
 
   useEffect(() => {
     Orientation.lockToLandscapeLeft();
@@ -45,91 +118,249 @@ export default function AppNavigator() {
     }
   }, [currentScreen]);
 
-  // Peripheral BLE — auto-reconnect with backoff and scan timeout
+  // On mount: request BLE permissions, restore known device IDs, attempt direct
+  // reconnect, then subscribe to BLE state changes for late Bluetooth enable.
+  // Bug 1 fix: setPermissionsGranted(true) only after permissions resolve — this
+  // gates the unified scan effect so it never starts before Android grants access.
   useEffect(() => {
-    if (bleStatus === 'connected') {
-      // Reset retry counter on successful connection
-      paoRetries.current = 0;
-      return;
-    }
+    let bleStateSubscription: Subscription | null = null;
+    let mounted = true;
 
-    if (bleStatus !== 'disconnected') {
-      // Don't auto-scan while connecting/scanning or on error (user retries manually)
-      return;
-    }
+    const init = async () => {
+      // Bug 1 fix: request permissions before any scan or connect attempt
+      const granted = await requestBlePermissions();
+      if (!granted || !mounted) {
+        return;
+      }
 
-    if (paoRetries.current >= MAX_RETRIES) {
-      return;
-    }
+      // Bug 1 fix: signal that permissions are available — unblocks scan effect
+      setPermissionsGranted(true);
 
-    const delay = BACKOFF_BASE_MS * Math.pow(2, paoRetries.current);
-    paoRetries.current += 1;
+      // Restore last-known device IDs and attempt direct reconnect
+      const [storedPaoId, storedChargerId] = await Promise.all([
+        AsyncStorage.getItem(PAO_DEVICE_ID_KEY).catch(() => null),
+        AsyncStorage.getItem(CHARGER_DEVICE_ID_KEY).catch(() => null),
+      ]);
 
-    paoBackoffTimer.current = setTimeout(() => {
-      paoBleManager.scan(device => {
-        if (paoScanTimer.current) {
-          clearTimeout(paoScanTimer.current);
-          paoScanTimer.current = null;
+      const bleState = await sharedBleManager.state();
+
+      if (bleState === State.PoweredOn) {
+        if (storedPaoId && mounted) {
+          connectPaoDirectOrScan(storedPaoId);
         }
-        paoBleManager.connect(device.id).then(() => {
-          paoBleManager.subscribeToTelemetry(() => {});
-        }).catch(console.error);
-      });
+        if (storedChargerId && mounted) {
+          connectChargerDirectOrScan(storedChargerId);
+        }
+      }
 
-      // Scan timeout — give up if nothing found
-      paoScanTimer.current = setTimeout(() => {
-        paoBleManager.stopScan();
-      }, SCAN_TIMEOUT_MS);
-    }, delay);
+      // Subscribe to BLE state changes — if BT was off at launch and the user
+      // turns it on, trigger a fresh connection attempt.
+      bleStateSubscription = sharedBleManager.onStateChange(newState => {
+        if (!mounted) { return; }
+        if (newState === State.PoweredOn) {
+          const {bleStatus: pStatus, chargerBleStatus: cStatus} = useAppStore.getState();
+          if (pStatus === 'disconnected' && paoRetries.current < MAX_RETRIES) {
+            // Reset retries so the existing scan effect fires again
+            paoRetries.current = 0;
+            useAppStore.getState().setBleStatus('disconnected');
+          }
+          if (cStatus === 'disconnected' && chargerRetries.current < MAX_RETRIES) {
+            chargerRetries.current = 0;
+            useAppStore.getState().setChargerBleStatus('disconnected');
+          }
+        }
+      }, true /* emitCurrentState */);
+    };
+
+    init();
 
     return () => {
-      if (paoBackoffTimer.current) { clearTimeout(paoBackoffTimer.current); }
-      if (paoScanTimer.current) { clearTimeout(paoScanTimer.current); }
+      mounted = false;
+      bleStateSubscription?.remove();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist device ID and reset retry counter when PAO connects successfully.
+  useEffect(() => {
+    if (bleStatus === 'connected') {
+      paoRetries.current = 0;
+      const id = useAppStore.getState().deviceId;
+      if (id) { savePaoDeviceId(id); }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bleStatus]);
 
-  // Charger BLE — auto-reconnect with backoff and scan timeout
+  // Persist device ID and reset retry counter when charger connects successfully.
   useEffect(() => {
     if (chargerBleStatus === 'connected') {
       chargerRetries.current = 0;
-      return;
+      const id = useAppStore.getState().chargerDeviceId;
+      if (id) { saveChargerDeviceId(id); }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chargerBleStatus]);
 
-    if (chargerBleStatus !== 'disconnected') {
-      return;
-    }
+  // Bug 2 fix — unified scan effect.
+  //
+  // Both PAO and charger previously started independent scans against the same
+  // sharedBleManager instance, causing each new startDeviceScan() call to kill
+  // the previous one. This single effect runs ONE scan covering both service
+  // UUIDs, routes discovered devices by their advertised serviceUUIDs, and
+  // manages statuses externally so internal stopScan() calls in the managers
+  // cannot reset status to 'disconnected' at the wrong moment.
+  //
+  // Bug 1 fix: guarded by permissionsGranted — will not run until the Android
+  // permissions dialog has resolved successfully.
+  useEffect(() => {
+    // Guard: permissions must be granted before any scan attempt
+    if (!permissionsGranted) { return; }
 
-    if (chargerRetries.current >= MAX_RETRIES) {
-      return;
-    }
+    const needsPao = bleStatus === 'disconnected';
+    const needsCharger = chargerBleStatus === 'disconnected';
 
-    const delay = BACKOFF_BASE_MS * Math.pow(2, chargerRetries.current);
-    chargerRetries.current += 1;
+    // Nothing to do if both are already connected/connecting/scanning/error
+    if (!needsPao && !needsCharger) { return; }
 
-    chargerBackoffTimer.current = setTimeout(() => {
-      chargerBleManager.scan((deviceId) => {
-        if (chargerScanTimer.current) {
-          clearTimeout(chargerScanTimer.current);
-          chargerScanTimer.current = null;
+    // Don't start a new scan attempt if retries are exhausted for all needed devices
+    const paoExhausted = needsPao && paoRetries.current >= MAX_RETRIES;
+    const chargerExhausted = needsCharger && chargerRetries.current >= MAX_RETRIES;
+    if ((!needsPao || paoExhausted) && (!needsCharger || chargerExhausted)) { return; }
+
+    // Compute backoff delay — use the smaller of the two relevant delays so
+    // neither device waits longer than necessary.
+    const paoDelay = needsPao && !paoExhausted
+      ? BACKOFF_BASE_MS * Math.pow(2, paoRetries.current)
+      : Infinity;
+    const chargerDelay = needsCharger && !chargerExhausted
+      ? BACKOFF_BASE_MS * Math.pow(2, chargerRetries.current)
+      : Infinity;
+    const delay = Math.min(paoDelay, chargerDelay);
+
+    // Increment retry counters for whichever devices we are about to attempt
+    if (needsPao && !paoExhausted) { paoRetries.current += 1; }
+    if (needsCharger && !chargerExhausted) { chargerRetries.current += 1; }
+
+    backoffTimer.current = setTimeout(() => {
+      // Build the service UUID filter — only scan for what we need
+      const uuidsToScan: string[] = [];
+      if (needsPao && !paoExhausted) { uuidsToScan.push(PAO_SERVICE_UUID); }
+      if (needsCharger && !chargerExhausted) { uuidsToScan.push(CHARGER_SERVICE_UUID); }
+
+      if (uuidsToScan.length === 0) { return; }
+
+      sharedBleManager.startDeviceScan(
+        uuidsToScan,
+        null,
+        async (error, device) => {
+          if (error) {
+            if (error.message?.includes('Cannot start scanning operation')) {
+              return;
+            }
+            console.warn('Unified BLE scan error:', error);
+            // Only flip to error for devices that were actually scanning
+            if (needsPao && !paoExhausted) {
+              useAppStore.getState().setBleStatus('error');
+              useAppStore.getState().setError(error.message);
+            }
+            if (needsCharger && !chargerExhausted) {
+              useAppStore.getState().setChargerBleStatus('error');
+              useAppStore.getState().setChargerError(error.message);
+            }
+            return;
+          }
+
+          if (!device) { return; }
+
+          // Normalize advertised service UUIDs to lowercase for comparison
+          const advertised = (device.serviceUUIDs ?? []).map(u => u.toLowerCase());
+          const isPao = advertised.includes(PAO_SERVICE_UUID.toLowerCase());
+          const isCharger = advertised.includes(CHARGER_SERVICE_UUID.toLowerCase());
+
+          if (isPao && needsPao && useAppStore.getState().bleStatus === 'disconnected') {
+            console.log('Unified scan: found PAO device', device.name, device.id);
+
+            // Stop the shared scan BEFORE connecting so neither manager's
+            // internal stopScan() can reset status to 'disconnected'.
+            sharedBleManager.stopDeviceScan();
+            if (scanTimer.current) {
+              clearTimeout(scanTimer.current);
+              scanTimer.current = null;
+            }
+
+            // Set status to 'connecting' NOW — connect() calls stopScan()
+            // internally which checks bleStatus === 'scanning'; since we
+            // already stopped the scan and status is 'connecting' (not
+            // 'scanning'), the internal stopScan() becomes a harmless no-op.
+            useAppStore.getState().setBleStatus('connecting');
+
+            try {
+              await paoBleManager.connect(device.id);
+              await savePaoDeviceId(device.id);
+              paoBleManager.subscribeToTelemetry(() => {});
+              paoBleManager.subscribeToMediaCommands(cmd => {
+                MediaControl.dispatch(cmd);
+              });
+            } catch (e) {
+              console.error('PAO connect error:', e);
+              useAppStore.getState().setBleStatus('disconnected');
+            }
+          }
+
+          if (isCharger && needsCharger && useAppStore.getState().chargerBleStatus === 'disconnected') {
+            console.log('Unified scan: found charger device', device.name, device.id);
+
+            // Same stop-before-connect pattern as PAO above
+            sharedBleManager.stopDeviceScan();
+            if (scanTimer.current) {
+              clearTimeout(scanTimer.current);
+              scanTimer.current = null;
+            }
+
+            useAppStore.getState().setChargerBleStatus('connecting');
+
+            try {
+              await chargerBleManager.connect(device.id);
+              await saveChargerDeviceId(device.id);
+              chargerBleManager.subscribeToAll(partial => {
+                const current = useAppStore.getState().chargerData;
+                useAppStore.getState().setChargerData({...({} as any), ...current, ...partial} as ChargerDirectData);
+              });
+            } catch (e) {
+              console.error('Charger connect error:', e);
+              useAppStore.getState().setChargerBleStatus('disconnected');
+            }
+          }
+        },
+      );
+
+      // Single scan timeout — if nothing is found in 15s, stop and reset any
+      // device that is still waiting so the backoff retry loop picks it up.
+      scanTimer.current = setTimeout(() => {
+        sharedBleManager.stopDeviceScan();
+        scanTimer.current = null;
+
+        // Only reset statuses for devices that were actively scanning (i.e.
+        // still 'disconnected' — a device found mid-scan would be 'connecting'
+        // or 'connected' by now and should not be disturbed).
+        if (needsPao && !paoExhausted && useAppStore.getState().bleStatus === 'disconnected') {
+          useAppStore.getState().setBleStatus('disconnected'); // triggers retry
         }
-        chargerBleManager.connect(deviceId).then(() => {
-          chargerBleManager.subscribeToAll(partial => {
-            const current = useAppStore.getState().chargerData;
-            useAppStore.getState().setChargerData({...({} as any), ...current, ...partial} as ChargerDirectData);
-          });
-        }).catch(console.error);
-      });
-
-      chargerScanTimer.current = setTimeout(() => {
-        chargerBleManager.stopScan();
+        if (needsCharger && !chargerExhausted && useAppStore.getState().chargerBleStatus === 'disconnected') {
+          useAppStore.getState().setChargerBleStatus('disconnected'); // triggers retry
+        }
       }, SCAN_TIMEOUT_MS);
     }, delay);
 
     return () => {
-      if (chargerBackoffTimer.current) { clearTimeout(chargerBackoffTimer.current); }
-      if (chargerScanTimer.current) { clearTimeout(chargerScanTimer.current); }
+      if (backoffTimer.current) { clearTimeout(backoffTimer.current); }
+      if (scanTimer.current) {
+        clearTimeout(scanTimer.current);
+        scanTimer.current = null;
+      }
     };
-  }, [chargerBleStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bleStatus, chargerBleStatus, permissionsGranted]);
 
   const navigate = (screen: string) => {
     if (screen === 'hud') {

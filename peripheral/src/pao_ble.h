@@ -9,6 +9,7 @@
 #define PAO_GEAR_CHAR_UUID      "b2b08d43-7ec9-40c4-add2-a3a899756607"
 #define PAO_CHARGER_CHAR_UUID   "06ad7ea2-24cc-46fe-b791-78167b76693e"
 #define PAO_SPEED_UNIT_CHAR_UUID "d3b4f172-9e8a-4c0b-a1d2-7f3e8c5b2a91"
+#define PAO_MEDIA_CMD_CHAR_UUID  "a1b2c3d4-e5f6-7890-abcd-ef1234567891"
 
 class PaoBleService : public NimBLEServerCallbacks {
 public:
@@ -18,6 +19,7 @@ public:
     void notifyTelemetry(); // Pack and notify 36-byte telemetry (call in loop ~2Hz)
     void notifyChargerIfChanged(); // Notify charger char if actuals changed
     void notifySpeedUnit(); // Notify speed unit characteristic with current GlobalState value
+    void notifyMediaCommand(uint8_t cmd); // Notify media command characteristic (0x01-0x06)
 
     bool isConnected() const;
 
@@ -33,6 +35,7 @@ private:
     NimBLECharacteristic* _gearChar = nullptr;
     NimBLECharacteristic* _chargerChar = nullptr;
     NimBLECharacteristic* _speedUnitChar = nullptr;
+    NimBLECharacteristic* _mediaCmdChar = nullptr;
     bool _connected = false;
 
     uint16_t _lastChargerActualV = 0;

@@ -4,7 +4,7 @@ import {Buffer} from 'buffer';
 import {useAppStore} from '../store/useAppStore';
 import {ChargerDirectData, ChargeState} from '../types';
 
-const CHARGER_SERVICE_UUID = '000027b0-0000-1000-8000-00805f9b34fb';
+export const CHARGER_SERVICE_UUID = '000027b0-0000-1000-8000-00805f9b34fb';
 
 // Notify characteristics
 const CHAR_TARGET_VOLTAGE = '00002a1b-0000-1000-8000-00805f9b34fb';

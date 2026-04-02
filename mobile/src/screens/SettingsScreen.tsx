@@ -2,6 +2,7 @@ import React, {useEffect, useState} from 'react';
 import {View, Text, StyleSheet, ScrollView, Alert, ActivityIndicator} from 'react-native';
 import {Switch, SegmentedButtons, Button} from 'react-native-paper';
 import {Device} from 'react-native-ble-plx';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useAppStore} from '../store/useAppStore';
 import {paoBleManager} from '../ble/PaoBleManager';
 import {chargerBleManager} from '../ble/ChargerBleManager';
@@ -9,6 +10,9 @@ import {requestBlePermissions} from '../utils/permissions';
 import _ScreenBrightness from 'react-native-screen-brightness';
 import {PageHeader} from '../components/PageHeader';
 const ScreenBrightness = _ScreenBrightness as any;
+
+const PAO_DEVICE_ID_KEY = 'pao_device_id';
+const CHARGER_DEVICE_ID_KEY = 'charger_device_id';
 
 export default function SettingsScreen() {
   const bleStatus = useAppStore(state => state.bleStatus);
@@ -96,6 +100,7 @@ export default function SettingsScreen() {
 
   const handleDisconnect = () => {
     paoBleManager.disconnect();
+    AsyncStorage.removeItem(PAO_DEVICE_ID_KEY).catch(() => {});
   };
 
   const handleScanCharger = async () => {
@@ -130,6 +135,7 @@ export default function SettingsScreen() {
   const handleDisconnectCharger = () => {
     chargerBleManager.disconnect();
     setChargerData(null);
+    AsyncStorage.removeItem(CHARGER_DEVICE_ID_KEY).catch(() => {});
   };
 
   return (
