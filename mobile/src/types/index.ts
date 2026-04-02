@@ -16,6 +16,7 @@ export enum ChargeState {
   NOT_CHARGING = 0,
   CHARGING = 1,
   COMPLETE = 2,
+  STOPPED_BY_USER = 3,
 }
 
 export interface StatusFlags {

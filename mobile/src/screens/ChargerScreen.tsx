@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useRef} from 'react';
+import React, {useState, useEffect, useRef, useCallback} from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Alert,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
+import {Button} from 'react-native-paper';
 import {useAppStore} from '../store/useAppStore';
 import {ChargeState} from '../types';
 import {chargerBleManager} from '../ble/ChargerBleManager';
@@ -79,6 +80,7 @@ export default function ChargerScreen() {
   const [committedMaxTimeSec, setCommittedMaxTimeSec] = useState(MAX_TIME_SLIDER_MAX);
 
   const [pendingSave, setPendingSave] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
 
   // Guard: seed sliders only once per connection, not on every BLE notification
   const seededRef = useRef(false);
@@ -131,6 +133,8 @@ export default function ChargerScreen() {
         return 'CHARGING';
       case ChargeState.COMPLETE:
         return 'COMPLETE';
+      case ChargeState.STOPPED_BY_USER:
+        return 'STOPPED';
       default:
         return '—';
     }
@@ -142,6 +146,8 @@ export default function ChargerScreen() {
         return '#00C853';
       case ChargeState.COMPLETE:
         return '#2196F3';
+      case ChargeState.STOPPED_BY_USER:
+        return '#c0392b';
       default:
         return '#9E9E9E';
     }
@@ -184,6 +190,23 @@ export default function ChargerScreen() {
     setDraftTargetSocPct(committedTargetSocPct);
     setDraftMaxTimeSec(committedMaxTimeSec);
   };
+
+  const handleStartStop = useCallback(async () => {
+    const currentState = chargerData?.chargeState;
+    const isCurrentlyCharging =
+      currentState === ChargeState.CHARGING ||
+      currentState === ChargeState.COMPLETE;
+    const wantEnabled = !isCurrentlyCharging;
+
+    setIsStopping(true);
+    try {
+      await chargerBleManager.writeStartStop(wantEnabled);
+    } catch (e) {
+      console.error('ChargerBleManager writeStartStop error:', e);
+    } finally {
+      setIsStopping(false);
+    }
+  }, [chargerData?.chargeState]);
 
   return (
     <View style={styles.container}>
@@ -327,6 +350,25 @@ export default function ChargerScreen() {
                 </View>
               ))}
             </View>
+          );
+        })()}
+
+        {/* Start/Stop Charger */}
+        {(() => {
+          const state = chargerData?.chargeState;
+          const isActive =
+            state === ChargeState.CHARGING || state === ChargeState.COMPLETE;
+          return (
+            <Button
+              mode="contained"
+              onPress={handleStartStop}
+              disabled={!isConnected || isStopping}
+              buttonColor={isActive ? '#c0392b' : '#27ae60'}
+              style={styles.startStopButton}
+              loading={isStopping}
+            >
+              {isActive ? 'STOP CHARGING' : 'START CHARGING'}
+            </Button>
           );
         })()}
 
@@ -702,6 +744,11 @@ const styles = StyleSheet.create({
     color: '#87CEEB',
     fontWeight: '600',
     fontSize: 15,
+  },
+  // Start/Stop button
+  startStopButton: {
+    marginHorizontal: 16,
+    marginVertical: 8,
   },
   // Max charge time control
   maxTimeGroup: {

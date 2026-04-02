@@ -262,6 +262,10 @@ export class ChargerBleManager {
     await this.writeConfigCmd(3, seconds);
   }
 
+  async writeStartStop(enabled: boolean): Promise<void> {
+    await this.writeConfigCmd(4, enabled ? 1 : 0);
+  }
+
   /**
    * Disconnect from the charger and clean up all subscriptions.
    */

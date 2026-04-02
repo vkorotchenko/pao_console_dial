@@ -46,7 +46,7 @@ export default function AppNavigator() {
 
   const swipeScreens = useMemo<Screen[]>(() => {
     const base: Screen[] = ['dashboard', 'charger', 'settings'];
-    if (showGearTab) { base.splice(1, 0, 'gear'); }
+    if (showGearTab) { base.splice(2, 0, 'gear'); }
     return base;
   }, [showGearTab]);
 
