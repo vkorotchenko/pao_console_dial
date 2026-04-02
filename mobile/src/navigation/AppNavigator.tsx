@@ -37,9 +37,13 @@ export default function AppNavigator() {
   const showGearTab = useAppStore(state => state.showGearTab);
   const bleStatus = useAppStore(state => state.bleStatus);
   const chargerBleStatus = useAppStore(state => state.chargerBleStatus);
+  // scanTrigger lives in the store so Settings screen "Connect" buttons can
+  // increment it without starting their own independent scans.
+  const scanTrigger = useAppStore(state => state.scanTrigger);
 
   const paoRetries = useRef(0);
   const chargerRetries = useRef(0);
+  const prevScanTrigger = useRef(0);
   // Single shared timer refs for the unified scan effect
   const backoffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -159,14 +163,13 @@ export default function AppNavigator() {
         if (!mounted) { return; }
         if (newState === State.PoweredOn) {
           const {bleStatus: pStatus, chargerBleStatus: cStatus} = useAppStore.getState();
-          if (pStatus === 'disconnected' && paoRetries.current < MAX_RETRIES) {
-            // Reset retries so the existing scan effect fires again
+          if (pStatus === 'disconnected' || pStatus === 'error') {
             paoRetries.current = 0;
-            useAppStore.getState().setBleStatus('disconnected');
+            useAppStore.getState().incrementScanTrigger();
           }
-          if (cStatus === 'disconnected' && chargerRetries.current < MAX_RETRIES) {
+          if (cStatus === 'disconnected' || cStatus === 'error') {
             chargerRetries.current = 0;
-            useAppStore.getState().setChargerBleStatus('disconnected');
+            useAppStore.getState().incrementScanTrigger();
           }
         }
       }, true /* emitCurrentState */);
@@ -187,6 +190,12 @@ export default function AppNavigator() {
       paoRetries.current = 0;
       const id = useAppStore.getState().deviceId;
       if (id) { savePaoDeviceId(id); }
+      // PAO status transitions (disconnected → connecting → connected) re-run the
+      // unified scan effect and consume charger retries as collateral damage. Reset
+      // charger retries now so it gets fresh attempts from this stable connected state.
+      if (useAppStore.getState().chargerBleStatus === 'disconnected') {
+        chargerRetries.current = 0;
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bleStatus]);
@@ -216,8 +225,17 @@ export default function AppNavigator() {
     // Guard: permissions must be granted before any scan attempt
     if (!permissionsGranted) { return; }
 
-    const needsPao = bleStatus === 'disconnected';
-    const needsCharger = chargerBleStatus === 'disconnected';
+    // Manual scan request: reset retry counters so a fresh set of 3 attempts begins
+    if (scanTrigger !== prevScanTrigger.current) {
+      prevScanTrigger.current = scanTrigger;
+      paoRetries.current = 0;
+      chargerRetries.current = 0;
+    }
+
+    // Bug 2 fix: treat 'error' the same as 'disconnected' so a failed connect
+    // attempt is retried by the unified scan rather than being stuck forever.
+    const needsPao = bleStatus === 'disconnected' || bleStatus === 'error';
+    const needsCharger = chargerBleStatus === 'disconnected' || chargerBleStatus === 'error';
 
     // Nothing to do if both are already connected/connecting/scanning/error
     if (!needsPao && !needsCharger) { return; }
@@ -242,12 +260,17 @@ export default function AppNavigator() {
     if (needsCharger && !chargerExhausted) { chargerRetries.current += 1; }
 
     backoffTimer.current = setTimeout(() => {
-      // Build the service UUID filter — only scan for what we need
-      const uuidsToScan: string[] = [];
-      if (needsPao && !paoExhausted) { uuidsToScan.push(PAO_SERVICE_UUID); }
-      if (needsCharger && !chargerExhausted) { uuidsToScan.push(CHARGER_SERVICE_UUID); }
+      // Adafruit Bluefruit SPI puts its UUID in the scan response, not primary advertisement.
+      // Android UUID filters only match primary advertisement — CHARGER_SERVICE_UUID as a filter
+      // will never return the charger device. Use null (scan all) whenever charger is needed.
+      // PAO_SERVICE_UUID is safe to filter on because PAO includes it in primary advertisement.
+      const uuidsToScan: string[] | null =
+        (needsCharger && !chargerExhausted)
+          ? null                                                   // scan all — charger UUID is in scan response
+          : (needsPao && !paoExhausted) ? [PAO_SERVICE_UUID]      // PAO only — safe to filter
+          : null;
 
-      if (uuidsToScan.length === 0) { return; }
+      if (!needsPao && !needsCharger) { return; }
 
       sharedBleManager.startDeviceScan(
         uuidsToScan,
@@ -274,8 +297,23 @@ export default function AppNavigator() {
 
           // Normalize advertised service UUIDs to lowercase for comparison
           const advertised = (device.serviceUUIDs ?? []).map(u => u.toLowerCase());
-          const isPao = advertised.includes(PAO_SERVICE_UUID.toLowerCase());
-          const isCharger = advertised.includes(CHARGER_SERVICE_UUID.toLowerCase());
+
+          // PAO Console always includes its service UUID in the primary advertisement
+          // AND has a known device name — use either signal.
+          const isPao =
+            advertised.includes(PAO_SERVICE_UUID.toLowerCase()) ||
+            device.name === 'PAO Console';
+
+          // Charger: Adafruit Bluefruit SPI puts UUID in scan response so serviceUUIDs
+          // may be empty at callback time. Match by advertised UUID, saved device ID,
+          // or fallback (any non-PAO device when scanning with null filter for charger).
+          const savedChargerId = useAppStore.getState().chargerDeviceId;
+          const isCharger =
+            !isPao && (
+              advertised.includes(CHARGER_SERVICE_UUID.toLowerCase()) ||
+              (savedChargerId != null && device.id === savedChargerId) ||
+              device.name?.toLowerCase() === 'pao charger'
+            );
 
           if (isPao && needsPao && useAppStore.getState().bleStatus === 'disconnected') {
             console.log('Unified scan: found PAO device', device.name, device.id);
@@ -304,6 +342,16 @@ export default function AppNavigator() {
             } catch (e) {
               console.error('PAO connect error:', e);
               useAppStore.getState().setBleStatus('disconnected');
+            }
+
+            // If charger is still needed after PAO result, kick off a charger scan immediately
+            // rather than waiting for the effect's next scheduled backoff.
+            const chargerStillNeeded =
+              useAppStore.getState().chargerBleStatus === 'disconnected' ||
+              useAppStore.getState().chargerBleStatus === 'error';
+            if (chargerStillNeeded && !chargerExhausted) {
+              chargerRetries.current = 0; // reset so the next effect run starts fresh
+              useAppStore.getState().incrementScanTrigger();
             }
           }
 
@@ -334,20 +382,23 @@ export default function AppNavigator() {
         },
       );
 
-      // Single scan timeout — if nothing is found in 15s, stop and reset any
-      // device that is still waiting so the backoff retry loop picks it up.
+      // Single scan timeout — if nothing is found in 15s, stop and force the
+      // unified scan effect to re-run for any device still waiting. We use
+      // setScanTrigger instead of setting status to 'disconnected' because Zustand
+      // equality checks swallow no-op sets — if status is already 'disconnected'
+      // the effect would never re-run and the retry loop would silently stall.
       scanTimer.current = setTimeout(() => {
         sharedBleManager.stopDeviceScan();
         scanTimer.current = null;
 
-        // Only reset statuses for devices that were actively scanning (i.e.
-        // still 'disconnected' — a device found mid-scan would be 'connecting'
-        // or 'connected' by now and should not be disturbed).
-        if (needsPao && !paoExhausted && useAppStore.getState().bleStatus === 'disconnected') {
-          useAppStore.getState().setBleStatus('disconnected'); // triggers retry
-        }
-        if (needsCharger && !chargerExhausted && useAppStore.getState().chargerBleStatus === 'disconnected') {
-          useAppStore.getState().setChargerBleStatus('disconnected'); // triggers retry
+        const stillNeedsPao = needsPao && !paoExhausted &&
+          useAppStore.getState().bleStatus === 'disconnected';
+        const stillNeedsCharger = needsCharger && !chargerExhausted &&
+          useAppStore.getState().chargerBleStatus === 'disconnected';
+
+        if (stillNeedsPao || stillNeedsCharger) {
+          // Force the effect to re-run even though statuses haven't changed
+          useAppStore.getState().incrementScanTrigger();
         }
       }, SCAN_TIMEOUT_MS);
     }, delay);
@@ -360,7 +411,7 @@ export default function AppNavigator() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bleStatus, chargerBleStatus, permissionsGranted]);
+  }, [bleStatus, chargerBleStatus, permissionsGranted, scanTrigger]);
 
   const navigate = (screen: string) => {
     if (screen === 'hud') {

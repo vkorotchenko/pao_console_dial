@@ -1,7 +1,6 @@
 import React, {useEffect, useState} from 'react';
 import {View, Text, StyleSheet, ScrollView, Alert, ActivityIndicator} from 'react-native';
 import {Switch, SegmentedButtons, Button} from 'react-native-paper';
-import {Device} from 'react-native-ble-plx';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useAppStore} from '../store/useAppStore';
 import {paoBleManager} from '../ble/PaoBleManager';
@@ -19,7 +18,6 @@ export default function SettingsScreen() {
   const deviceId = useAppStore(state => state.deviceId);
   const chargerBleStatus = useAppStore(state => state.chargerBleStatus);
   const chargerDeviceId = useAppStore(state => state.chargerDeviceId);
-  const setChargerBleStatus = useAppStore(state => state.setChargerBleStatus);
   const setChargerData = useAppStore(state => state.setChargerData);
   const showGearTab = useAppStore(state => state.showGearTab);
   const setShowGearTab = useAppStore(state => state.setShowGearTab);
@@ -93,9 +91,11 @@ export default function SettingsScreen() {
       return;
     }
 
-    paoBleManager.scan((device: Device) => {
-      paoBleManager.connect(device.id).catch(console.error);
-    });
+    // Reset status so the unified scan in AppNavigator will pick it up,
+    // then bump the trigger to force the scan effect to re-run even if
+    // status was already 'disconnected'.
+    useAppStore.getState().setBleStatus('disconnected');
+    useAppStore.getState().incrementScanTrigger();
   };
 
   const handleDisconnect = () => {
@@ -121,15 +121,11 @@ export default function SettingsScreen() {
       return;
     }
 
-    setChargerBleStatus('scanning');
-    chargerBleManager.scan((deviceId, _deviceName) => {
-      chargerBleManager.connect(deviceId).then(() => {
-        chargerBleManager.subscribeToAll(partial => {
-          const current = useAppStore.getState().chargerData;
-          setChargerData({...({} as any), ...current, ...partial});
-        });
-      }).catch(console.error);
-    });
+    // Reset status so the unified scan in AppNavigator will pick it up,
+    // then bump the trigger to force the scan effect to re-run even if
+    // status was already 'disconnected'.
+    useAppStore.getState().setChargerBleStatus('disconnected');
+    useAppStore.getState().incrementScanTrigger();
   };
 
   const handleDisconnectCharger = () => {

@@ -19,6 +19,10 @@ interface AppState {
   chargerConfig: ChargerConfig | null;
   chargerData: ChargerDirectData | null;
 
+  // Scan trigger — incrementing forces the unified scan effect to re-run
+  // even when bleStatus / chargerBleStatus haven't changed value.
+  scanTrigger: number;
+
   // Persisted settings
   showGearTab: boolean;
   speedUnit: 'kmh' | 'mph';
@@ -37,6 +41,9 @@ interface AppState {
   setChargerDeviceId: (id: string | null) => void;
   setChargerError: (e: string | null) => void;
   setChargerData: (d: ChargerDirectData | null) => void;
+
+  // Actions (scan trigger)
+  incrementScanTrigger: () => void;
 
   // Actions (settings)
   setShowGearTab: (show: boolean) => void;
@@ -62,6 +69,9 @@ export const useAppStore = create<AppState>()(
       chargerError: null,
       chargerData: null,
 
+      // Initial state — scan trigger
+      scanTrigger: 0,
+
       // Initial state — settings
       showGearTab: false,
       speedUnit: 'kmh',
@@ -80,6 +90,9 @@ export const useAppStore = create<AppState>()(
       setChargerDeviceId: id => set({chargerDeviceId: id}),
       setChargerError: e => set({chargerError: e}),
       setChargerData: d => set({chargerData: d}),
+
+      // Actions — scan trigger
+      incrementScanTrigger: () => set(state => ({scanTrigger: state.scanTrigger + 1})),
 
       // Actions — settings
       setShowGearTab: show => set({showGearTab: show}),

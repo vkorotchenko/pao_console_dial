@@ -20,6 +20,8 @@ const CHAR_ERROR_STATE    = '0000ff12-0000-1000-8000-00805f9b34fb';
 const CHAR_NOMINAL_VOLT   = '0000ff20-0000-1000-8000-00805f9b34fb'; // 2-byte big-endian ASCII hex, ÷10
 const CHAR_MAX_MULT       = '0000ff21-0000-1000-8000-00805f9b34fb'; // 1-byte ASCII hex, ÷100
 const CHAR_MIN_MULT       = '0000ff22-0000-1000-8000-00805f9b34fb'; // 1-byte ASCII hex, ÷100
+const CHAR_ABSOLUTE_MAX_V = '0000ff23-0000-1000-8000-00805f9b34fb'; // nominalV × maxMult, uint16 big-endian ASCII hex, ÷10
+const CHAR_ABSOLUTE_MIN_V = '0000ff24-0000-1000-8000-00805f9b34fb'; // nominalV × minMult, uint16 big-endian ASCII hex, ÷10
 
 // Write characteristics
 const CHAR_MAX_CURRENT    = '0000ff01-0000-1000-8000-00805f9b34fb';
@@ -27,13 +29,36 @@ const CHAR_TARGET_PCT     = '0000ff02-0000-1000-8000-00805f9b34fb';
 const CHAR_MAX_TIME       = '0000ff03-0000-1000-8000-00805f9b34fb';
 
 /**
- * Decode a base64 BLE value that encodes an ASCII hex string.
- * Adafruit BLE sends characteristic values as ASCII hex strings.
- * e.g. base64("1F4") → 0x1F4 → 500 (÷10 = 50.0)
+ * Decode a BLE characteristic value from base64.
+ * Handles both Adafruit ASCII-hex-string format ("C8" stored as ASCII [0x43,0x38])
+ * and raw binary format (0xC8 stored as binary byte [0xC8]).
+ * Auto-detects which format by checking if all bytes are valid ASCII hex characters.
  */
-function decodeAsciiHex(base64Value: string): number {
-  const ascii = Buffer.from(base64Value, 'base64').toString('ascii').trim();
-  return parseInt(ascii, 16);
+function decodeCharValue(base64Value: string): number {
+  const bytes = Buffer.from(base64Value, 'base64');
+  if (bytes.length === 0) return 0;
+
+  // Check if all bytes are valid ASCII hex characters (0-9, A-F, a-f)
+  const allAsciiHex = bytes.every(
+    b =>
+      (b >= 0x30 && b <= 0x39) || // '0'-'9'
+      (b >= 0x41 && b <= 0x46) || // 'A'-'F'
+      (b >= 0x61 && b <= 0x66),   // 'a'-'f'
+  );
+
+  if (allAsciiHex) {
+    // ASCII hex string: "C8" → 200, "0C80" → 3200
+    const ascii = bytes.toString('ascii').trim();
+    const parsed = parseInt(ascii, 16);
+    if (!isNaN(parsed)) return parsed;
+  }
+
+  // Raw binary big-endian: [0xC8] → 200, [0x0D, 0x8A] → 3466
+  let val = 0;
+  for (const b of bytes) {
+    val = (val << 8) | b;
+  }
+  return val;
 }
 
 /**
@@ -154,47 +179,80 @@ export class ChargerBleManager {
     };
 
     monitor(CHAR_TARGET_VOLTAGE, raw => ({
-      targetVoltageV: decodeAsciiHex(raw) / 10,
+      targetVoltageV: decodeCharValue(raw) / 10,
     }));
 
     monitor(CHAR_TARGET_AMPS, raw => ({
-      targetAmpsA: decodeAsciiHex(raw) / 10,
+      targetAmpsA: decodeCharValue(raw) / 10,
     }));
 
     monitor(CHAR_CURRENT_VOLTAGE, raw => ({
-      currentVoltageV: decodeAsciiHex(raw) / 10,
+      currentVoltageV: decodeCharValue(raw) / 10,
     }));
 
     monitor(CHAR_CURRENT_AMPS, raw => ({
-      currentAmpsA: decodeAsciiHex(raw) / 10,
+      currentAmpsA: decodeCharValue(raw) / 10,
     }));
 
     monitor(CHAR_RUNNING_TIME, raw => ({
-      runningTimeSeconds: decodeAsciiHex(raw),
+      runningTimeSeconds: decodeCharValue(raw),
     }));
 
     monitor(CHAR_CHARGE_STATE, raw => ({
-      chargeState: decodeAsciiHex(raw) as ChargeState,
+      chargeState: decodeCharValue(raw) as ChargeState,
     }));
 
     monitor(CHAR_SOC_PERCENT, raw => ({
-      socPercent: decodeAsciiHex(raw),
+      socPercent: decodeCharValue(raw),
     }));
 
     monitor(CHAR_ERROR_STATE, raw => ({
-      errorState: decodeAsciiHex(raw),
+      errorState: decodeCharValue(raw),
     }));
 
     monitor(CHAR_NOMINAL_VOLT, raw => ({
-      nominalVoltageV: decodeAsciiHex(raw) / 10,
+      nominalVoltageV: decodeCharValue(raw) / 10,
     }));
 
     monitor(CHAR_MAX_MULT, raw => ({
-      maxMultiplier: decodeAsciiHex(raw) / 100,
+      maxMultiplier: decodeCharValue(raw) / 100,
     }));
     monitor(CHAR_MIN_MULT, raw => ({
-      minMultiplier: decodeAsciiHex(raw) / 100,
+      minMultiplier: decodeCharValue(raw) / 100,
     }));
+    monitor(CHAR_ABSOLUTE_MAX_V, raw => ({
+      absoluteMaxV: decodeCharValue(raw) / 10,
+    }));
+    monitor(CHAR_ABSOLUTE_MIN_V, raw => ({
+      absoluteMinV: decodeCharValue(raw) / 10,
+    }));
+  }
+
+  /**
+   * Read the current config values from the writable characteristics.
+   * These are initialized at charger boot from EEPROM, so they reflect
+   * the actual configured values — correct source for seeding sliders.
+   */
+  async readConfigValues(): Promise<{
+    maxCurrentA: number;
+    targetSocPct: number;
+    maxTimeSec: number;
+  }> {
+    if (!this.connectedDevice) {
+      throw new Error('ChargerBle: Not connected');
+    }
+
+    const [ampChar, pctChar, timeChar] = await Promise.all([
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_MAX_CURRENT),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_TARGET_PCT),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_MAX_TIME),
+    ]);
+
+    return {
+      maxCurrentA: decodeCharValue(ampChar.value ?? '') / 10,   // 200 → 20.0 A
+      targetSocPct: decodeCharValue(pctChar.value ?? '') / 10,  // 950 → 95.0 %
+      maxTimeSec: decodeCharValue(timeChar.value ?? ''),         // 43200 → 43200 s
+    };
   }
 
   /**
@@ -205,10 +263,11 @@ export class ChargerBleManager {
   }
 
   /**
-   * Write target SOC percentage (2 bytes big-endian, value × 1000).
+   * Write target SOC percentage (2 bytes big-endian, value × 10).
+   * e.g. 80% → pass 800. Firmware decodes as val / 1000 = 0.80.
    */
-  async writeTargetPct(pctX1000: number): Promise<void> {
-    await this.writeChar(CHAR_TARGET_PCT, pctX1000);
+  async writeTargetPct(pctX10: number): Promise<void> {
+    await this.writeChar(CHAR_TARGET_PCT, pctX10);
   }
 
   /**
