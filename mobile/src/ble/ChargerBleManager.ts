@@ -23,7 +23,7 @@ const CHAR_MIN_MULT       = '0000ff22-0000-1000-8000-00805f9b34fb'; // 1-byte AS
 const CHAR_ABSOLUTE_MAX_V = '0000ff23-0000-1000-8000-00805f9b34fb'; // nominalV × maxMult, uint16 big-endian ASCII hex, ÷10
 const CHAR_ABSOLUTE_MIN_V = '0000ff24-0000-1000-8000-00805f9b34fb'; // nominalV × minMult, uint16 big-endian ASCII hex, ÷10
 
-// Read-only config characteristics (PROPERTIES=0x12 Read+Notify — no longer writable)
+// Read + Write + Notify config characteristics (PROPERTIES=0x0A — direct per-value writes, send write-back notifications)
 const CHAR_MAX_CURRENT    = '0000ff01-0000-1000-8000-00805f9b34fb';
 const CHAR_TARGET_PCT     = '0000ff02-0000-1000-8000-00805f9b34fb';
 const CHAR_MAX_TIME       = '0000ff03-0000-1000-8000-00805f9b34fb';
@@ -173,14 +173,9 @@ export class ChargerBleManager {
       this.subscriptions.push(sub);
     };
 
-    monitor(CHAR_TARGET_VOLTAGE, raw => ({
-      targetVoltageV: decodeCharValue(raw) / 10,
-    }));
-
-    monitor(CHAR_TARGET_AMPS, raw => ({
-      targetAmpsA: decodeCharValue(raw) / 10,
-    }));
-
+    // CHAR_CURRENT_VOLTAGE (0x2BED) and CHAR_CURRENT_AMPS (0x2BF0) are PROPERTIES=0x10
+    // (Notify only — not readable). They cannot be seeded via readCharacteristicForService.
+    // The UI will show '—' until the first BLE notification arrives from firmware (~1s after connect).
     monitor(CHAR_CURRENT_VOLTAGE, raw => ({
       currentVoltageV: decodeCharValue(raw) / 10,
     }));
@@ -203,23 +198,6 @@ export class ChargerBleManager {
 
     monitor(CHAR_ERROR_STATE, raw => ({
       errorState: decodeCharValue(raw),
-    }));
-
-    monitor(CHAR_NOMINAL_VOLT, raw => ({
-      nominalVoltageV: decodeCharValue(raw) / 10,
-    }));
-
-    monitor(CHAR_MAX_MULT, raw => ({
-      maxMultiplier: decodeCharValue(raw) / 100,
-    }));
-    monitor(CHAR_MIN_MULT, raw => ({
-      minMultiplier: decodeCharValue(raw) / 100,
-    }));
-    monitor(CHAR_ABSOLUTE_MAX_V, raw => ({
-      absoluteMaxV: decodeCharValue(raw) / 10,
-    }));
-    monitor(CHAR_ABSOLUTE_MIN_V, raw => ({
-      absoluteMinV: decodeCharValue(raw) / 10,
     }));
   }
 
@@ -250,20 +228,87 @@ export class ChargerBleManager {
     };
   }
 
+  /**
+   * Read all readable characteristics immediately on connect, so the UI can display
+   * state and config values without waiting for the first 1s BLE notification cycle.
+   * CHAR_CURRENT_VOLTAGE and CHAR_CURRENT_AMPS have PROPERTIES=0x10 (Notify-only)
+   * and CANNOT be read directly — excluded here.
+   * CHAR_TARGET_VOLTAGE and CHAR_TARGET_AMPS are now PROPERTIES=0x02 (Read-only)
+   * and are included here.
+   */
+  async readInitialState(): Promise<Partial<ChargerDirectData>> {
+    if (!this.connectedDevice) throw new Error('ChargerBle: Not connected');
+    const reads = await Promise.allSettled([
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_CHARGE_STATE),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_SOC_PERCENT),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_ERROR_STATE),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_NOMINAL_VOLT),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_MAX_MULT),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_MIN_MULT),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_ABSOLUTE_MAX_V),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_ABSOLUTE_MIN_V),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_TARGET_VOLTAGE),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_TARGET_AMPS),
+    ]);
+    const [cs, soc, err, nomV, maxM, minM, absMax, absMin, tVolt, tAmp] = reads;
+    return {
+      ...(cs.status === 'fulfilled' && cs.value?.value ? { chargeState: decodeCharValue(cs.value.value) as ChargeState } : {}),
+      ...(soc.status === 'fulfilled' && soc.value?.value ? { socPercent: decodeCharValue(soc.value.value) } : {}),
+      ...(err.status === 'fulfilled' && err.value?.value ? { errorState: decodeCharValue(err.value.value) } : {}),
+      ...(nomV.status === 'fulfilled' && nomV.value?.value ? { nominalVoltageV: decodeCharValue(nomV.value.value) / 10 } : {}),
+      ...(maxM.status === 'fulfilled' && maxM.value?.value ? { maxMultiplier: decodeCharValue(maxM.value.value) / 100 } : {}),
+      ...(minM.status === 'fulfilled' && minM.value?.value ? { minMultiplier: decodeCharValue(minM.value.value) / 100 } : {}),
+      ...(absMax.status === 'fulfilled' && absMax.value?.value ? { absoluteMaxV: decodeCharValue(absMax.value.value) / 10 } : {}),
+      ...(absMin.status === 'fulfilled' && absMin.value?.value ? { absoluteMinV: decodeCharValue(absMin.value.value) / 10 } : {}),
+      ...(tVolt.status === 'fulfilled' && tVolt.value?.value ? { targetVoltageV: decodeCharValue(tVolt.value.value) / 10 } : {}),
+      ...(tAmp.status === 'fulfilled' && tAmp.value?.value ? { targetAmpsA: decodeCharValue(tAmp.value.value) / 10 } : {}),
+    };
+  }
+
+  /**
+   * Re-read targetVoltageV and targetAmpsA after config is saved.
+   * These are derived from config (nomV × mult × targetPct) so they change
+   * when the user writes new config values. PROPERTIES=0x02 (Read-only) —
+   * no notification, must be read explicitly.
+   */
+  async refreshTargetReadings(): Promise<Partial<ChargerDirectData>> {
+    if (!this.connectedDevice) return {};
+    const reads = await Promise.allSettled([
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_TARGET_VOLTAGE),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_TARGET_AMPS),
+    ]);
+    const [tVolt, tAmp] = reads;
+    return {
+      ...(tVolt.status === 'fulfilled' && tVolt.value?.value ? { targetVoltageV: decodeCharValue(tVolt.value.value) / 10 } : {}),
+      ...(tAmp.status === 'fulfilled' && tAmp.value?.value ? { targetAmpsA: decodeCharValue(tAmp.value.value) / 10 } : {}),
+    };
+  }
+
   async writeMaxCurrent(ampsX10: number): Promise<void> {
-    await this.writeConfigCmd(1, ampsX10);
+    const buf = Buffer.alloc(2);
+    buf.writeUInt16BE(ampsX10, 0);
+    await this.writeChar(CHAR_MAX_CURRENT, buf);
   }
 
   async writeTargetPct(pctX10: number): Promise<void> {
-    await this.writeConfigCmd(2, pctX10);
+    const buf = Buffer.alloc(2);
+    buf.writeUInt16BE(pctX10, 0);
+    await this.writeChar(CHAR_TARGET_PCT, buf);
   }
 
   async writeMaxTime(seconds: number): Promise<void> {
-    await this.writeConfigCmd(3, seconds);
+    const buf = Buffer.alloc(2);
+    buf.writeUInt16BE(seconds, 0);
+    await this.writeChar(CHAR_MAX_TIME, buf);
   }
 
   async writeStartStop(enabled: boolean): Promise<void> {
+    // Start/stop still uses the command characteristic (0xFF05, cmd=4)
     await this.writeConfigCmd(4, enabled ? 1 : 0);
+  }
+
+  async writeResetToDefaults(): Promise<void> {
+    await this.writeConfigCmd(5, 0);
   }
 
   /**
@@ -290,6 +335,25 @@ export class ChargerBleManager {
    */
   isConnected(): boolean {
     return this.connectedDevice !== null;
+  }
+
+  /**
+   * Write a raw buffer directly to a characteristic (2-byte big-endian).
+   */
+  private async writeChar(charUUID: string, buf: Buffer): Promise<void> {
+    if (!this.connectedDevice) {
+      throw new Error('ChargerBle: Not connected');
+    }
+    try {
+      await this.connectedDevice.writeCharacteristicWithResponseForService(
+        CHARGER_SERVICE_UUID,
+        charUUID,
+        buf.toString('base64'),
+      );
+    } catch (error: any) {
+      console.error(`ChargerBle writeChar error (${charUUID}):`, error);
+      throw error;
+    }
   }
 
   private async writeConfigCmd(cmdId: number, value: number): Promise<void> {

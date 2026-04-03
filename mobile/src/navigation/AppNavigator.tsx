@@ -110,6 +110,13 @@ export default function AppNavigator() {
           const current = useAppStore.getState().chargerData;
           useAppStore.getState().setChargerData({...({} as any), ...current, ...partial} as ChargerDirectData);
         });
+        // Seed readable state immediately without waiting for first notification
+        chargerBleManager.readInitialState().then(initial => {
+          if (Object.keys(initial).length > 0) {
+            const current = useAppStore.getState().chargerData;
+            useAppStore.getState().setChargerData({...({} as any), ...current, ...initial} as ChargerDirectData);
+          }
+        }).catch(() => {}); // non-fatal
       }
     } catch {
       clearTimeout(timer);
@@ -389,6 +396,13 @@ export default function AppNavigator() {
                 const current = useAppStore.getState().chargerData;
                 useAppStore.getState().setChargerData({...({} as any), ...current, ...partial} as ChargerDirectData);
               });
+              // Seed readable state immediately without waiting for first notification
+              chargerBleManager.readInitialState().then(initial => {
+                if (Object.keys(initial).length > 0) {
+                  const current = useAppStore.getState().chargerData;
+                  useAppStore.getState().setChargerData({...({} as any), ...current, ...initial} as ChargerDirectData);
+                }
+              }).catch(() => {}); // non-fatal
             } catch (e) {
               console.error('Charger connect error:', e);
               useAppStore.getState().setChargerBleStatus('disconnected');

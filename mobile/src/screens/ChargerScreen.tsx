@@ -8,9 +8,8 @@ import {
   Alert,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
-import {Button} from 'react-native-paper';
 import {useAppStore} from '../store/useAppStore';
-import {ChargeState} from '../types';
+import {ChargeState, ChargerDirectData} from '../types';
 import {chargerBleManager} from '../ble/ChargerBleManager';
 import {PageHeader} from '../components/PageHeader';
 
@@ -23,7 +22,7 @@ const FAULT_BITS: {bit: number; label: string}[] = [
 ];
 
 const MAX_TIME_SLIDER_MIN = 900;   // 15 minutes
-const MAX_TIME_SLIDER_MAX = 87300; // 24h + 1 step sentinel = "No Limit"
+const MAX_TIME_SLIDER_MAX = 43200; // 12h sentinel = "No Limit" (maps to 0 seconds written to firmware)
 const MAX_TIME_SLIDER_STEP = 900;  // 15-minute increments
 
 function getActiveFaults(errorState: number): string[] {
@@ -111,14 +110,16 @@ export default function ChargerScreen() {
 
     chargerBleManager.readConfigValues()
       .then(cfg => {
-        setDraftMaxCurrentA(cfg.maxCurrentA);
-        setCommittedMaxCurrentA(cfg.maxCurrentA);
-        setDraftTargetSocPct(cfg.targetSocPct);
-        setCommittedTargetSocPct(cfg.targetSocPct);
+        const clampedAmp = Math.min(20, Math.max(5, cfg.maxCurrentA));
+        const clampedSoc = Math.min(100, Math.max(20, cfg.targetSocPct));
+        setDraftMaxCurrentA(clampedAmp);
+        setCommittedMaxCurrentA(clampedAmp);
+        setDraftTargetSocPct(clampedSoc);
+        setCommittedTargetSocPct(clampedSoc);
         const sliderTime =
           cfg.maxTimeSec === 0
             ? MAX_TIME_SLIDER_MAX
-            : Math.min(cfg.maxTimeSec, MAX_TIME_SLIDER_MAX - MAX_TIME_SLIDER_STEP);
+            : Math.min(MAX_TIME_SLIDER_MAX - MAX_TIME_SLIDER_STEP, Math.max(MAX_TIME_SLIDER_MIN, cfg.maxTimeSec));
         setDraftMaxTimeSec(sliderTime);
         setCommittedMaxTimeSec(sliderTime);
       })
@@ -178,6 +179,13 @@ export default function ChargerScreen() {
         await chargerBleManager.writeMaxTime(seconds);
         setCommittedMaxTimeSec(draftMaxTimeSec);
       }
+      // Re-read target voltage/amps — they're derived from config so they update after a save
+      chargerBleManager.refreshTargetReadings().then(refreshed => {
+        if (Object.keys(refreshed).length > 0) {
+          const current = useAppStore.getState().chargerData;
+          useAppStore.getState().setChargerData({ ...({} as any), ...current, ...refreshed } as ChargerDirectData);
+        }
+      }).catch(() => {}); // non-fatal
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to save configuration');
     } finally {
@@ -189,6 +197,45 @@ export default function ChargerScreen() {
     setDraftMaxCurrentA(committedMaxCurrentA);
     setDraftTargetSocPct(committedTargetSocPct);
     setDraftMaxTimeSec(committedMaxTimeSec);
+  };
+
+  const handleResetToDefaults = () => {
+    Alert.alert(
+      'Reset to Defaults',
+      'This will reset all charger config to factory defaults on the device. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await chargerBleManager.writeResetToDefaults();
+              // Force re-seed on next connect by resetting the seeded guard
+              seededRef.current = false;
+              // Try immediate re-read of config values to update sliders
+              chargerBleManager.readConfigValues().then(cfg => {
+                const clampedAmp = Math.min(20, Math.max(5, cfg.maxCurrentA));
+                const clampedSoc = Math.min(100, Math.max(20, cfg.targetSocPct));
+                setDraftMaxCurrentA(clampedAmp);
+                setCommittedMaxCurrentA(clampedAmp);
+                setDraftTargetSocPct(clampedSoc);
+                setCommittedTargetSocPct(clampedSoc);
+                const sliderTime =
+                  cfg.maxTimeSec === 0
+                    ? MAX_TIME_SLIDER_MAX
+                    : Math.min(MAX_TIME_SLIDER_MAX - MAX_TIME_SLIDER_STEP, Math.max(MAX_TIME_SLIDER_MIN, cfg.maxTimeSec));
+                setDraftMaxTimeSec(sliderTime);
+                setCommittedMaxTimeSec(sliderTime);
+                seededRef.current = true;
+              }).catch(() => {});
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to reset to defaults');
+            }
+          },
+        },
+      ],
+    );
   };
 
   const handleStartStop = useCallback(async () => {
@@ -207,6 +254,10 @@ export default function ChargerScreen() {
       setIsStopping(false);
     }
   }, [chargerData?.chargeState]);
+
+  const isActive =
+    chargerData?.chargeState === ChargeState.CHARGING ||
+    chargerData?.chargeState === ChargeState.COMPLETE;
 
   return (
     <View style={styles.container}>
@@ -318,18 +369,32 @@ export default function ChargerScreen() {
           </View>
         </View>
 
-        {/* Charge state badge */}
+        {/* Charge state badge + Start/Stop button */}
         <View style={styles.readingsContainer}>
           <View style={[styles.readingCard, styles.readingCardWide]}>
             <Text style={styles.readingLabel}>Charge State</Text>
-            <View
-              style={[
-                styles.stateBadge,
-                {backgroundColor: getChargeStateBadgeColor(chargerData?.chargeState)},
-              ]}>
-              <Text style={styles.stateBadgeText}>
-                {getChargeStateLabel(chargerData?.chargeState)}
-              </Text>
+            <View style={styles.chargeStateRow}>
+              <View
+                style={[
+                  styles.stateBadge,
+                  {backgroundColor: getChargeStateBadgeColor(chargerData?.chargeState)},
+                ]}>
+                <Text style={styles.stateBadgeText}>
+                  {getChargeStateLabel(chargerData?.chargeState)}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[
+                  styles.startStopTileBtn,
+                  {backgroundColor: isActive ? '#c0392b' : '#27ae60'},
+                  (!isConnected || isStopping || chargerData == null) && {opacity: 0.4},
+                ]}
+                onPress={handleStartStop}
+                disabled={!isConnected || isStopping || chargerData == null}>
+                <Text style={styles.startStopTileBtnText}>
+                  {isStopping ? '...' : isActive ? 'STOP CHARGING' : 'START CHARGING'}
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
@@ -350,25 +415,6 @@ export default function ChargerScreen() {
                 </View>
               ))}
             </View>
-          );
-        })()}
-
-        {/* Start/Stop Charger */}
-        {(() => {
-          const state = chargerData?.chargeState;
-          const isActive =
-            state === ChargeState.CHARGING || state === ChargeState.COMPLETE;
-          return (
-            <Button
-              mode="contained"
-              onPress={handleStartStop}
-              disabled={!isConnected || isStopping}
-              buttonColor={isActive ? '#c0392b' : '#27ae60'}
-              style={styles.startStopButton}
-              loading={isStopping}
-            >
-              {isActive ? 'STOP CHARGING' : 'START CHARGING'}
-            </Button>
           );
         })()}
 
@@ -408,7 +454,7 @@ export default function ChargerScreen() {
             </Text>
             <Slider
               style={styles.slider}
-              minimumValue={0}
+              minimumValue={20}
               maximumValue={100}
               step={5}
               value={draftTargetSocPct}
@@ -419,7 +465,7 @@ export default function ChargerScreen() {
               disabled={!isConnected}
             />
             <View style={styles.sliderBounds}>
-              <Text style={styles.sliderBoundText}>0%</Text>
+              <Text style={styles.sliderBoundText}>20%</Text>
               <Text style={styles.sliderBoundText}>100%</Text>
             </View>
           </View>
@@ -452,7 +498,7 @@ export default function ChargerScreen() {
             />
             <View style={styles.sliderBounds}>
               <Text style={styles.sliderBoundText}>15m</Text>
-              <Text style={styles.sliderBoundText}>∞</Text>
+              <Text style={styles.sliderBoundText}>12h</Text>
             </View>
           </View>
 
@@ -472,6 +518,13 @@ export default function ChargerScreen() {
               </TouchableOpacity>
             </View>
           )}
+
+          <TouchableOpacity
+            onPress={handleResetToDefaults}
+            style={styles.resetBtn}
+            disabled={!isConnected}>
+            <Text style={[styles.resetBtnText, !isConnected && {opacity: 0.4}]}>Reset to Defaults</Text>
+          </TouchableOpacity>
 
         </View>
       </ScrollView>
@@ -745,10 +798,35 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 15,
   },
-  // Start/Stop button
-  startStopButton: {
-    marginHorizontal: 16,
-    marginVertical: 8,
+  // Charge state tile row (badge + start/stop button)
+  chargeStateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  startStopTileBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  startStopTileBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  // Reset to Defaults button
+  resetBtn: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    marginTop: 4,
+  },
+  resetBtnText: {
+    color: '#FF6B6B',
+    fontSize: 13,
   },
   // Max charge time control
   maxTimeGroup: {
