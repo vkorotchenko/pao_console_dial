@@ -69,10 +69,10 @@ BO_ 2566869221 ELCON_Charger_Status: 8 ELCON
  SG_ CommTimeout : 36|1@0+ (1,0) [0|1] "" Controller
 
 BO_ 2566889701 PAO_Config_Broadcast1: 8 PaoCharger
- SG_ MaxCurrent_A : 7|16@0+ (0.1,0) [0|6553.5] "A" Controller
- SG_ NominalMaxMult : 23|16@0+ (1,0) [0|255] "" Controller
- SG_ NominalVoltage : 39|16@0+ (0.1,0) [0|6553.5] "V" Controller
- SG_ TargetVoltage_Cfg : 55|16@0+ (0.1,0) [0|6553.5] "V" Controller
+ SG_ MaxCurrent        : 7|16@0+  (0.1,0)   [0|6553.5]  "A" Controller
+ SG_ NominalMaxMult    : 23|16@0+ (0.01,0)  [0|655.35]  ""  Controller
+ SG_ NominalVoltage    : 39|16@0+ (0.1,0)   [0|6553.5]  "V" Controller
+ SG_ TargetVoltage_Cfg : 55|16@0+ (0.1,0)   [0|6553.5]  "V" Controller
 
 BO_ 2566889957 PAO_Config_Broadcast2: 8 PaoCharger
  SG_ TargetPercentage : 7|8@0+ (1,0) [0|100] "%" Controller
@@ -81,6 +81,10 @@ BO_ 2566889957 PAO_Config_Broadcast2: 8 PaoCharger
  SG_ MaxChargeTime : 39|16@0+ (1,0) [0|65535] "s" Controller
  SG_ NominalMinMult : 55|8@0+ (1,0) [0|255] "" Controller
  SG_ AutoNominalFromCan : 63|8@0+ (1,0) [0|1] "" Controller
+
+BO_ 2566890213 PAO_Config_Broadcast3: 8 PaoCharger
+ SG_ AbsoluteMaxV : 7|16@0+  (0.1,0) [0|6553.5] "V" Controller
+ SG_ AbsoluteMinV : 23|16@0+ (0.1,0) [0|6553.5] "V" Controller
 
 BO_ 2566873332 PAO_Config_Command: 8 Controller
  SG_ CommandID : 7|8@0+ (1,0) [0|3] "" PaoCharger
@@ -109,6 +113,7 @@ CM_ BO_ 2550588916 "0x1806E5F4 - PaoCharger -> ELCON charger control command, 1 
 CM_ BO_ 2566869221 "0x18FF50E5 - ELCON hardware charger status broadcast, ~1 Hz. Actual charger output voltage and current. Error flags are individual status bits in byte 4.";
 CM_ BO_ 2566889701 "0x18FFA0E5 - pao_charger config broadcast 1, 1 Hz. NominalMaxMult = max voltage multiplier *100. TargetVoltage_Cfg = configured charge target voltage.";
 CM_ BO_ 2566889957 "0x18FFA1E5 - pao_charger config broadcast 2, 1 Hz. TargetPercentage is the configured charge limit (e.g. 95%), NOT current SOC. ChargingTime = elapsed session time. MaxChargeTime = configured limit. NominalMinMult = min voltage multiplier *100. AutoNominalFromCan = 0 off, 1 on.";
+CM_ BO_ 2566890213 "0x18FFA2E5 - pao_charger config broadcast 3, 1 Hz. Absolute voltage limits computed from NominalVoltage * multipliers. Read-only.";
 CM_ BO_ 2566873332 "0x18FF60F4 - pao_console_dial -> pao_charger config command. Resent every 1s until charger confirms via 0x18FFA0E5/0x18FFA1E5 broadcast or 30s timeout.";
 
 CM_ SG_ 1616 Bat_Voltage "ISR2BatVoltageWF - filtered DC bus voltage. physical = raw * 0.1 V.";
@@ -133,8 +138,8 @@ CM_ SG_ 2566869221 Overheating "1 = charger temperature exceeded threshold.";
 CM_ SG_ 2566869221 InputVoltageWrong "1 = input voltage out of acceptable range.";
 CM_ SG_ 2566869221 ChargerOff "1 = charger off (reverse polarity protection triggered).";
 CM_ SG_ 2566869221 CommTimeout "1 = CAN communication timeout (no TCC_Control received within window).";
-CM_ SG_ 2566889701 MaxCurrent_A "Max charge current config. physical = raw * 0.1 A.";
-CM_ SG_ 2566889701 NominalMaxMult "Max voltage multiplier stored as integer*100 (e.g. 114 = 1.14). MaxVoltage = NominalVoltage * NominalMaxMult / 100.";
+CM_ SG_ 2566889701 MaxCurrent "Max charge current config. physical = raw * 0.1 A.";
+CM_ SG_ 2566889701 NominalMaxMult "Max voltage multiplier. physical = raw * 0.01 (e.g. raw 114 = 1.14). MaxVoltage = NominalVoltage * NominalMaxMult.";
 CM_ SG_ 2566889701 NominalVoltage "Nominal battery pack voltage. physical = raw * 0.1 V.";
 CM_ SG_ 2566889701 TargetVoltage_Cfg "Target charging voltage config. physical = raw * 0.1 V.";
 CM_ SG_ 2566889957 TargetPercentage "Configured charge limit 0-100%. NOT current SOC. Estimated SOC = (OutputVoltage / TargetVoltage_Cfg) * TargetPercentage.";
@@ -143,6 +148,8 @@ CM_ SG_ 2566889957 ChargingTime "Elapsed charging session time in seconds.";
 CM_ SG_ 2566889957 MaxChargeTime "Maximum allowed charge duration in seconds. Default 43200 (12 h).";
 CM_ SG_ 2566889957 NominalMinMult "Min voltage multiplier stored as integer*100 (e.g. 81 = 0.81). MinVoltage = NominalVoltage * NominalMinMult / 100.";
 CM_ SG_ 2566889957 AutoNominalFromCan "0 = use configured nominal voltage. 1 = auto-set nominal voltage from DMOC 0x650 Bat_Voltage.";
+CM_ SG_ 2566890213 AbsoluteMaxV "Absolute maximum voltage (NominalVoltage * NominalMaxMult). physical = raw * 0.1 V. Read-only.";
+CM_ SG_ 2566890213 AbsoluteMinV "Absolute minimum voltage (NominalVoltage * NominalMinMult). physical = raw * 0.1 V. Read-only.";
 CM_ SG_ 2566873332 CommandID "0x01=SetMaxChargeTime, 0x02=SetTargetPercentage, 0x03=SetMaxCurrent, 0x04=SetNominalVoltage, 0x05=SetNominalMaxMult, 0x06=SetNominalMinMult, 0x07=SetAutoNominalFromCan.";
 CM_ SG_ 2566873332 Value "cmd=1: seconds. cmd=2: target_pct*10 (e.g. 950=95%). cmd=3: 1/10 A (e.g. 150=15.0A). cmd=4: 1/10 V (e.g. 3200=320.0V). cmd=5: multiplier*100 (e.g. 114=1.14). cmd=6: multiplier*100 (e.g. 81=0.81). cmd=7: 0=off 1=on.";
 
@@ -191,8 +198,8 @@ VAL_ 2566869221 CommTimeout
  1 "Timeout" ;
 
 VAL_ 2566889957 AutoNominalFromCan
- 0 "Off"
- 1 "On" ;
+ 0 "Manual"
+ 1 "Auto" ;
 
 VAL_ 2566873332 CommandID
  1 "SetMaxChargeTime"

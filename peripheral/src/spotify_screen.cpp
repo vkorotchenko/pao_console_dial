@@ -17,14 +17,9 @@ int SPOTIFY_BUTTON_RADIUS = 64;
 
 int lastScrollX = 0;
 
-BleKeyboard bleKeyboard;
-
 void SpotifyScreen::setup(ScreenTypes::ScreenType type)
 {
     this->type = type;
-
-    bleKeyboard.setName("PAO input");
-    bleKeyboard.begin();
 };
 
 bool SpotifyScreen::onClick(TFT_eSprite *sprite)
@@ -34,39 +29,25 @@ bool SpotifyScreen::onClick(TFT_eSprite *sprite)
 
 void SpotifyScreen::onTouch(int x, int y, TFT_eSprite *sprite)
 {
-    if (!bleKeyboard.isConnected()) return;
+    if (x < 0 || y < 0) {
+        _touchActive = false;
+        return;
+    }
+    if (_touchActive) return;   // already handled this press
+    _touchActive = true;
 
-    int lastX = x + GlobalState::getInstance().getTouchXOffset();
-    int lastY = y + GlobalState::getInstance().getTouchYOffset();
+    auto inRange = [](int tx, int ty, int cx, int cy) {
+        int dx = tx - cx, dy = ty - cy;
+        return (dx*dx + dy*dy) <= (64*64);
+    };
 
-    if (lastX > NEXT_SONG_BUTTON_X - SPOTIFY_BUTTON_RADIUS &&
-        lastX < NEXT_SONG_BUTTON_X + SPOTIFY_BUTTON_RADIUS &&
-        lastY > NEXT_SONG_BUTTON_Y - SPOTIFY_BUTTON_RADIUS &&
-        lastY < NEXT_SONG_BUTTON_Y + SPOTIFY_BUTTON_RADIUS)
-    {
-        bleKeyboard.write(KEY_MEDIA_NEXT_TRACK);
-    }
-    else if (lastX > PREV_SONG_BUTTON_X - SPOTIFY_BUTTON_RADIUS &&
-        lastX < PREV_SONG_BUTTON_X + SPOTIFY_BUTTON_RADIUS &&
-        lastY > PREV_SONG_BUTTON_Y - SPOTIFY_BUTTON_RADIUS &&
-        lastY < PREV_SONG_BUTTON_Y + SPOTIFY_BUTTON_RADIUS)
-    {
-        bleKeyboard.write(KEY_MEDIA_PREVIOUS_TRACK);
-    }
-    else if (lastX > PLAY_PAUSE_BUTTON_X - SPOTIFY_BUTTON_RADIUS &&
-        lastX < PLAY_PAUSE_BUTTON_X + SPOTIFY_BUTTON_RADIUS &&
-        lastY > PLAY_PAUSE_BUTTON_Y - SPOTIFY_BUTTON_RADIUS &&
-        lastY < PLAY_PAUSE_BUTTON_Y + SPOTIFY_BUTTON_RADIUS)
-    {
-        bleKeyboard.write(KEY_MEDIA_PLAY_PAUSE);
-    }
-    else if (lastX > MUTE_BUTTON_X - SPOTIFY_BUTTON_RADIUS &&
-        lastX < MUTE_BUTTON_X + SPOTIFY_BUTTON_RADIUS &&
-        lastY > MUTE_BUTTON_Y - SPOTIFY_BUTTON_RADIUS &&
-        lastY < MUTE_BUTTON_Y + SPOTIFY_BUTTON_RADIUS)
-    {
-        bleKeyboard.write(KEY_MEDIA_MUTE);
-    }
+    uint8_t cmd = 0;
+    if      (inRange(x, y, 240, 245)) cmd = 0x01; // play/pause
+    else if (inRange(x, y,  95, 245)) cmd = 0x03; // prev
+    else if (inRange(x, y, 385, 245)) cmd = 0x02; // next
+    else if (inRange(x, y, 240, 405)) cmd = 0x06; // mute
+
+    if (cmd != 0) paoBle().notifyMediaCommand(cmd);
 };
 
 void SpotifyScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
@@ -111,28 +92,14 @@ void SpotifyScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
 
 void SpotifyScreen::onScroll(int x, TFT_eSprite *sprite)
 {
-    if (!bleKeyboard.isConnected()) return;
+    unsigned long now = millis();
+    if (now - lastVolumeKeyTime < VOLUME_RATE_LIMIT_MS) return;
 
     int delta = x - lastScrollX;
     lastScrollX = x;
-
-    // Handle encoder wraparound (359->0 or 0->359)
-    if (delta > 180) delta -= 360;
-    if (delta < -180) delta += 360;
-
     if (delta == 0) return;
 
-    // Rate-limit volume keys to avoid flooding the BLE notification queue
-    unsigned long now = millis();
-    if (now - lastVolumeKeyTime < VOLUME_RATE_LIMIT_MS) return;
     lastVolumeKeyTime = now;
-
-    if (delta > 0)
-    {
-        bleKeyboard.write(KEY_MEDIA_VOLUME_UP);
-    }
-    else
-    {
-        bleKeyboard.write(KEY_MEDIA_VOLUME_DOWN);
-    }
+    uint8_t cmd = (delta > 0) ? 0x04 : 0x05;  // 0x04=vol_up, 0x05=vol_down
+    paoBle().notifyMediaCommand(cmd);
 };
