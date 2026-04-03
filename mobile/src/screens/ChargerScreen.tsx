@@ -23,7 +23,7 @@ const FAULT_BITS: {bit: number; label: string}[] = [
 ];
 
 const MAX_TIME_SLIDER_MIN = 900;   // 15 minutes
-const MAX_TIME_SLIDER_MAX = 43200; // 12h sentinel = "No Limit" (maps to 0 seconds written to firmware)
+const MAX_TIME_SLIDER_MAX = 44100; // one step above 12h — sentinel for "No Limit" (writes 0 to firmware)
 const MAX_TIME_SLIDER_STEP = 900;  // 15-minute increments
 
 function getActiveFaults(errorState: number): string[] {
@@ -109,9 +109,9 @@ export default function ChargerScreen() {
     { name: 'min_multiplier',  char: '0xFF22', access: 'R+N', value: chargerData?.minMultiplier?.toFixed(2) ?? '—',    unit: 'x' },
     { name: 'abs_max_voltage', char: '0xFF23', access: 'R+N', value: chargerData?.absoluteMaxV?.toFixed(1) ?? '—',     unit: 'V' },
     { name: 'abs_min_voltage', char: '0xFF24', access: 'R+N', value: chargerData?.absoluteMinV?.toFixed(1) ?? '—',     unit: 'V' },
-    { name: 'max_current_cfg', char: '0xFF01', access: 'RW',  value: committedMaxCurrentA?.toFixed(1) ?? '—',          unit: 'A' },
-    { name: 'target_pct_cfg',  char: '0xFF02', access: 'RW',  value: committedTargetSocPct?.toString() ?? '—',          unit: '%' },
-    { name: 'max_time_cfg',    char: '0xFF03', access: 'RW',  value: committedMaxTimeSec?.toString() ?? '—',            unit: 's' },
+    { name: 'max_current_cfg', char: '0xFF01', access: 'RW',  value: (chargerData?.cfgMaxCurrentA ?? committedMaxCurrentA)?.toFixed(1) ?? '—',  unit: 'A' },
+    { name: 'target_pct_cfg',  char: '0xFF02', access: 'RW',  value: (chargerData?.cfgTargetSocPct ?? committedTargetSocPct)?.toString() ?? '—', unit: '%' },
+    { name: 'max_time_cfg',    char: '0xFF03', access: 'RW',  value: (chargerData?.cfgMaxTimeSec ?? committedMaxTimeSec)?.toString() ?? '—',     unit: 's' },
     { name: 'config_cmd',      char: '0xFF05', access: 'W',   value: '(write-only)',                                    unit: '' },
   ];
 
@@ -173,6 +173,32 @@ export default function ChargerScreen() {
       err: chargerData.errorState,
     }));
   }, [chargerData]);
+
+  // Sync committed values from firmware echo notifications.
+  // When firmware echoes back a written value, it reflects what was actually
+  // committed to EEPROM — update committed state so anyDirty clears correctly.
+  useEffect(() => {
+    if (chargerData?.cfgMaxCurrentA != null) {
+      setCommittedMaxCurrentA(chargerData.cfgMaxCurrentA);
+    }
+  }, [chargerData?.cfgMaxCurrentA]);
+
+  useEffect(() => {
+    if (chargerData?.cfgTargetSocPct != null) {
+      setCommittedTargetSocPct(chargerData.cfgTargetSocPct);
+    }
+  }, [chargerData?.cfgTargetSocPct]);
+
+  useEffect(() => {
+    if (chargerData?.cfgMaxTimeSec != null) {
+      const sliderTime =
+        chargerData.cfgMaxTimeSec === 0
+          ? MAX_TIME_SLIDER_MAX
+          : Math.min(MAX_TIME_SLIDER_MAX - MAX_TIME_SLIDER_STEP,
+              Math.max(MAX_TIME_SLIDER_MIN, chargerData.cfgMaxTimeSec));
+      setCommittedMaxTimeSec(sliderTime);
+    }
+  }, [chargerData?.cfgMaxTimeSec]);
 
   const getChargeStateLabel = (state?: ChargeState): string => {
     switch (state) {
@@ -543,7 +569,7 @@ export default function ChargerScreen() {
             />
             <View style={styles.sliderBounds}>
               <Text style={styles.sliderBoundText}>15m</Text>
-              <Text style={styles.sliderBoundText}>12h</Text>
+              <Text style={styles.sliderBoundText}>No limit</Text>
             </View>
           </View>
 

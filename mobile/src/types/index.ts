@@ -75,6 +75,9 @@ export interface ChargerDirectData {
   minMultiplier?: number;       // from char 0xFF22 (1-byte ASCII hex, ÷100, e.g. 81 → 0.81)
   absoluteMaxV?: number;        // from char 0xFF23 (nominalV × maxMult, uint16 big-endian ASCII hex, ÷10)
   absoluteMinV?: number;        // from char 0xFF24 (nominalV × minMult, uint16 big-endian ASCII hex, ÷10)
+  cfgMaxCurrentA?: number;      // echo from 0xFF01 after mobile write
+  cfgTargetSocPct?: number;     // echo from 0xFF02 (raw tenths, so 950 = 95.0%)
+  cfgMaxTimeSec?: number;       // echo from 0xFF03 in seconds
 }
 
 export type BleStatus = 'disconnected' | 'scanning' | 'connecting' | 'connected' | 'error';

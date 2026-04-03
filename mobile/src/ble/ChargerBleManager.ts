@@ -221,6 +221,45 @@ export class ChargerBleManager {
   }
 
   /**
+   * Subscribe to write-back echo notifications from the config characteristics.
+   * Call this ONLY after flashing firmware with GATTADDCHAR MAX_LEN=5 for 0xFF01/02/03.
+   * Requires the nRF51822 CCCD budget — do not call alongside subscribeToAll on old firmware.
+   */
+  subscribeToConfigEcho(onData: (data: Partial<ChargerDirectData>) => void): void {
+    if (!this.connectedDevice) return;
+
+    const monitor = (charUUID: string, handler: (raw: string) => Partial<ChargerDirectData>): void => {
+      const sub = this.connectedDevice!.monitorCharacteristicForService(
+        CHARGER_SERVICE_UUID,
+        charUUID,
+        (error: BleError | null, characteristic: any) => {
+          if (error) { console.error(`ChargerBle cfg echo error (${charUUID}):`, error); return; }
+          if (characteristic?.value) {
+            try { onData(handler(characteristic.value)); } catch (e: any) { console.error(`ChargerBle cfg echo decode error (${charUUID}):`, e); }
+          }
+        },
+      );
+      this.subscriptions.push(sub);
+    };
+
+    monitor(CHAR_MAX_CURRENT, raw => {
+      const v = decodeCharValue(raw);
+      console.log(`[BleNotify] cfgMaxCurrentA b64=${raw} decoded=${v} final=${(v/10).toFixed(1)}`);
+      return { cfgMaxCurrentA: v / 10 };
+    });
+    monitor(CHAR_TARGET_PCT, raw => {
+      const v = decodeCharValue(raw);
+      console.log(`[BleNotify] cfgTargetSocPct b64=${raw} decoded=${v} final=${(v/10).toFixed(1)}`);
+      return { cfgTargetSocPct: v / 10 };
+    });
+    monitor(CHAR_MAX_TIME, raw => {
+      const v = decodeCharValue(raw);
+      console.log(`[BleNotify] cfgMaxTimeSec b64=${raw} decoded=${v}`);
+      return { cfgMaxTimeSec: v };
+    });
+  }
+
+  /**
    * Read the current config values from the writable characteristics.
    * These are initialized at charger boot from EEPROM, so they reflect
    * the actual configured values — correct source for seeding sliders.
