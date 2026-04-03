@@ -117,6 +117,17 @@ export default function AppNavigator() {
             useAppStore.getState().setChargerData({...({} as any), ...current, ...initial} as ChargerDirectData);
           }
         }).catch(() => {}); // non-fatal
+        // Re-read after 1.5 s — firmware Ble::loop() fires ~1s post-connect and
+        // populates chargeState/soc/error which start at VALUE=0 in GATT.
+        setTimeout(() => {
+          if (!chargerBleManager.isConnected()) return;
+          chargerBleManager.readInitialState().then(refreshed => {
+            if (Object.keys(refreshed).length > 0) {
+              const current = useAppStore.getState().chargerData;
+              useAppStore.getState().setChargerData({...({} as any), ...current, ...refreshed} as ChargerDirectData);
+            }
+          }).catch(() => {});
+        }, 1500);
       }
     } catch {
       clearTimeout(timer);
@@ -403,6 +414,17 @@ export default function AppNavigator() {
                   useAppStore.getState().setChargerData({...({} as any), ...current, ...initial} as ChargerDirectData);
                 }
               }).catch(() => {}); // non-fatal
+              // Re-read after 1.5 s — firmware Ble::loop() fires ~1s post-connect and
+              // populates chargeState/soc/error which start at VALUE=0 in GATT.
+              setTimeout(() => {
+                if (!chargerBleManager.isConnected()) return;
+                chargerBleManager.readInitialState().then(refreshed => {
+                  if (Object.keys(refreshed).length > 0) {
+                    const current = useAppStore.getState().chargerData;
+                    useAppStore.getState().setChargerData({...({} as any), ...current, ...refreshed} as ChargerDirectData);
+                  }
+                }).catch(() => {});
+              }, 1500);
             } catch (e) {
               console.error('Charger connect error:', e);
               useAppStore.getState().setChargerBleStatus('disconnected');

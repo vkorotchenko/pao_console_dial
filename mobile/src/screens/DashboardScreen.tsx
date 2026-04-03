@@ -3,6 +3,7 @@ import {View, Text, StyleSheet, ScrollView} from 'react-native';
 import {useAppStore} from '../store/useAppStore';
 import {MotorState, Gear, ChargeState} from '../types';
 import {PageHeader} from '../components/PageHeader';
+import {BleDebugPanel, DebugRow} from '../components/BleDebugPanel';
 
 export default function DashboardScreen() {
   const {bleStatus, telemetry} = useAppStore();
@@ -54,6 +55,33 @@ export default function DashboardScreen() {
     if (temp > 80) return '#FFD600';
     return '#FFFFFF';
   };
+
+  const TELEMETRY_CHAR = 'c169df83';
+  const DEBUG_ROWS: DebugRow[] = [
+    { name: 'speed_rpm',        char: TELEMETRY_CHAR, access: 'N', value: telemetry?.speedRpm?.toString() ?? '—',               unit: 'rpm' },
+    { name: 'motor_temp',       char: TELEMETRY_CHAR, access: 'N', value: telemetry ? telemetry.motorTempC.toFixed(1) : '—',    unit: '°C' },
+    { name: 'inverter_temp',    char: TELEMETRY_CHAR, access: 'N', value: telemetry ? telemetry.inverterTempC.toFixed(1) : '—', unit: '°C' },
+    { name: 'torque',           char: TELEMETRY_CHAR, access: 'N', value: telemetry ? telemetry.torqueNm.toFixed(1) : '—',      unit: 'Nm' },
+    { name: 'dc_voltage',       char: TELEMETRY_CHAR, access: 'N', value: telemetry ? telemetry.dcVoltageV.toFixed(1) : '—',    unit: 'V' },
+    { name: 'dc_current',       char: TELEMETRY_CHAR, access: 'N', value: telemetry ? telemetry.dcCurrentA.toFixed(1) : '—',    unit: 'A' },
+    { name: 'motor_state',      char: TELEMETRY_CHAR, access: 'N', value: telemetry?.motorState != null ? MotorState[telemetry.motorState] ?? String(telemetry.motorState) : '—', unit: '' },
+    { name: 'gear',             char: TELEMETRY_CHAR, access: 'N', value: telemetry?.gear != null ? Gear[telemetry.gear] ?? String(telemetry.gear) : '—', unit: '' },
+    { name: 'flag_running',     char: TELEMETRY_CHAR, access: 'N', value: telemetry ? (telemetry.statusFlags.running ? 'true' : 'false') : '—', unit: '' },
+    { name: 'flag_fault',       char: TELEMETRY_CHAR, access: 'N', value: telemetry ? (telemetry.statusFlags.fault ? 'true' : 'false') : '—', unit: '' },
+    { name: 'flag_warning',     char: TELEMETRY_CHAR, access: 'N', value: telemetry ? (telemetry.statusFlags.warning ? 'true' : 'false') : '—', unit: '' },
+    { name: 'flag_ready',       char: TELEMETRY_CHAR, access: 'N', value: telemetry ? (telemetry.statusFlags.ready ? 'true' : 'false') : '—', unit: '' },
+    { name: 'flag_gps_fix',     char: TELEMETRY_CHAR, access: 'N', value: telemetry ? (telemetry.statusFlags.gpsFix ? 'true' : 'false') : '—', unit: '' },
+    { name: 'flag_can',         char: TELEMETRY_CHAR, access: 'N', value: telemetry ? (telemetry.statusFlags.canConnected ? 'true' : 'false') : '—', unit: '' },
+    { name: 'flag_pre_chg',     char: TELEMETRY_CHAR, access: 'N', value: telemetry ? (telemetry.statusFlags.preChargeReady ? 'true' : 'false') : '—', unit: '' },
+    { name: 'gps_speed',        char: TELEMETRY_CHAR, access: 'N', value: telemetry ? telemetry.gpsSpeedKmh.toFixed(1) : '—',   unit: 'km/h' },
+    { name: 'gps_satellites',   char: TELEMETRY_CHAR, access: 'N', value: telemetry?.gpsSatellites?.toString() ?? '—',          unit: '' },
+    { name: 'gps_lat',          char: TELEMETRY_CHAR, access: 'N', value: telemetry ? telemetry.gpsLat.toFixed(5) : '—',        unit: '' },
+    { name: 'gps_lon',          char: TELEMETRY_CHAR, access: 'N', value: telemetry ? telemetry.gpsLon.toFixed(5) : '—',        unit: '' },
+    { name: 'gps_altitude',     char: TELEMETRY_CHAR, access: 'N', value: telemetry ? telemetry.gpsAltitudeM.toFixed(1) : '—',  unit: 'm' },
+    { name: 'charge_percent',   char: TELEMETRY_CHAR, access: 'N', value: telemetry?.chargePercent?.toString() ?? '—',          unit: '%' },
+    { name: 'charge_state',     char: TELEMETRY_CHAR, access: 'N', value: telemetry?.chargeState?.toString() ?? '—',            unit: '' },
+    { name: 'charge_err_state', char: TELEMETRY_CHAR, access: 'N', value: telemetry?.chargeErrorState != null ? `0x${telemetry.chargeErrorState.toString(16).toUpperCase().padStart(2,'0')}` : '—', unit: '' },
+  ];
 
   return (
     <View style={styles.container}>
@@ -189,6 +217,10 @@ export default function DashboardScreen() {
             <Text style={styles.cardUnit}>%</Text>
           </View>
         </View>
+        <BleDebugPanel
+          rows={DEBUG_ROWS}
+          serviceNote="Service: c909d45a-... | Char: c169df83-... (36-byte telemetry)"
+        />
       </ScrollView>
     </View>
   );

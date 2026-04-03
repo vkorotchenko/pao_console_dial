@@ -37,6 +37,12 @@ const CHAR_CONFIG_CMD     = '0000ff05-0000-1000-8000-00805f9b34fb';
  * and raw binary format (0xC8 stored as binary byte [0xC8]).
  * Auto-detects which format by checking if all bytes are valid ASCII hex characters.
  */
+function logBleRead(label: string, value: string | null | undefined, divisor = 1): void {
+  if (!value) { console.log(`[BleInit] ${label}: FAILED/NULL`); return; }
+  const raw = decodeCharValue(value);
+  console.log(`[BleInit] ${label}: b64=${value} decoded=${raw} final=${(raw / divisor).toFixed(2)}`);
+}
+
 function decodeCharValue(base64Value: string): number {
   const bytes = Buffer.from(base64Value, 'base64');
   if (bytes.length === 0) return 0;
@@ -122,6 +128,7 @@ export class ChargerBleManager {
 
       console.log('ChargerBle connected, discovering services...');
       await device.discoverAllServicesAndCharacteristics();
+      console.log('[BleManager] connected device=' + device.id);
 
       this.connectedDevice = device;
       useAppStore.getState().setChargerBleStatus('connected');
@@ -176,29 +183,41 @@ export class ChargerBleManager {
     // CHAR_CURRENT_VOLTAGE (0x2BED) and CHAR_CURRENT_AMPS (0x2BF0) are PROPERTIES=0x10
     // (Notify only — not readable). They cannot be seeded via readCharacteristicForService.
     // The UI will show '—' until the first BLE notification arrives from firmware (~1s after connect).
-    monitor(CHAR_CURRENT_VOLTAGE, raw => ({
-      currentVoltageV: decodeCharValue(raw) / 10,
-    }));
+    monitor(CHAR_CURRENT_VOLTAGE, raw => {
+      const v = decodeCharValue(raw);
+      console.log(`[BleNotify] currentVoltageV b64=${raw} decoded=${v} final=${(v/10).toFixed(1)}`);
+      return { currentVoltageV: v / 10 };
+    });
 
-    monitor(CHAR_CURRENT_AMPS, raw => ({
-      currentAmpsA: decodeCharValue(raw) / 10,
-    }));
+    monitor(CHAR_CURRENT_AMPS, raw => {
+      const v = decodeCharValue(raw);
+      console.log(`[BleNotify] currentAmpsA b64=${raw} decoded=${v} final=${(v/10).toFixed(1)}`);
+      return { currentAmpsA: v / 10 };
+    });
 
-    monitor(CHAR_RUNNING_TIME, raw => ({
-      runningTimeSeconds: decodeCharValue(raw),
-    }));
+    monitor(CHAR_RUNNING_TIME, raw => {
+      const v = decodeCharValue(raw);
+      console.log(`[BleNotify] runningTime b64=${raw} decoded=${v}`);
+      return { runningTimeSeconds: v };
+    });
 
-    monitor(CHAR_CHARGE_STATE, raw => ({
-      chargeState: decodeCharValue(raw) as ChargeState,
-    }));
+    monitor(CHAR_CHARGE_STATE, raw => {
+      const v = decodeCharValue(raw);
+      console.log(`[BleNotify] chargeState b64=${raw} decoded=${v}`);
+      return { chargeState: v as ChargeState };
+    });
 
-    monitor(CHAR_SOC_PERCENT, raw => ({
-      socPercent: decodeCharValue(raw),
-    }));
+    monitor(CHAR_SOC_PERCENT, raw => {
+      const v = decodeCharValue(raw);
+      console.log(`[BleNotify] socPercent b64=${raw} decoded=${v}`);
+      return { socPercent: v };
+    });
 
-    monitor(CHAR_ERROR_STATE, raw => ({
-      errorState: decodeCharValue(raw),
-    }));
+    monitor(CHAR_ERROR_STATE, raw => {
+      const v = decodeCharValue(raw);
+      console.log(`[BleNotify] errorState b64=${raw} decoded=${v} bits=0b${v.toString(2).padStart(8,'0')}`);
+      return { errorState: v };
+    });
   }
 
   /**
@@ -251,6 +270,15 @@ export class ChargerBleManager {
       this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_TARGET_AMPS),
     ]);
     const [cs, soc, err, nomV, maxM, minM, absMax, absMin, tVolt, tAmp] = reads;
+    logBleRead('targetVoltageV',  tVolt.status==='fulfilled' ? tVolt.value?.value : null, 10);
+    logBleRead('targetAmpsA',     tAmp.status==='fulfilled'  ? tAmp.value?.value  : null, 10);
+    logBleRead('absoluteMaxV',    absMax.status==='fulfilled'? absMax.value?.value : null, 10);
+    logBleRead('absoluteMinV',    absMin.status==='fulfilled'? absMin.value?.value : null, 10);
+    logBleRead('maxMultiplier',   maxM.status==='fulfilled'  ? maxM.value?.value  : null, 100);
+    logBleRead('minMultiplier',   minM.status==='fulfilled'  ? minM.value?.value  : null, 100);
+    logBleRead('nominalVoltageV', nomV.status==='fulfilled'  ? nomV.value?.value  : null, 10);
+    logBleRead('chargeState',     cs.status==='fulfilled'    ? cs.value?.value    : null);
+    logBleRead('errorState',      err.status==='fulfilled'   ? err.value?.value   : null);
     return {
       ...(cs.status === 'fulfilled' && cs.value?.value ? { chargeState: decodeCharValue(cs.value.value) as ChargeState } : {}),
       ...(soc.status === 'fulfilled' && soc.value?.value ? { socPercent: decodeCharValue(soc.value.value) } : {}),

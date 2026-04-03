@@ -28,6 +28,7 @@ interface AppState {
   speedUnit: 'kmh' | 'mph';
   hudAutoBrighten: boolean;
   hudBrightenOnlyWhenCharging: boolean;
+  debugBt: boolean;
 
   // Actions (peripheral)
   setBleStatus: (status: BleStatus) => void;
@@ -50,6 +51,7 @@ interface AppState {
   setSpeedUnit: (unit: 'kmh' | 'mph') => void;
   setHudAutoBrighten: (v: boolean) => void;
   setHudBrightenOnlyWhenCharging: (v: boolean) => void;
+  setDebugBt: (v: boolean) => void;
   reset: () => void;
 }
 
@@ -77,6 +79,7 @@ export const useAppStore = create<AppState>()(
       speedUnit: 'kmh',
       hudAutoBrighten: true,
       hudBrightenOnlyWhenCharging: true,
+      debugBt: false,
 
       // Actions — peripheral
       setBleStatus: status => set({bleStatus: status}),
@@ -99,6 +102,7 @@ export const useAppStore = create<AppState>()(
       setSpeedUnit: unit => set({speedUnit: unit}),
       setHudAutoBrighten: v => set({hudAutoBrighten: v}),
       setHudBrightenOnlyWhenCharging: v => set({hudBrightenOnlyWhenCharging: v}),
+      setDebugBt: v => set({debugBt: v}),
       reset: () =>
         set({
           bleStatus: 'disconnected',
@@ -120,6 +124,7 @@ export const useAppStore = create<AppState>()(
         speedUnit: state.speedUnit,
         hudAutoBrighten: state.hudAutoBrighten,
         hudBrightenOnlyWhenCharging: state.hudBrightenOnlyWhenCharging,
+        debugBt: state.debugBt,
       }),
     },
   ),

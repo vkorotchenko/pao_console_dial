@@ -13,10 +13,10 @@ export enum MotorState {
 }
 
 export enum ChargeState {
-  NOT_CHARGING = 0,
-  CHARGING = 1,
-  COMPLETE = 2,
-  STOPPED_BY_USER = 3,
+  STOPPED = 0,        // charger disabled by user
+  ENABLED_IDLE = 1,   // charger enabled, not yet charging
+  CHARGING = 2,       // actively charging
+  COMPLETE = 3,       // charge complete
 }
 
 export interface StatusFlags {

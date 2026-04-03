@@ -27,6 +27,8 @@ export default function SettingsScreen() {
   const setHudAutoBrighten = useAppStore(state => state.setHudAutoBrighten);
   const hudBrightenOnlyWhenCharging = useAppStore(state => state.hudBrightenOnlyWhenCharging);
   const setHudBrightenOnlyWhenCharging = useAppStore(state => state.setHudBrightenOnlyWhenCharging);
+  const debugBt = useAppStore(state => state.debugBt);
+  const setDebugBt = useAppStore(state => state.setDebugBt);
   const [hasWriteSettings, setHasWriteSettings] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -212,6 +214,20 @@ export default function SettingsScreen() {
               </Button>
             )}
           </View>
+        </View>
+
+        <View style={styles.divider} />
+
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>Debug BT</Text>
+            <Text style={styles.hint}>Show BLE characteristic debug panel on all screens</Text>
+          </View>
+          <Switch
+            value={debugBt}
+            onValueChange={setDebugBt}
+            color="#00C853"
+          />
         </View>
       </View>
 

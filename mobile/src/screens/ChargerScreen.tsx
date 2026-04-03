@@ -12,6 +12,7 @@ import {useAppStore} from '../store/useAppStore';
 import {ChargeState, ChargerDirectData} from '../types';
 import {chargerBleManager} from '../ble/ChargerBleManager';
 import {PageHeader} from '../components/PageHeader';
+import {BleDebugPanel, DebugRow} from '../components/BleDebugPanel';
 
 const FAULT_BITS: {bit: number; label: string}[] = [
   {bit: 0x01, label: 'Hardware failure'},
@@ -81,6 +82,39 @@ export default function ChargerScreen() {
   const [pendingSave, setPendingSave] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
 
+  const SERVICE_SHORT = '0x27B0';
+  const DEBUG_ROWS: DebugRow[] = [
+    { name: 'pv_voltage',      char: '0x2BED', access: 'N',   value: chargerData?.currentVoltageV?.toFixed(1) ?? '—',  unit: 'V' },
+    { name: 'pv_current',      char: '0x2BF0', access: 'N',   value: chargerData?.currentAmpsA?.toFixed(1) ?? '—',     unit: 'A' },
+    { name: 'running_time',    char: '0x2BEE', access: 'N',
+      value: chargerData?.runningTimeSeconds != null
+        ? new Date(chargerData.runningTimeSeconds * 1000).toISOString().substr(11, 8)
+        : '—',
+      unit: '' },
+    { name: 'target_voltage',  char: '0x2A1B', access: 'R',   value: chargerData?.targetVoltageV?.toFixed(1) ?? '—',   unit: 'V' },
+    { name: 'target_amps',     char: '0x2A1A', access: 'R',   value: chargerData?.targetAmpsA?.toFixed(1) ?? '—',      unit: 'A' },
+    { name: 'charge_state',    char: '0xFF10', access: 'R+N',
+      value: chargerData?.chargeState != null
+        ? `${ChargeState[chargerData.chargeState]} (${chargerData.chargeState})`
+        : '—',
+      unit: '' },
+    { name: 'soc_percent',     char: '0xFF11', access: 'R+N', value: chargerData?.socPercent?.toString() ?? '—',       unit: '%' },
+    { name: 'error_state',     char: '0xFF12', access: 'R+N',
+      value: chargerData?.errorState != null
+        ? `0x${chargerData.errorState.toString(16).toUpperCase().padStart(2, '0')}`
+        : '—',
+      unit: '' },
+    { name: 'nominal_voltage', char: '0xFF20', access: 'R+N', value: chargerData?.nominalVoltageV?.toFixed(1) ?? '—',  unit: 'V' },
+    { name: 'max_multiplier',  char: '0xFF21', access: 'R+N', value: chargerData?.maxMultiplier?.toFixed(2) ?? '—',    unit: 'x' },
+    { name: 'min_multiplier',  char: '0xFF22', access: 'R+N', value: chargerData?.minMultiplier?.toFixed(2) ?? '—',    unit: 'x' },
+    { name: 'abs_max_voltage', char: '0xFF23', access: 'R+N', value: chargerData?.absoluteMaxV?.toFixed(1) ?? '—',     unit: 'V' },
+    { name: 'abs_min_voltage', char: '0xFF24', access: 'R+N', value: chargerData?.absoluteMinV?.toFixed(1) ?? '—',     unit: 'V' },
+    { name: 'max_current_cfg', char: '0xFF01', access: 'RW',  value: committedMaxCurrentA?.toFixed(1) ?? '—',          unit: 'A' },
+    { name: 'target_pct_cfg',  char: '0xFF02', access: 'RW',  value: committedTargetSocPct?.toString() ?? '—',          unit: '%' },
+    { name: 'max_time_cfg',    char: '0xFF03', access: 'RW',  value: committedMaxTimeSec?.toString() ?? '—',            unit: 's' },
+    { name: 'config_cmd',      char: '0xFF05', access: 'W',   value: '(write-only)',                                    unit: '' },
+  ];
+
   // Guard: seed sliders only once per connection, not on every BLE notification
   const seededRef = useRef(false);
 
@@ -126,31 +160,37 @@ export default function ChargerScreen() {
       .catch(e => console.error('ChargerScreen: readConfigValues failed:', e));
   }, [isConnected]);
 
+  useEffect(() => {
+    if (!chargerData) return;
+    console.log('[ChargerScreen] data:', JSON.stringify({
+      tV: chargerData.targetVoltageV,
+      cV: chargerData.currentVoltageV,
+      cA: chargerData.currentAmpsA,
+      absMax: chargerData.absoluteMaxV,
+      absMin: chargerData.absoluteMinV,
+      state: chargerData.chargeState,
+      soc: chargerData.socPercent,
+      err: chargerData.errorState,
+    }));
+  }, [chargerData]);
+
   const getChargeStateLabel = (state?: ChargeState): string => {
     switch (state) {
-      case ChargeState.NOT_CHARGING:
-        return 'NOT CHARGING';
-      case ChargeState.CHARGING:
-        return 'CHARGING';
-      case ChargeState.COMPLETE:
-        return 'COMPLETE';
-      case ChargeState.STOPPED_BY_USER:
-        return 'STOPPED';
-      default:
-        return '—';
+      case ChargeState.STOPPED:       return 'STOPPED';
+      case ChargeState.ENABLED_IDLE:  return 'ENABLED';
+      case ChargeState.CHARGING:      return 'CHARGING';
+      case ChargeState.COMPLETE:      return 'COMPLETE';
+      default:                        return '—';
     }
   };
 
   const getChargeStateBadgeColor = (state?: ChargeState): string => {
     switch (state) {
-      case ChargeState.CHARGING:
-        return '#00C853';
-      case ChargeState.COMPLETE:
-        return '#2196F3';
-      case ChargeState.STOPPED_BY_USER:
-        return '#c0392b';
-      default:
-        return '#9E9E9E';
+      case ChargeState.STOPPED:       return '#c0392b';  // Red
+      case ChargeState.ENABLED_IDLE:  return '#F39C12';  // Orange
+      case ChargeState.CHARGING:      return '#00C853';  // Green
+      case ChargeState.COMPLETE:      return '#2196F3';  // Blue
+      default:                        return '#9E9E9E';  // Gray
     }
   };
 
@@ -239,11 +279,7 @@ export default function ChargerScreen() {
   };
 
   const handleStartStop = useCallback(async () => {
-    const currentState = chargerData?.chargeState;
-    const isCurrentlyCharging =
-      currentState === ChargeState.CHARGING ||
-      currentState === ChargeState.COMPLETE;
-    const wantEnabled = !isCurrentlyCharging;
+    const wantEnabled = chargerData?.chargeState === ChargeState.STOPPED;
 
     setIsStopping(true);
     try {
@@ -256,6 +292,11 @@ export default function ChargerScreen() {
   }, [chargerData?.chargeState]);
 
   const isActive =
+    chargerData?.chargeState === ChargeState.ENABLED_IDLE ||
+    chargerData?.chargeState === ChargeState.CHARGING ||
+    chargerData?.chargeState === ChargeState.COMPLETE;
+
+  const isHwEnabled =
     chargerData?.chargeState === ChargeState.CHARGING ||
     chargerData?.chargeState === ChargeState.COMPLETE;
 
@@ -348,23 +389,23 @@ export default function ChargerScreen() {
           <View style={styles.readingCard}>
             <Text style={styles.readingLabel}>Actual Voltage</Text>
             <Text style={styles.readingValue}>
-              {chargerData?.currentVoltageV != null
-                ? chargerData.currentVoltageV.toFixed(1)
+              {chargerData != null
+                ? (chargerData.currentVoltageV ?? 0).toFixed(1)
                 : '—'}
             </Text>
             <Text style={styles.readingUnit}>
-              {chargerData?.currentVoltageV != null ? 'V' : ''}
+              {chargerData != null ? 'V' : ''}
             </Text>
           </View>
           <View style={styles.readingCard}>
             <Text style={styles.readingLabel}>Actual Amps</Text>
             <Text style={styles.readingValue}>
-              {chargerData?.currentAmpsA != null
-                ? chargerData.currentAmpsA.toFixed(1)
+              {chargerData != null
+                ? (chargerData.currentAmpsA ?? 0).toFixed(1)
                 : '—'}
             </Text>
             <Text style={styles.readingUnit}>
-              {chargerData?.currentAmpsA != null ? 'A' : ''}
+              {chargerData != null ? 'A' : ''}
             </Text>
           </View>
         </View>
@@ -383,6 +424,11 @@ export default function ChargerScreen() {
                   {getChargeStateLabel(chargerData?.chargeState)}
                 </Text>
               </View>
+              <View style={[styles.enableBadge, { backgroundColor: isHwEnabled ? '#00C853' : '#9E9E9E' }]}>
+                <Text style={styles.enableBadgeText}>
+                  {'CAN: ' + (isHwEnabled ? 'ENABLED' : 'DISABLED')}
+                </Text>
+              </View>
               <TouchableOpacity
                 style={[
                   styles.startStopTileBtn,
@@ -399,15 +445,14 @@ export default function ChargerScreen() {
           </View>
         </View>
 
-        {/* Fault display — only shown when faults are present */}
+        {/* Fault display — always visible */}
         {(() => {
           const faults = getActiveFaults(chargerData?.errorState ?? 0);
-          if (faults.length === 0) {
-            return null;
-          }
           return (
-            <View style={styles.faultCard}>
-              <Text style={styles.faultTitle}>Active Faults</Text>
+            <View style={[styles.faultCard, faults.length > 0 && { borderColor: '#c0392b' }]}>
+              <Text style={[styles.faultTitle, { color: faults.length > 0 ? '#c0392b' : '#00C853' }]}>
+                {faults.length > 0 ? 'Active Faults' : 'No Active Faults'}
+              </Text>
               {faults.map((fault, i) => (
                 <View key={i} style={styles.faultRow}>
                   <Text style={styles.faultBullet}>•</Text>
@@ -527,6 +572,11 @@ export default function ChargerScreen() {
           </TouchableOpacity>
 
         </View>
+
+        <BleDebugPanel
+          rows={DEBUG_ROWS}
+          serviceNote={`Service: ${SERVICE_SHORT} (000027b0-0000-1000-8000-00805f9b34fb)`}
+        />
       </ScrollView>
     </View>
   );
@@ -827,6 +877,18 @@ const styles = StyleSheet.create({
   resetBtnText: {
     color: '#FF6B6B',
     fontSize: 13,
+  },
+  // CAN enable/disable badge
+  enableBadge: {
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    marginLeft: 8,
+  },
+  enableBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
   },
   // Max charge time control
   maxTimeGroup: {
