@@ -327,5 +327,5 @@ void Carousel<ITEM_COUNT>::drawInterpolatedPanel(TFT_eSprite* sprite, int index,
 // Explicit template instantiations for the three carousels we use
 template class Carousel<4>;   // GearScreen
 template class Carousel<5>;   // ChargeScreen
-template class Carousel<8>;   // SettingsScreen
+template class Carousel<12>;  // SettingsScreen
 template class Carousel<14>;  // DataScreen

@@ -10,9 +10,11 @@
 
 #include "global_state.h"
 #include "i2c_handler.h"
+#include "pao_ble.h"
 
 GlobalState &state = GlobalState::getInstance();
 I2CHandler i2cHandler;
+PaoBleService &paoService = PaoBleService::getInstance();
 
 int buttonState = HIGH;
 int lastButtonState = HIGH;
@@ -130,6 +132,9 @@ void setup()
   gfx->begin();
   state.setup();
   state.getCurrentScreen()->onLoad(&sprite, gfx);
+
+  // Initialize BLE with PAO service
+  paoService.begin();
 }
 
 void loop()
@@ -162,6 +167,14 @@ void loop()
 
   // Periodic I2C data exchange with controller
   i2cHandler.process();
+
+  // BLE telemetry notifications (~2 Hz)
+  static unsigned long lastTelemetryNotify = 0;
+  if (millis() - lastTelemetryNotify >= 500) {
+    lastTelemetryNotify = millis();
+    paoService.notifyTelemetry();
+    paoService.notifyChargerIfChanged();
+  }
 
   // Apply display brightness setting (0-100% → 10-bit PWM 0-1023)
   ledcWrite(PWM_CHANNEL, (state.getDisplayBrightness() * 1023) / 100);

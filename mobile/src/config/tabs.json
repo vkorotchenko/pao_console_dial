@@ -1,0 +1,8 @@
+{
+  "navigation": [
+    { "key": "dashboard", "title": "Dashboard", "focusedIcon": "car" },
+    { "key": "charger", "title": "Charger", "focusedIcon": "lightning-bolt" },
+    { "key": "gear", "title": "Gear", "focusedIcon": "power-standby" },
+    { "key": "settings", "title": "Settings", "focusedIcon": "car-wrench" }
+  ]
+}
