@@ -93,7 +93,7 @@ export const useAppStore = create<AppState>()(
       chargeTimeExtendMinutes: 15,
       notificationsEnabled: true,
       notificationMode: 'time',
-      chargeTimeWarnMinutes: 10,
+      chargeTimeWarnMinutes: 30,
       socWarnThresholdPct: 90,
 
       // Actions — peripheral
