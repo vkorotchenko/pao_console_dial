@@ -31,12 +31,12 @@ export default function SettingsScreen() {
   const setDebugBt = useAppStore(state => state.setDebugBt);
   const chargeTimeExtendMinutes = useAppStore(state => state.chargeTimeExtendMinutes);
   const setChargeTimeExtendMinutes = useAppStore(state => state.setChargeTimeExtendMinutes);
-  const chargeTimeWarnEnabled = useAppStore(state => state.chargeTimeWarnEnabled);
-  const setChargeTimeWarnEnabled = useAppStore(state => state.setChargeTimeWarnEnabled);
+  const notificationsEnabled = useAppStore(state => state.notificationsEnabled);
+  const setNotificationsEnabled = useAppStore(state => state.setNotificationsEnabled);
+  const notificationMode = useAppStore(state => state.notificationMode);
+  const setNotificationMode = useAppStore(state => state.setNotificationMode);
   const chargeTimeWarnMinutes = useAppStore(state => state.chargeTimeWarnMinutes);
   const setChargeTimeWarnMinutes = useAppStore(state => state.setChargeTimeWarnMinutes);
-  const socWarnEnabled = useAppStore(state => state.socWarnEnabled);
-  const setSocWarnEnabled = useAppStore(state => state.setSocWarnEnabled);
   const socWarnThresholdPct = useAppStore(state => state.socWarnThresholdPct);
   const setSocWarnThresholdPct = useAppStore(state => state.setSocWarnThresholdPct);
   const [hasWriteSettings, setHasWriteSettings] = useState<boolean | null>(null);
@@ -58,7 +58,6 @@ export default function SettingsScreen() {
   const [isRequestingChargerPermission, setIsRequestingChargerPermission] = useState(false);
 
   // Peripheral BLE helpers
-  // const canScan = bleStatus === 'disconnected' || bleStatus === 'error';
   const canDisconnect =
     bleStatus === 'connected' || bleStatus === 'connecting' || bleStatus === 'scanning';
   const isScanning = bleStatus === 'scanning';
@@ -71,7 +70,6 @@ export default function SettingsScreen() {
       : '#F44336';
 
   // Charger BLE helpers
-  // const canScanCharger = chargerBleStatus === 'disconnected' || chargerBleStatus === 'error';
   const canDisconnectCharger =
     chargerBleStatus === 'connected' ||
     chargerBleStatus === 'connecting' ||
@@ -103,9 +101,6 @@ export default function SettingsScreen() {
       return;
     }
 
-    // Reset status so the unified scan in AppNavigator will pick it up,
-    // then bump the trigger to force the scan effect to re-run even if
-    // status was already 'disconnected'.
     useAppStore.getState().setBleStatus('disconnected');
     useAppStore.getState().incrementScanTrigger();
   };
@@ -133,9 +128,6 @@ export default function SettingsScreen() {
       return;
     }
 
-    // Reset status so the unified scan in AppNavigator will pick it up,
-    // then bump the trigger to force the scan effect to re-run even if
-    // status was already 'disconnected'.
     useAppStore.getState().setChargerBleStatus('disconnected');
     useAppStore.getState().incrementScanTrigger();
   };
@@ -151,6 +143,7 @@ export default function SettingsScreen() {
       style={styles.scrollView}
       contentContainerStyle={styles.container}>
       <PageHeader title="Settings" bleSource="peripheral" showBleIndicator={false} style={{paddingHorizontal: 0}} />
+
       {/* Bluetooth Section */}
       <Text style={styles.sectionHeader}>Bluetooth</Text>
       <View style={styles.card}>
@@ -281,64 +274,63 @@ export default function SettingsScreen() {
       <View style={styles.card}>
         <View style={styles.row}>
           <View style={styles.rowText}>
-            <Text style={styles.label}>Charge time warning</Text>
-            <Text style={styles.hint}>Alert before max charge time runs out</Text>
+            <Text style={styles.label}>Enable notifications</Text>
+            <Text style={styles.hint}>Alert when a charging milestone is reached</Text>
           </View>
           <Switch
-            value={chargeTimeWarnEnabled}
-            onValueChange={setChargeTimeWarnEnabled}
+            value={notificationsEnabled}
+            onValueChange={setNotificationsEnabled}
             color="#00C853"
           />
         </View>
-        {chargeTimeWarnEnabled && (
-          <View style={[styles.row, styles.subRow]}>
-            <View style={styles.rowText}>
-              <Text style={styles.label}>How early to warn</Text>
-            </View>
-            <View style={styles.segmentedCompact}>
+        {notificationsEnabled && (
+          <>
+            <Text style={styles.subLabel}>Alert type</Text>
+            <View style={styles.segmentedWrapper}>
               <SegmentedButtons
-                value={String(chargeTimeWarnMinutes)}
-                onValueChange={val => setChargeTimeWarnMinutes(Number(val))}
+                value={notificationMode}
+                onValueChange={val => setNotificationMode(val as 'time' | 'soc')}
                 buttons={[
-                  {value: '5',  label: '5m'},
-                  {value: '10', label: '10m'},
-                  {value: '15', label: '15m'},
-                  {value: '30', label: '30m'},
+                  {value: 'time', label: 'Time remaining'},
+                  {value: 'soc',  label: 'Charge level'},
                 ]}
               />
             </View>
-          </View>
-        )}
-        <View style={styles.divider} />
-        <View style={styles.row}>
-          <View style={styles.rowText}>
-            <Text style={styles.label}>SOC threshold alert</Text>
-            <Text style={styles.hint}>Notify when charge reaches a set level</Text>
-          </View>
-          <Switch
-            value={socWarnEnabled}
-            onValueChange={setSocWarnEnabled}
-            color="#00C853"
-          />
-        </View>
-        {socWarnEnabled && (
-          <View style={[styles.row, styles.subRow]}>
-            <View style={styles.rowText}>
-              <Text style={styles.label}>Alert at SOC</Text>
-            </View>
-            <View style={styles.segmentedCompact}>
-              <SegmentedButtons
-                value={String(socWarnThresholdPct)}
-                onValueChange={val => setSocWarnThresholdPct(Number(val))}
-                buttons={[
-                  {value: '80', label: '80%'},
-                  {value: '85', label: '85%'},
-                  {value: '90', label: '90%'},
-                  {value: '95', label: '95%'},
-                ]}
-              />
-            </View>
-          </View>
+            {notificationMode === 'time' && (
+              <>
+                <Text style={styles.subLabel}>Warn when time left</Text>
+                <View style={styles.segmentedWrapper}>
+                  <SegmentedButtons
+                    value={String(chargeTimeWarnMinutes)}
+                    onValueChange={val => setChargeTimeWarnMinutes(Number(val))}
+                    buttons={[
+                      {value: '5',  label: '5m'},
+                      {value: '10', label: '10m'},
+                      {value: '15', label: '15m'},
+                      {value: '30', label: '30m'},
+                    ]}
+                  />
+                </View>
+              </>
+            )}
+            {notificationMode === 'soc' && (
+              <>
+                <Text style={styles.subLabel}>Alert at SOC</Text>
+                <View style={styles.segmentedWrapper}>
+                  <SegmentedButtons
+                    value={String(socWarnThresholdPct)}
+                    onValueChange={val => setSocWarnThresholdPct(Number(val))}
+                    buttons={[
+                      {value: '80', label: '80%'},
+                      {value: '85', label: '85%'},
+                      {value: '90', label: '90%'},
+                      {value: '95', label: '95%'},
+                    ]}
+                  />
+                </View>
+              </>
+            )}
+          </>
         )}
       </View>
 
@@ -454,6 +446,13 @@ const styles = StyleSheet.create({
     color: '#E0E0E0',
     fontWeight: '500',
   },
+  subLabel: {
+    fontSize: 12,
+    color: '#9E9E9E',
+    fontWeight: '500',
+    marginTop: 12,
+    marginBottom: 0,
+  },
   hint: {
     fontSize: 12,
     color: '#666',
@@ -493,10 +492,6 @@ const styles = StyleSheet.create({
   segmentedWrapper: {
     paddingTop: 8,
     paddingBottom: 12,
-  },
-  segmentedCompact: {
-    flexShrink: 1,
-    minWidth: 200,
   },
   divider: {
     height: StyleSheet.hairlineWidth,

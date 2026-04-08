@@ -30,9 +30,9 @@ interface AppState {
   hudBrightenOnlyWhenCharging: boolean;
   debugBt: boolean;
   chargeTimeExtendMinutes: number;
-  chargeTimeWarnEnabled: boolean;
+  notificationsEnabled: boolean;
+  notificationMode: 'time' | 'soc';
   chargeTimeWarnMinutes: number;
-  socWarnEnabled: boolean;
   socWarnThresholdPct: number;
 
   // Actions (peripheral)
@@ -58,9 +58,9 @@ interface AppState {
   setHudBrightenOnlyWhenCharging: (v: boolean) => void;
   setDebugBt: (v: boolean) => void;
   setChargeTimeExtendMinutes: (v: number) => void;
-  setChargeTimeWarnEnabled: (v: boolean) => void;
+  setNotificationsEnabled: (v: boolean) => void;
+  setNotificationMode: (v: 'time' | 'soc') => void;
   setChargeTimeWarnMinutes: (v: number) => void;
-  setSocWarnEnabled: (v: boolean) => void;
   setSocWarnThresholdPct: (v: number) => void;
   reset: () => void;
 }
@@ -91,9 +91,9 @@ export const useAppStore = create<AppState>()(
       hudBrightenOnlyWhenCharging: true,
       debugBt: false,
       chargeTimeExtendMinutes: 15,
-      chargeTimeWarnEnabled: true,
+      notificationsEnabled: true,
+      notificationMode: 'time',
       chargeTimeWarnMinutes: 10,
-      socWarnEnabled: true,
       socWarnThresholdPct: 90,
 
       // Actions — peripheral
@@ -119,9 +119,9 @@ export const useAppStore = create<AppState>()(
       setHudBrightenOnlyWhenCharging: v => set({hudBrightenOnlyWhenCharging: v}),
       setDebugBt: v => set({debugBt: v}),
       setChargeTimeExtendMinutes: v => set({chargeTimeExtendMinutes: v}),
-      setChargeTimeWarnEnabled: v => set({chargeTimeWarnEnabled: v}),
+      setNotificationsEnabled: v => set({notificationsEnabled: v}),
+      setNotificationMode: v => set({notificationMode: v}),
       setChargeTimeWarnMinutes: v => set({chargeTimeWarnMinutes: v}),
-      setSocWarnEnabled: v => set({socWarnEnabled: v}),
       setSocWarnThresholdPct: v => set({socWarnThresholdPct: v}),
       reset: () =>
         set({
@@ -146,9 +146,9 @@ export const useAppStore = create<AppState>()(
         hudBrightenOnlyWhenCharging: state.hudBrightenOnlyWhenCharging,
         debugBt: state.debugBt,
         chargeTimeExtendMinutes: state.chargeTimeExtendMinutes,
-        chargeTimeWarnEnabled: state.chargeTimeWarnEnabled,
+        notificationsEnabled: state.notificationsEnabled,
+        notificationMode: state.notificationMode,
         chargeTimeWarnMinutes: state.chargeTimeWarnMinutes,
-        socWarnEnabled: state.socWarnEnabled,
         socWarnThresholdPct: state.socWarnThresholdPct,
       }),
     },

@@ -58,9 +58,9 @@ export default function ChargerScreen() {
   const chargerData = useAppStore(state => state.chargerData);
   const chargerBleStatus = useAppStore(state => state.chargerBleStatus);
   const chargeTimeExtendMinutes = useAppStore(state => state.chargeTimeExtendMinutes);
-  const chargeTimeWarnEnabled = useAppStore(state => state.chargeTimeWarnEnabled);
+  const notificationsEnabled = useAppStore(state => state.notificationsEnabled);
+  const notificationMode = useAppStore(state => state.notificationMode);
   const chargeTimeWarnMinutes = useAppStore(state => state.chargeTimeWarnMinutes);
-  const socWarnEnabled = useAppStore(state => state.socWarnEnabled);
   const socWarnThresholdPct = useAppStore(state => state.socWarnThresholdPct);
 
   const isConnected = chargerBleStatus === 'connected';
@@ -167,9 +167,9 @@ export default function ChargerScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Request notification permission once when any notification feature is enabled
+  // Request notification permission once when notifications are enabled
   useEffect(() => {
-    if (chargeTimeWarnEnabled || socWarnEnabled) {
+    if (notificationsEnabled) {
       requestNotificationPermission().catch(() => {});
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -185,7 +185,7 @@ export default function ChargerScreen() {
 
   // Charge time warning: fire when remaining time drops to or below the threshold
   useEffect(() => {
-    if (!chargeTimeWarnEnabled || chargeTimeWarnFiredRef.current) return;
+    if (!notificationsEnabled || notificationMode !== 'time' || chargeTimeWarnFiredRef.current) return;
     const maxTimeSec = chargerData?.cfgMaxTimeSec;
     const runningTime = chargerData?.runningTimeSeconds;
     if (maxTimeSec == null || maxTimeSec === 0 || runningTime == null) return;
@@ -194,18 +194,18 @@ export default function ChargerScreen() {
       chargeTimeWarnFiredRef.current = true;
       displayChargeTimeWarning(Math.ceil(remainingSec / 60));
     }
-  }, [chargerData?.cfgMaxTimeSec, chargerData?.runningTimeSeconds, chargeTimeWarnEnabled, chargeTimeWarnMinutes]);
+  }, [chargerData?.cfgMaxTimeSec, chargerData?.runningTimeSeconds, notificationsEnabled, notificationMode, chargeTimeWarnMinutes]);
 
   // SOC warning: fire once when SOC reaches or exceeds the configured threshold
   useEffect(() => {
-    if (!socWarnEnabled || socWarnFiredRef.current) return;
+    if (!notificationsEnabled || notificationMode !== 'soc' || socWarnFiredRef.current) return;
     const socPct = chargerData?.socPercent;
     if (socPct == null) return;
     if (socPct >= socWarnThresholdPct) {
       socWarnFiredRef.current = true;
       displaySocWarning(socPct);
     }
-  }, [chargerData?.socPercent, socWarnEnabled, socWarnThresholdPct]);
+  }, [chargerData?.socPercent, notificationsEnabled, notificationMode, socWarnThresholdPct]);
 
   // Seed sliders once per connection by reading the writable config characteristics
   // directly from the charger (0xFF01/02/03). These are initialized at boot from
