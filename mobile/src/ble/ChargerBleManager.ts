@@ -3,6 +3,7 @@ import {sharedBleManager} from './bleInstance';
 import {Buffer} from 'buffer';
 import {useAppStore} from '../store/useAppStore';
 import {ChargerDirectData, ChargeState} from '../types';
+import {decodeCharValue} from './decodeCharValue';
 
 export const CHARGER_SERVICE_UUID = '000027b0-0000-1000-8000-00805f9b34fb';
 
@@ -31,43 +32,13 @@ const CHAR_MAX_TIME       = '0000ff03-0000-1000-8000-00805f9b34fb';
 // Command characteristic (Write-with-response, 4 bytes)
 const CHAR_CONFIG_CMD     = '0000ff05-0000-1000-8000-00805f9b34fb';
 
-/**
- * Decode a BLE characteristic value from base64.
- * Handles both Adafruit ASCII-hex-string format ("C8" stored as ASCII [0x43,0x38])
- * and raw binary format (0xC8 stored as binary byte [0xC8]).
- * Auto-detects which format by checking if all bytes are valid ASCII hex characters.
- */
+// On/off characteristic (Write-with-response, 1 byte: 0x01=on, 0x00=off)
+const CHAR_ON_OFF         = '0000ff06-0000-1000-8000-00805f9b34fb';
+
 function logBleRead(label: string, value: string | null | undefined, divisor = 1): void {
   if (!value) { console.log(`[BleInit] ${label}: FAILED/NULL`); return; }
   const raw = decodeCharValue(value);
   console.log(`[BleInit] ${label}: b64=${value} decoded=${raw} final=${(raw / divisor).toFixed(2)}`);
-}
-
-function decodeCharValue(base64Value: string): number {
-  const bytes = Buffer.from(base64Value, 'base64');
-  if (bytes.length === 0) return 0;
-
-  // Check if all bytes are valid ASCII hex characters (0-9, A-F, a-f)
-  const allAsciiHex = bytes.every(
-    b =>
-      (b >= 0x30 && b <= 0x39) || // '0'-'9'
-      (b >= 0x41 && b <= 0x46) || // 'A'-'F'
-      (b >= 0x61 && b <= 0x66),   // 'a'-'f'
-  );
-
-  if (allAsciiHex) {
-    // ASCII hex string: "C8" → 200, "0C80" → 3200
-    const ascii = bytes.toString('ascii').trim();
-    const parsed = parseInt(ascii, 16);
-    if (!isNaN(parsed)) return parsed;
-  }
-
-  // Raw binary big-endian: [0xC8] → 200, [0x0D, 0x8A] → 3466
-  let val = 0;
-  for (const b of bytes) {
-    val = (val << 8) | b;
-  }
-  return val;
 }
 
 
@@ -203,8 +174,11 @@ export class ChargerBleManager {
 
     monitor(CHAR_CHARGE_STATE, raw => {
       const v = decodeCharValue(raw);
-      console.log(`[BleNotify] chargeState b64=${raw} decoded=${v}`);
-      return { chargeState: v as ChargeState };
+      // Firmware convention: 0 = actively charging (isCharging && chargerEnabled),
+      // 1 = not charging (stopped, idle, or timer expired).
+      const chargeState = v === 0 ? ChargeState.CHARGING : ChargeState.STOPPED;
+      console.log(`[BleNotify] chargeState b64=${raw} decoded=${v} mapped=${chargeState}`);
+      return { chargeState };
     });
 
     monitor(CHAR_SOC_PERCENT, raw => {
@@ -319,7 +293,7 @@ export class ChargerBleManager {
     logBleRead('chargeState',     cs.status==='fulfilled'    ? cs.value?.value    : null);
     logBleRead('errorState',      err.status==='fulfilled'   ? err.value?.value   : null);
     return {
-      ...(cs.status === 'fulfilled' && cs.value?.value ? { chargeState: decodeCharValue(cs.value.value) as ChargeState } : {}),
+      ...(cs.status === 'fulfilled' && cs.value?.value ? { chargeState: decodeCharValue(cs.value.value) === 0 ? ChargeState.CHARGING : ChargeState.STOPPED } : {}),
       ...(soc.status === 'fulfilled' && soc.value?.value ? { socPercent: decodeCharValue(soc.value.value) } : {}),
       ...(err.status === 'fulfilled' && err.value?.value ? { errorState: decodeCharValue(err.value.value) } : {}),
       ...(nomV.status === 'fulfilled' && nomV.value?.value ? { nominalVoltageV: decodeCharValue(nomV.value.value) / 10 } : {}),
@@ -370,8 +344,11 @@ export class ChargerBleManager {
   }
 
   async writeStartStop(enabled: boolean): Promise<void> {
-    // Start/stop still uses the command characteristic (0xFF05, cmd=4)
-    await this.writeConfigCmd(4, enabled ? 1 : 0);
+    // 0xFF06 on/off: single byte, 0x01=enable, 0x00=disable.
+    // Firmware bleOnOffCallback reads data[0] directly.
+    const buf = Buffer.alloc(1);
+    buf[0] = enabled ? 1 : 0;
+    await this.writeChar(CHAR_ON_OFF, buf);
   }
 
   async writeResetToDefaults(): Promise<void> {

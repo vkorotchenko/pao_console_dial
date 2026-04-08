@@ -13,6 +13,11 @@ import {ChargeState, ChargerDirectData} from '../types';
 import {chargerBleManager} from '../ble/ChargerBleManager';
 import {PageHeader} from '../components/PageHeader';
 import {BleDebugPanel, DebugRow} from '../components/BleDebugPanel';
+import {
+  requestNotificationPermission,
+  displayChargeTimeWarning,
+  displaySocWarning,
+} from '../utils/notifications';
 
 const FAULT_BITS: {bit: number; label: string}[] = [
   {bit: 0x01, label: 'Hardware failure'},
@@ -52,6 +57,11 @@ function formatDuration(seconds: number): string {
 export default function ChargerScreen() {
   const chargerData = useAppStore(state => state.chargerData);
   const chargerBleStatus = useAppStore(state => state.chargerBleStatus);
+  const chargeTimeExtendMinutes = useAppStore(state => state.chargeTimeExtendMinutes);
+  const chargeTimeWarnEnabled = useAppStore(state => state.chargeTimeWarnEnabled);
+  const chargeTimeWarnMinutes = useAppStore(state => state.chargeTimeWarnMinutes);
+  const socWarnEnabled = useAppStore(state => state.socWarnEnabled);
+  const socWarnThresholdPct = useAppStore(state => state.socWarnThresholdPct);
 
   const isConnected = chargerBleStatus === 'connected';
 
@@ -81,6 +91,15 @@ export default function ChargerScreen() {
 
   const [pendingSave, setPendingSave] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
+  const [isAdding15Min, setIsAdding15Min] = useState(false);
+
+  // Tracks the raw BLE values sent in the most recent Save, for the debug panel.
+  const [lastWrite, setLastWrite] = useState<{
+    at: string;
+    maxCurrent: {raw: number; amps: number} | null;
+    targetPct: {raw: number; pct: number} | null;
+    maxTime: {raw: number; secs: number} | null;
+  } | null>(null);
 
   const SERVICE_SHORT = '0x27B0';
   const DEBUG_ROWS: DebugRow[] = [
@@ -109,14 +128,35 @@ export default function ChargerScreen() {
     { name: 'min_multiplier',  char: '0xFF22', access: 'R+N', value: chargerData?.minMultiplier?.toFixed(2) ?? '—',    unit: 'x' },
     { name: 'abs_max_voltage', char: '0xFF23', access: 'R+N', value: chargerData?.absoluteMaxV?.toFixed(1) ?? '—',     unit: 'V' },
     { name: 'abs_min_voltage', char: '0xFF24', access: 'R+N', value: chargerData?.absoluteMinV?.toFixed(1) ?? '—',     unit: 'V' },
-    { name: 'max_current_cfg', char: '0xFF01', access: 'RW',  value: (chargerData?.cfgMaxCurrentA ?? committedMaxCurrentA)?.toFixed(1) ?? '—',  unit: 'A' },
-    { name: 'target_pct_cfg',  char: '0xFF02', access: 'RW',  value: (chargerData?.cfgTargetSocPct ?? committedTargetSocPct)?.toString() ?? '—', unit: '%' },
-    { name: 'max_time_cfg',    char: '0xFF03', access: 'RW',  value: (chargerData?.cfgMaxTimeSec ?? committedMaxTimeSec)?.toString() ?? '—',     unit: 's' },
+    { name: 'max_current_cfg', char: '0xFF01', access: 'RW',  value: (chargerData?.cfgMaxCurrentA ?? committedMaxCurrentA)?.toFixed(1) ?? '—',           unit: 'A' },
+    { name: 'target_pct_cfg',  char: '0xFF02', access: 'RW',  value: (chargerData?.cfgTargetSocPct ?? committedTargetSocPct)?.toFixed(1) ?? '—',           unit: '%' },
+    { name: 'max_time_cfg',    char: '0xFF03', access: 'RW',  value: (chargerData?.cfgMaxTimeSec ?? fromSlider(committedMaxTimeSec))?.toString() ?? '—',    unit: 's' },
     { name: 'config_cmd',      char: '0xFF05', access: 'W',   value: '(write-only)',                                    unit: '' },
+    // --- last BT write log ---
+    { name: '── last write ──', char: '', access: '', value: lastWrite?.at ?? 'never', unit: '' },
+    { name: 'wrote max_current', char: '0xFF01', access: 'W',
+      value: lastWrite?.maxCurrent
+        ? `0x${lastWrite.maxCurrent.raw.toString(16).toUpperCase()} = ${lastWrite.maxCurrent.amps.toFixed(1)} A`
+        : '—',
+      unit: '' },
+    { name: 'wrote target_pct',  char: '0xFF02', access: 'W',
+      value: lastWrite?.targetPct
+        ? `0x${lastWrite.targetPct.raw.toString(16).toUpperCase()} = ${lastWrite.targetPct.pct.toFixed(0)} %`
+        : '—',
+      unit: '' },
+    { name: 'wrote max_time',    char: '0xFF03', access: 'W',
+      value: lastWrite?.maxTime
+        ? `0x${lastWrite.maxTime.raw.toString(16).toUpperCase()} = ${lastWrite.maxTime.secs === 0 ? 'no limit' : formatDuration(lastWrite.maxTime.secs)}`
+        : '—',
+      unit: '' },
   ];
 
   // Guard: seed sliders only once per connection, not on every BLE notification
   const seededRef = useRef(false);
+
+  // Guards to prevent duplicate notifications per connection session
+  const chargeTimeWarnFiredRef = useRef(false);
+  const socWarnFiredRef = useRef(false);
 
   // Trigger a scan attempt when the charger screen is opened and charger is not connected
   useEffect(() => {
@@ -126,6 +166,46 @@ export default function ChargerScreen() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Request notification permission once when any notification feature is enabled
+  useEffect(() => {
+    if (chargeTimeWarnEnabled || socWarnEnabled) {
+      requestNotificationPermission().catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Reset notification guards on disconnect
+  useEffect(() => {
+    if (!isConnected) {
+      chargeTimeWarnFiredRef.current = false;
+      socWarnFiredRef.current = false;
+    }
+  }, [isConnected]);
+
+  // Charge time warning: fire when remaining time drops to or below the threshold
+  useEffect(() => {
+    if (!chargeTimeWarnEnabled || chargeTimeWarnFiredRef.current) return;
+    const maxTimeSec = chargerData?.cfgMaxTimeSec;
+    const runningTime = chargerData?.runningTimeSeconds;
+    if (maxTimeSec == null || maxTimeSec === 0 || runningTime == null) return;
+    const remainingSec = maxTimeSec - runningTime;
+    if (remainingSec > 0 && remainingSec <= chargeTimeWarnMinutes * 60) {
+      chargeTimeWarnFiredRef.current = true;
+      displayChargeTimeWarning(Math.ceil(remainingSec / 60));
+    }
+  }, [chargerData?.cfgMaxTimeSec, chargerData?.runningTimeSeconds, chargeTimeWarnEnabled, chargeTimeWarnMinutes]);
+
+  // SOC warning: fire once when SOC reaches or exceeds the configured threshold
+  useEffect(() => {
+    if (!socWarnEnabled || socWarnFiredRef.current) return;
+    const socPct = chargerData?.socPercent;
+    if (socPct == null) return;
+    if (socPct >= socWarnThresholdPct) {
+      socWarnFiredRef.current = true;
+      displaySocWarning(socPct);
+    }
+  }, [chargerData?.socPercent, socWarnEnabled, socWarnThresholdPct]);
 
   // Seed sliders once per connection by reading the writable config characteristics
   // directly from the charger (0xFF01/02/03). These are initialized at boot from
@@ -231,20 +311,32 @@ export default function ChargerScreen() {
       return;
     }
     setPendingSave(true);
+    const written: NonNullable<typeof lastWrite> = {
+      at: new Date().toLocaleTimeString(),
+      maxCurrent: null,
+      targetPct: null,
+      maxTime: null,
+    };
     try {
       if (draftMaxCurrentA !== committedMaxCurrentA) {
-        await chargerBleManager.writeMaxCurrent(Math.round(draftMaxCurrentA * 10));
+        const raw = Math.round(draftMaxCurrentA * 10);
+        await chargerBleManager.writeMaxCurrent(raw);
         setCommittedMaxCurrentA(draftMaxCurrentA);
+        written.maxCurrent = {raw, amps: draftMaxCurrentA};
       }
       if (draftTargetSocPct !== committedTargetSocPct) {
-        await chargerBleManager.writeTargetPct(Math.round(draftTargetSocPct * 10));
+        const raw = Math.round(draftTargetSocPct * 10);
+        await chargerBleManager.writeTargetPct(raw);
         setCommittedTargetSocPct(draftTargetSocPct);
+        written.targetPct = {raw, pct: draftTargetSocPct};
       }
       if (draftMaxTimeSec !== committedMaxTimeSec) {
         const seconds = fromSlider(draftMaxTimeSec);
         await chargerBleManager.writeMaxTime(seconds);
         setCommittedMaxTimeSec(draftMaxTimeSec);
+        written.maxTime = {raw: seconds, secs: seconds};
       }
+      setLastWrite(written);
       // Re-read target voltage/amps — they're derived from config so they update after a save
       chargerBleManager.refreshTargetReadings().then(refreshed => {
         if (Object.keys(refreshed).length > 0) {
@@ -305,7 +397,9 @@ export default function ChargerScreen() {
   };
 
   const handleStartStop = useCallback(async () => {
-    const wantEnabled = chargerData?.chargeState === ChargeState.STOPPED;
+    const state = chargerData?.chargeState;
+    const hwEnabled = state === ChargeState.CHARGING || state === ChargeState.COMPLETE;
+    const wantEnabled = !hwEnabled;
 
     setIsStopping(true);
     try {
@@ -317,10 +411,33 @@ export default function ChargerScreen() {
     }
   }, [chargerData?.chargeState]);
 
-  const isActive =
-    chargerData?.chargeState === ChargeState.ENABLED_IDLE ||
-    chargerData?.chargeState === ChargeState.CHARGING ||
-    chargerData?.chargeState === ChargeState.COMPLETE;
+  const handleAdd15Min = useCallback(async () => {
+    if (!isConnected) return;
+    setIsAdding15Min(true);
+    try {
+      // Prefer the firmware-echoed value; fall back to the committed slider value.
+      const currentSec = chargerData?.cfgMaxTimeSec ?? fromSlider(committedMaxTimeSec);
+      if (currentSec === 0) return; // NO LIMIT — nothing to add to
+      const extendSec = chargeTimeExtendMinutes * 60;
+      const newSec = Math.min(
+        MAX_TIME_SLIDER_MAX - MAX_TIME_SLIDER_STEP, // 43200 — hard cap
+        currentSec + extendSec,
+      );
+      await chargerBleManager.writeMaxTime(newSec);
+      setDraftMaxTimeSec(newSec);
+      setCommittedMaxTimeSec(newSec);
+      setLastWrite(prev => ({
+        at: new Date().toLocaleTimeString(),
+        maxCurrent: prev?.maxCurrent ?? null,
+        targetPct: prev?.targetPct ?? null,
+        maxTime: {raw: newSec, secs: newSec},
+      }));
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to extend charge time');
+    } finally {
+      setIsAdding15Min(false);
+    }
+  }, [isConnected, chargerData?.cfgMaxTimeSec, committedMaxTimeSec, chargeTimeExtendMinutes]);
 
   const isHwEnabled =
     chargerData?.chargeState === ChargeState.CHARGING ||
@@ -439,32 +556,23 @@ export default function ChargerScreen() {
         {/* Charge state badge + Start/Stop button */}
         <View style={styles.readingsContainer}>
           <View style={[styles.readingCard, styles.readingCardWide]}>
-            <Text style={styles.readingLabel}>Charge State</Text>
+            <Text style={styles.readingLabel}>Charger State</Text>
             <View style={styles.chargeStateRow}>
-              <View
-                style={[
-                  styles.stateBadge,
-                  {backgroundColor: getChargeStateBadgeColor(chargerData?.chargeState)},
-                ]}>
-                <Text style={styles.stateBadgeText}>
-                  {getChargeStateLabel(chargerData?.chargeState)}
-                </Text>
-              </View>
               <View style={[styles.enableBadge, { backgroundColor: isHwEnabled ? '#00C853' : '#9E9E9E' }]}>
                 <Text style={styles.enableBadgeText}>
-                  {'CAN: ' + (isHwEnabled ? 'ENABLED' : 'DISABLED')}
+                  {'ELCON: ' + (isHwEnabled ? 'ON' : 'OFF')}
                 </Text>
               </View>
               <TouchableOpacity
                 style={[
                   styles.startStopTileBtn,
-                  {backgroundColor: isActive ? '#c0392b' : '#27ae60'},
+                  {backgroundColor: isHwEnabled ? '#c0392b' : '#27ae60'},
                   (!isConnected || isStopping || chargerData == null) && {opacity: 0.4},
                 ]}
                 onPress={handleStartStop}
                 disabled={!isConnected || isStopping || chargerData == null}>
                 <Text style={styles.startStopTileBtnText}>
-                  {isStopping ? '...' : isActive ? 'STOP CHARGING' : 'START CHARGING'}
+                  {isStopping ? '...' : isHwEnabled ? 'Disable' : 'Enable'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -520,9 +628,24 @@ export default function ChargerScreen() {
           {/* Target SOC */}
           <View style={styles.sliderGroup}>
             <Text style={styles.sliderLabel}>Target SOC</Text>
-            <Text style={styles.sliderValue}>
-              {isConnected ? `${Math.round(draftTargetSocPct)} %` : '—'}
-            </Text>
+            {(() => {
+              const absMin = chargerData?.absoluteMinV;
+              const absMax = chargerData?.absoluteMaxV;
+              const targetV =
+                absMin != null && absMax != null && absMax > absMin
+                  ? absMin + (draftTargetSocPct / 100) * (absMax - absMin)
+                  : null;
+              return (
+                <View style={styles.socTargetValueRow}>
+                  <Text style={styles.sliderValue}>
+                    {isConnected ? `${Math.round(draftTargetSocPct)} %` : '—'}
+                  </Text>
+                  {isConnected && targetV != null && (
+                    <Text style={styles.socTargetVoltage}>{targetV.toFixed(1)} V</Text>
+                  )}
+                </View>
+              );
+            })()}
             <Slider
               style={styles.slider}
               minimumValue={20}
@@ -545,15 +668,28 @@ export default function ChargerScreen() {
           <View style={styles.maxTimeGroup}>
             <View style={styles.maxTimeHeader}>
               <Text style={styles.sliderLabel}>Max Charge Time</Text>
-              <Text style={styles.maxTimeValue}>
-                {!isConnected
-                  ? '—'
-                  : pendingSave
-                  ? '…'
-                  : draftMaxTimeSec >= MAX_TIME_SLIDER_MAX
-                  ? 'NO LIMIT'
-                  : formatDuration(draftMaxTimeSec)}
-              </Text>
+              <View style={styles.maxTimeHeaderRight}>
+                <TouchableOpacity
+                  style={[
+                    styles.add15MinBtn,
+                    (!isConnected || draftMaxTimeSec >= MAX_TIME_SLIDER_MAX || isAdding15Min) && {opacity: 0.35},
+                  ]}
+                  onPress={handleAdd15Min}
+                  disabled={!isConnected || draftMaxTimeSec >= MAX_TIME_SLIDER_MAX || isAdding15Min}>
+                  <Text style={styles.add15MinBtnText}>
+                    {isAdding15Min ? '…' : `+${chargeTimeExtendMinutes}m`}
+                  </Text>
+                </TouchableOpacity>
+                <Text style={styles.maxTimeValue}>
+                  {!isConnected
+                    ? '—'
+                    : pendingSave
+                    ? '…'
+                    : draftMaxTimeSec >= MAX_TIME_SLIDER_MAX
+                    ? 'NO LIMIT'
+                    : formatDuration(draftMaxTimeSec)}
+                </Text>
+              </View>
             </View>
             <Slider
               style={styles.slider}
@@ -824,6 +960,18 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginBottom: 6,
   },
+  socTargetValueRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginBottom: 6,
+  },
+  socTargetVoltage: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#87CEEB99',
+  },
   slider: {
     width: '100%',
     height: 40,
@@ -926,9 +1074,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 6,
   },
+  maxTimeHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   maxTimeValue: {
     fontSize: 22,
     fontWeight: '600',
     color: '#87CEEB',
+  },
+  add15MinBtn: {
+    backgroundColor: '#1E3A4A',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#87CEEB55',
+  },
+  add15MinBtnText: {
+    color: '#87CEEB',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

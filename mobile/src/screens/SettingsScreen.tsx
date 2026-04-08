@@ -29,6 +29,16 @@ export default function SettingsScreen() {
   const setHudBrightenOnlyWhenCharging = useAppStore(state => state.setHudBrightenOnlyWhenCharging);
   const debugBt = useAppStore(state => state.debugBt);
   const setDebugBt = useAppStore(state => state.setDebugBt);
+  const chargeTimeExtendMinutes = useAppStore(state => state.chargeTimeExtendMinutes);
+  const setChargeTimeExtendMinutes = useAppStore(state => state.setChargeTimeExtendMinutes);
+  const chargeTimeWarnEnabled = useAppStore(state => state.chargeTimeWarnEnabled);
+  const setChargeTimeWarnEnabled = useAppStore(state => state.setChargeTimeWarnEnabled);
+  const chargeTimeWarnMinutes = useAppStore(state => state.chargeTimeWarnMinutes);
+  const setChargeTimeWarnMinutes = useAppStore(state => state.setChargeTimeWarnMinutes);
+  const socWarnEnabled = useAppStore(state => state.socWarnEnabled);
+  const setSocWarnEnabled = useAppStore(state => state.setSocWarnEnabled);
+  const socWarnThresholdPct = useAppStore(state => state.socWarnThresholdPct);
+  const setSocWarnThresholdPct = useAppStore(state => state.setSocWarnThresholdPct);
   const [hasWriteSettings, setHasWriteSettings] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -247,6 +257,91 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      {/* Charging Section */}
+      <Text style={styles.sectionHeader}>Charging</Text>
+      <View style={styles.card}>
+        <Text style={styles.label}>Extend Time Button</Text>
+        <Text style={styles.hint}>Amount added by the +Xm button on the charging screen</Text>
+        <View style={styles.segmentedWrapper}>
+          <SegmentedButtons
+            value={String(chargeTimeExtendMinutes)}
+            onValueChange={val => setChargeTimeExtendMinutes(Number(val))}
+            buttons={[
+              {value: '15', label: '15m'},
+              {value: '30', label: '30m'},
+              {value: '45', label: '45m'},
+              {value: '60', label: '60m'},
+            ]}
+          />
+        </View>
+      </View>
+
+      {/* Notifications Section */}
+      <Text style={styles.sectionHeader}>Notifications</Text>
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>Charge time warning</Text>
+            <Text style={styles.hint}>Alert before max charge time runs out</Text>
+          </View>
+          <Switch
+            value={chargeTimeWarnEnabled}
+            onValueChange={setChargeTimeWarnEnabled}
+            color="#00C853"
+          />
+        </View>
+        {chargeTimeWarnEnabled && (
+          <View style={[styles.row, styles.subRow]}>
+            <View style={styles.rowText}>
+              <Text style={styles.label}>How early to warn</Text>
+            </View>
+            <View style={styles.segmentedCompact}>
+              <SegmentedButtons
+                value={String(chargeTimeWarnMinutes)}
+                onValueChange={val => setChargeTimeWarnMinutes(Number(val))}
+                buttons={[
+                  {value: '5',  label: '5m'},
+                  {value: '10', label: '10m'},
+                  {value: '15', label: '15m'},
+                  {value: '30', label: '30m'},
+                ]}
+              />
+            </View>
+          </View>
+        )}
+        <View style={styles.divider} />
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>SOC threshold alert</Text>
+            <Text style={styles.hint}>Notify when charge reaches a set level</Text>
+          </View>
+          <Switch
+            value={socWarnEnabled}
+            onValueChange={setSocWarnEnabled}
+            color="#00C853"
+          />
+        </View>
+        {socWarnEnabled && (
+          <View style={[styles.row, styles.subRow]}>
+            <View style={styles.rowText}>
+              <Text style={styles.label}>Alert at SOC</Text>
+            </View>
+            <View style={styles.segmentedCompact}>
+              <SegmentedButtons
+                value={String(socWarnThresholdPct)}
+                onValueChange={val => setSocWarnThresholdPct(Number(val))}
+                buttons={[
+                  {value: '80', label: '80%'},
+                  {value: '85', label: '85%'},
+                  {value: '90', label: '90%'},
+                  {value: '95', label: '95%'},
+                ]}
+              />
+            </View>
+          </View>
+        )}
+      </View>
+
       {/* Display Section */}
       <Text style={styles.sectionHeader}>Display</Text>
       <View style={styles.card}>
@@ -398,6 +493,10 @@ const styles = StyleSheet.create({
   segmentedWrapper: {
     paddingTop: 8,
     paddingBottom: 12,
+  },
+  segmentedCompact: {
+    flexShrink: 1,
+    minWidth: 200,
   },
   divider: {
     height: StyleSheet.hairlineWidth,
