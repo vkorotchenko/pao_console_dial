@@ -8,19 +8,22 @@ import GearScreen from '../screens/GearScreen';
 import ChargerScreen from '../screens/ChargerScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import HUDScreen from '../screens/HUDScreen';
+import UpdateScreen from '../screens/UpdateScreen';
 import {FloatingIcons} from '../components/FloatingIcons';
+import {UpdateAvailableBanner} from '../components/UpdateAvailableBanner';
 import {useAppStore} from '../store/useAppStore';
 import {paoBleManager, PAO_SERVICE_UUID} from '../ble/PaoBleManager';
 import {chargerBleManager, CHARGER_SERVICE_UUID} from '../ble/ChargerBleManager';
 import {sharedBleManager} from '../ble/bleInstance';
 import {ChargerDirectData} from '../types';
 import {requestBlePermissions} from '../utils/permissions';
+import {checkForChargerUpdate} from '../services/otaController';
 import PagerView from 'react-native-pager-view';
 import MediaControl from '../native/MediaControl';
 import _ScreenBrightness from 'react-native-screen-brightness';
 const ScreenBrightness = _ScreenBrightness as any;
 
-type Screen = 'dashboard' | 'charger' | 'gear' | 'settings' | 'hud';
+type Screen = 'dashboard' | 'charger' | 'gear' | 'settings' | 'hud' | 'update';
 
 const SCAN_TIMEOUT_MS = 15_000; // stop scanning after 15s if nothing found
 const MAX_RETRIES = 3;
@@ -140,6 +143,24 @@ export default function AppNavigator() {
   useEffect(() => {
     Orientation.lockToLandscapeLeft();
   }, []);
+
+  // Phase 3: fire-and-forget GitHub release check on app mount.
+  // Errors are swallowed inside checkForChargerUpdate — they live in the
+  // store as otaState='error', never bubble. The 1-hour TTL inside the
+  // service prevents thrashing if the app is restarted frequently.
+  useEffect(() => {
+    checkForChargerUpdate().catch(() => {});
+  }, []);
+
+  // Phase 3: re-check whenever the charger connects.
+  // The 1-hour TTL still applies, so connect/disconnect cycles within an
+  // hour are essentially free (cache hit). Fresh data lands when the user
+  // reconnects after a long gap — exactly the moment they care.
+  useEffect(() => {
+    if (chargerBleStatus === 'connected') {
+      checkForChargerUpdate().catch(() => {});
+    }
+  }, [chargerBleStatus]);
 
   useEffect(() => {
     StatusBar.setHidden(currentScreen === 'hud', 'fade');
@@ -473,12 +494,18 @@ export default function AppNavigator() {
     setCurrentScreen(screen as Screen);
   };
 
+  const closeUpdate = () => {
+    Orientation.lockToPortrait();
+    setCurrentScreen('dashboard');
+  };
+
   const renderScreen = (screen: Screen) => {
     switch (screen) {
       case 'hud': return <HUDScreen onClose={() => { Orientation.lockToPortrait(); setCurrentScreen('dashboard'); }} />;
       case 'charger': return <ChargerScreen />;
       case 'gear': return <GearScreen />;
       case 'settings': return <SettingsScreen />;
+      case 'update': return <UpdateScreen onClose={closeUpdate} />;
       default: return <DashboardScreen />;
     }
   };
@@ -492,8 +519,25 @@ export default function AppNavigator() {
     );
   }
 
+  // Update screen: full-screen modal-style overlay (not part of swipe pager).
+  // Mirrors the HUD branch's pattern. No banner here — user is already on the
+  // update screen — and FloatingIcons is shown so the user can navigate back
+  // to any other screen.
+  if (currentScreen === 'update') {
+    return (
+      <View style={styles.container}>
+        {renderScreen('update')}
+        <FloatingIcons onNavigate={navigate} showGearTab={showGearTab} currentScreen={currentScreen} isHUD={false} />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
+      {/* Phase 3: thin update-available bar above all pager screens. The
+          component returns null when there's nothing to show, so the layout
+          collapses cleanly. Tapping it routes to the UpdateScreen. */}
+      <UpdateAvailableBanner onPress={() => navigate('update')} />
       <PagerView
         ref={pagerRef}
         style={styles.pager}

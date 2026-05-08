@@ -73,6 +73,27 @@ def enableProguardInReleaseBuilds = false
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+/**
+ * Pin androidx.core / core-ktx to a stable version compatible with compileSdk 36.
+ *
+ * Why: `react-native-screen-brightness` declares `androidx.core:core:1.+` (a dynamic
+ * version selector). Gradle resolves that to `1.19.0-alpha02`, which itself targets
+ * SDK 37 and requires Android Gradle Plugin 9.1.0+ — incompatible with our AGP 8.12.0
+ * and compileSdk 36. The `core-ktx` artifact mirrors `core` via an AndroidX constraint,
+ * so it gets dragged along.
+ *
+ * 1.16.0 is the latest stable as of early 2026 and satisfies every transitive request
+ * (highest non-alpha demanded is 1.16.0 via androidx.transition:transition:1.7.0).
+ *
+ * Revisit when AGP is bumped past 9.1.0 and compileSdk moves to 37.
+ */
+configurations.all {
+    resolutionStrategy {
+        force 'androidx.core:core:1.16.0'
+        force 'androidx.core:core-ktx:1.16.0'
+    }
+}
+
 android {
     ndkVersion = rootProject.ext.ndkVersion
     buildToolsVersion = rootProject.ext.buildToolsVersion

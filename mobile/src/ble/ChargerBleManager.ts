@@ -35,6 +35,34 @@ const CHAR_CONFIG_CMD     = '0000ff05-0000-1000-8000-00805f9b34fb';
 // On/off characteristic (Write-with-response, 1 byte: 0x01=on, 0x00=off)
 const CHAR_ON_OFF         = '0000ff06-0000-1000-8000-00805f9b34fb';
 
+// Firmware version characteristic (Read + Notify, 4 bytes little-endian: [major, minor, patch, build])
+const CHAR_FW_VERSION     = '0000ff25-0000-1000-8000-00805f9b34fb';
+
+/**
+ * Decode the 4-byte firmware version payload (little-endian) to the canonical
+ * bare semver string (no "v" prefix — the prefix is a display-time concern,
+ * applied by `formatVersion()` at render time).
+ * Format: [major, minor, patch, build] → "MAJOR.MINOR.PATCH+BUILD"
+ *         When build == 0, render as "MAJOR.MINOR.PATCH".
+ * Returns null if the payload is missing or shorter than 4 bytes.
+ *
+ * History: previously returned "vMAJOR.MINOR.PATCH..." which produced the
+ * "vv0.0.0" double-prefix bug when UI sites also prepended "v" at render
+ * time. Storage is now bare so that `compare()` in semver.ts works directly
+ * against `latestReleaseVersion` (also bare, e.g. "0.1.0").
+ */
+function decodeFirmwareVersion(base64Value: string | null | undefined): string | null {
+  if (!base64Value) return null;
+  const bytes = Buffer.from(base64Value, 'base64');
+  if (bytes.length < 4) return null;
+  const major = bytes[0];
+  const minor = bytes[1];
+  const patch = bytes[2];
+  const build = bytes[3];
+  const base = `${major}.${minor}.${patch}`;
+  return build === 0 ? base : `${base}+${build}`;
+}
+
 function logBleRead(label: string, value: string | null | undefined, divisor = 1): void {
   if (!value) { console.log(`[BleInit] ${label}: FAILED/NULL`); return; }
   const raw = decodeCharValue(value);
@@ -192,6 +220,31 @@ export class ChargerBleManager {
       console.log(`[BleNotify] errorState b64=${raw} decoded=${v} bits=0b${v.toString(2).padStart(8,'0')}`);
       return { errorState: v };
     });
+
+    // Firmware version (0xFF25): subscribe to notifications so a charger firmware
+    // hot-swap or post-OTA reboot updates the displayed version without a reconnect.
+    // The decoded value is pushed directly to the store rather than through
+    // ChargerDirectData — firmwareVersion lives in its own persisted slice.
+    if (this.connectedDevice) {
+      const fwSub = this.connectedDevice.monitorCharacteristicForService(
+        CHARGER_SERVICE_UUID,
+        CHAR_FW_VERSION,
+        (error: BleError | null, characteristic: any) => {
+          if (error) {
+            console.error(`ChargerBle monitor error (${CHAR_FW_VERSION}):`, error);
+            return;
+          }
+          if (characteristic?.value) {
+            const ver = decodeFirmwareVersion(characteristic.value);
+            console.log(`[BleNotify] firmwareVersion b64=${characteristic.value} decoded=${ver}`);
+            if (ver) {
+              useAppStore.getState().setChargerFirmwareVersion(ver);
+            }
+          }
+        },
+      );
+      this.subscriptions.push(fwSub);
+    }
   }
 
   /**
@@ -281,8 +334,29 @@ export class ChargerBleManager {
       this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_ABSOLUTE_MIN_V),
       this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_TARGET_VOLTAGE),
       this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_TARGET_AMPS),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_FW_VERSION),
     ]);
-    const [cs, soc, err, nomV, maxM, minM, absMax, absMin, tVolt, tAmp] = reads;
+    const [cs, soc, err, nomV, maxM, minM, absMax, absMin, tVolt, tAmp, fwVer] = reads;
+    // Firmware version lives in its own persisted store slice (not ChargerDirectData),
+    // so push it directly rather than returning it in the partial.
+    // Diagnostic logging covers all three failure modes so the bug doesn't
+    // recur silently: (a) read rejected, (b) read fulfilled but value empty,
+    // (c) decode produced null.
+    if (fwVer.status === 'fulfilled') {
+      if (fwVer.value?.value) {
+        const ver = decodeFirmwareVersion(fwVer.value.value);
+        console.log(`[BleInit] firmwareVersion b64=${fwVer.value.value} decoded=${ver}`);
+        if (ver) {
+          useAppStore.getState().setChargerFirmwareVersion(ver);
+        } else {
+          console.warn('[BleInit] firmwareVersion: decode returned null — payload too short or corrupt');
+        }
+      } else {
+        console.warn('[BleInit] firmwareVersion: read fulfilled but value is empty');
+      }
+    } else {
+      console.warn('[BleInit] firmwareVersion: read REJECTED', fwVer.reason);
+    }
     logBleRead('targetVoltageV',  tVolt.status==='fulfilled' ? tVolt.value?.value : null, 10);
     logBleRead('targetAmpsA',     tAmp.status==='fulfilled'  ? tAmp.value?.value  : null, 10);
     logBleRead('absoluteMaxV',    absMax.status==='fulfilled'? absMax.value?.value : null, 10);
@@ -357,6 +431,12 @@ export class ChargerBleManager {
 
   /**
    * Disconnect from the charger and clean up all subscriptions.
+   *
+   * NOTE: chargerFirmwareVersion is intentionally NOT cleared here. It's a
+   * persisted "last-known" value — wiping it on every disconnect (including
+   * transient drops) defeats the purpose of persisting it and causes the
+   * Settings "Firmware" row to flip to "—" on every reconnect. It's
+   * overwritten only when a fresh read on next connect returns a real value.
    */
   disconnect(): void {
     this.unsubscribeAll();
@@ -436,6 +516,10 @@ export class ChargerBleManager {
 
         useAppStore.getState().setChargerBleStatus('disconnected');
         useAppStore.getState().setChargerDeviceId(null);
+        // NOTE: chargerFirmwareVersion intentionally NOT cleared — see
+        // disconnect() above. Keeping the last-known value avoids the
+        // "Firmware: —" flicker on transient disconnects and makes the
+        // persisted version actually useful across reconnects.
         useAppStore.getState().setChargerError('Charger disconnected');
       },
     );

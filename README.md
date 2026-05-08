@@ -220,7 +220,7 @@ pao_console_dial/
 │       ├── settings_screen.cpp/.h
 │       ├── spotify_screen.cpp/.h
 │       └── loading_screen.cpp/.h
-├── charger/             # SAMD21 charger firmware (PlatformIO)
+├── charger/             # ESP32 V2 charger firmware (PlatformIO, NimBLE-Arduino)
 │   └── src/
 │       ├── main.cpp
 │       ├── charger_handler.cpp/.h
@@ -269,10 +269,10 @@ Both firmware units use [PlatformIO](https://platformio.org/). Use the Makefile 
 | `make build` | Build all firmware projects (controller, peripheral, charger) |
 | `make build-peripheral` | Build ESP32-S3 peripheral firmware |
 | `make build-controller` | Build SAMD21 controller firmware |
-| `make build-charger` | Build SAMD21 charger firmware |
+| `make build-charger` | Build ESP32 V2 charger firmware |
 | `make upload-peripheral` | Flash peripheral to ESP32-S3 (USB) |
 | `make upload-controller` | Flash controller to Feather M0 (USB) |
-| `make upload-charger` | Flash charger to SAMD21 (USB) |
+| `make upload-charger` | Flash charger to ESP32 V2 (USB) |
 | `make monitor-peripheral` | Open serial monitor for peripheral |
 | `make monitor-controller` | Open serial monitor for controller |
 | `make monitor-charger` | Open serial monitor for charger |
@@ -286,6 +286,42 @@ make monitor-peripheral
 ```
 
 All projects are configured with PlatformIO (`platformio.ini` in each directory).
+
+---
+
+## Releases
+
+Firmware releases are produced by GitHub Actions when a matching tag is pushed.
+
+### Tag convention
+
+`charger-vMAJOR.MINOR.PATCH`, optionally with a prerelease suffix (`-rc.N`, `-beta.N`, `-alpha.N`). Strict semver. Regex: `^charger-v(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?$`. Future peripheral and mobile releases will follow the same prefix pattern (`peripheral-vX.Y.Z`, `mobile-vX.Y.Z`).
+
+### What a tag push produces
+
+Pushing a `charger-v*` tag triggers `.github/workflows/charger-release.yml`, which builds the charger firmware and publishes a GitHub Release containing:
+
+- `charger-firmware-X.Y.Z.bin` — the firmware image
+- `charger-firmware-X.Y.Z.bin.sha256` — checksum for verification
+- Auto-generated release notes from commits since the previous release
+
+Tags containing a hyphen (e.g. `charger-v0.2.0-rc.1`) are marked as prereleases automatically.
+
+### Cutting a release
+
+```bash
+git tag charger-v0.1.0
+git push origin charger-v0.1.0
+```
+
+CI handles the build and publish. No manual upload needed.
+
+### Verifying a downloaded firmware
+
+```bash
+sha256sum -c charger-firmware-0.1.0.bin.sha256   # Linux
+shasum -a 256 -c charger-firmware-0.1.0.bin.sha256   # macOS
+```
 
 ---
 
