@@ -4,7 +4,6 @@
 .vscode/launch.json
 .vscode/ipch
 .copilot/
-.github/
 .gitattributes
 # Squad: ignore runtime state (logs, inbox, sessions)
 .squad/orchestration-log/

@@ -39,6 +39,7 @@ export default function SettingsScreen() {
   const setChargeTimeWarnMinutes = useAppStore(state => state.setChargeTimeWarnMinutes);
   const socWarnThresholdPct = useAppStore(state => state.socWarnThresholdPct);
   const setSocWarnThresholdPct = useAppStore(state => state.setSocWarnThresholdPct);
+  const chargerFirmwareVersion = useAppStore(state => state.chargerFirmwareVersion);
   const [hasWriteSettings, setHasWriteSettings] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -231,6 +232,17 @@ export default function SettingsScreen() {
             onValueChange={setDebugBt}
             color="#00C853"
           />
+        </View>
+      </View>
+
+      {/* Firmware Section */}
+      <Text style={styles.sectionHeader}>Firmware</Text>
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>Charger firmware</Text>
+          </View>
+          <Text style={styles.value}>{chargerFirmwareVersion ?? '—'}</Text>
         </View>
       </View>
 
@@ -457,6 +469,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     marginTop: 2,
+  },
+  value: {
+    fontSize: 15,
+    color: '#9E9E9E',
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
   },
   bleRow: {
     flexDirection: 'row',

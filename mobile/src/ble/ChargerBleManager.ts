@@ -35,6 +35,27 @@ const CHAR_CONFIG_CMD     = '0000ff05-0000-1000-8000-00805f9b34fb';
 // On/off characteristic (Write-with-response, 1 byte: 0x01=on, 0x00=off)
 const CHAR_ON_OFF         = '0000ff06-0000-1000-8000-00805f9b34fb';
 
+// Firmware version characteristic (Read + Notify, 4 bytes little-endian: [major, minor, patch, build])
+const CHAR_FW_VERSION     = '0000ff25-0000-1000-8000-00805f9b34fb';
+
+/**
+ * Decode the 4-byte firmware version payload (little-endian) to a display string.
+ * Format: [major, minor, patch, build] → "vMAJOR.MINOR.PATCH+BUILD"
+ *         When build == 0, render as "vMAJOR.MINOR.PATCH".
+ * Returns null if the payload is missing or shorter than 4 bytes.
+ */
+function decodeFirmwareVersion(base64Value: string | null | undefined): string | null {
+  if (!base64Value) return null;
+  const bytes = Buffer.from(base64Value, 'base64');
+  if (bytes.length < 4) return null;
+  const major = bytes[0];
+  const minor = bytes[1];
+  const patch = bytes[2];
+  const build = bytes[3];
+  const base = `v${major}.${minor}.${patch}`;
+  return build === 0 ? base : `${base}+${build}`;
+}
+
 function logBleRead(label: string, value: string | null | undefined, divisor = 1): void {
   if (!value) { console.log(`[BleInit] ${label}: FAILED/NULL`); return; }
   const raw = decodeCharValue(value);
@@ -192,6 +213,31 @@ export class ChargerBleManager {
       console.log(`[BleNotify] errorState b64=${raw} decoded=${v} bits=0b${v.toString(2).padStart(8,'0')}`);
       return { errorState: v };
     });
+
+    // Firmware version (0xFF25): subscribe to notifications so a charger firmware
+    // hot-swap or post-OTA reboot updates the displayed version without a reconnect.
+    // The decoded value is pushed directly to the store rather than through
+    // ChargerDirectData — firmwareVersion lives in its own persisted slice.
+    if (this.connectedDevice) {
+      const fwSub = this.connectedDevice.monitorCharacteristicForService(
+        CHARGER_SERVICE_UUID,
+        CHAR_FW_VERSION,
+        (error: BleError | null, characteristic: any) => {
+          if (error) {
+            console.error(`ChargerBle monitor error (${CHAR_FW_VERSION}):`, error);
+            return;
+          }
+          if (characteristic?.value) {
+            const ver = decodeFirmwareVersion(characteristic.value);
+            console.log(`[BleNotify] firmwareVersion b64=${characteristic.value} decoded=${ver}`);
+            if (ver) {
+              useAppStore.getState().setChargerFirmwareVersion(ver);
+            }
+          }
+        },
+      );
+      this.subscriptions.push(fwSub);
+    }
   }
 
   /**
@@ -281,8 +327,18 @@ export class ChargerBleManager {
       this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_ABSOLUTE_MIN_V),
       this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_TARGET_VOLTAGE),
       this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_TARGET_AMPS),
+      this.connectedDevice.readCharacteristicForService(CHARGER_SERVICE_UUID, CHAR_FW_VERSION),
     ]);
-    const [cs, soc, err, nomV, maxM, minM, absMax, absMin, tVolt, tAmp] = reads;
+    const [cs, soc, err, nomV, maxM, minM, absMax, absMin, tVolt, tAmp, fwVer] = reads;
+    // Firmware version lives in its own persisted store slice (not ChargerDirectData),
+    // so push it directly rather than returning it in the partial.
+    if (fwVer.status === 'fulfilled' && fwVer.value?.value) {
+      const ver = decodeFirmwareVersion(fwVer.value.value);
+      console.log(`[BleInit] firmwareVersion b64=${fwVer.value.value} decoded=${ver}`);
+      if (ver) {
+        useAppStore.getState().setChargerFirmwareVersion(ver);
+      }
+    }
     logBleRead('targetVoltageV',  tVolt.status==='fulfilled' ? tVolt.value?.value : null, 10);
     logBleRead('targetAmpsA',     tAmp.status==='fulfilled'  ? tAmp.value?.value  : null, 10);
     logBleRead('absoluteMaxV',    absMax.status==='fulfilled'? absMax.value?.value : null, 10);
@@ -372,6 +428,7 @@ export class ChargerBleManager {
     useAppStore.getState().setChargerBleStatus('disconnected');
     useAppStore.getState().setChargerDeviceId(null);
     useAppStore.getState().setChargerData(null);
+    useAppStore.getState().setChargerFirmwareVersion(null);
   }
 
   /**
@@ -436,6 +493,7 @@ export class ChargerBleManager {
 
         useAppStore.getState().setChargerBleStatus('disconnected');
         useAppStore.getState().setChargerDeviceId(null);
+        useAppStore.getState().setChargerFirmwareVersion(null);
         useAppStore.getState().setChargerError('Charger disconnected');
       },
     );

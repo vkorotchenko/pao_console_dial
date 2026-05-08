@@ -19,6 +19,11 @@ interface AppState {
   chargerConfig: ChargerConfig | null;
   chargerData: ChargerDirectData | null;
 
+  // Charger firmware version — display string like "v1.2.3" or "v1.2.3+12".
+  // Persisted so the last-known version survives app restarts and is visible
+  // before the charger reconnects. Reset to null on disconnect.
+  chargerFirmwareVersion: string | null;
+
   // Scan trigger — incrementing forces the unified scan effect to re-run
   // even when bleStatus / chargerBleStatus haven't changed value.
   scanTrigger: number;
@@ -47,6 +52,7 @@ interface AppState {
   setChargerDeviceId: (id: string | null) => void;
   setChargerError: (e: string | null) => void;
   setChargerData: (d: ChargerDirectData | null) => void;
+  setChargerFirmwareVersion: (v: string | null) => void;
 
   // Actions (scan trigger)
   incrementScanTrigger: () => void;
@@ -80,6 +86,7 @@ export const useAppStore = create<AppState>()(
       chargerDeviceId: null,
       chargerError: null,
       chargerData: null,
+      chargerFirmwareVersion: null,
 
       // Initial state — scan trigger
       scanTrigger: 0,
@@ -108,6 +115,7 @@ export const useAppStore = create<AppState>()(
       setChargerDeviceId: id => set({chargerDeviceId: id}),
       setChargerError: e => set({chargerError: e}),
       setChargerData: d => set({chargerData: d}),
+      setChargerFirmwareVersion: v => set({chargerFirmwareVersion: v}),
 
       // Actions — scan trigger
       incrementScanTrigger: () => set(state => ({scanTrigger: state.scanTrigger + 1})),
@@ -134,6 +142,7 @@ export const useAppStore = create<AppState>()(
           chargerDeviceId: null,
           chargerError: null,
           chargerData: null,
+          chargerFirmwareVersion: null,
         }),
     }),
     {
@@ -150,6 +159,7 @@ export const useAppStore = create<AppState>()(
         notificationMode: state.notificationMode,
         chargeTimeWarnMinutes: state.chargeTimeWarnMinutes,
         socWarnThresholdPct: state.socWarnThresholdPct,
+        chargerFirmwareVersion: state.chargerFirmwareVersion,
       }),
     },
   ),
