@@ -51,7 +51,7 @@ clean-controller: ## Clean controller build artifacts
 # Charger (SAMD21 Feather M0)
 # ─────────────────────────────────────────────────────────────────────────
 
-.PHONY: build-charger upload-charger monitor-charger clean-charger
+.PHONY: build-charger upload-charger monitor-charger clean-charger release-charger-minor release-charger-major
 
 build-charger: ## Build charger firmware (SAMD21)
 	cd charger && pio run
@@ -64,6 +64,53 @@ monitor-charger: ## Open serial monitor for charger device
 
 clean-charger: ## Clean charger build artifacts
 	cd charger && pio run -t clean
+
+release-charger-minor: ## Bump charger minor version, tag, and push (auto-detects next version from charger-v* tags)
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+		exit 1; \
+	fi
+	@latest=$$(git tag -l 'charger-v*' | sort -V | tail -n 1); \
+	if [ -z "$$latest" ]; then \
+		next="0.1.0"; \
+	else \
+		ver=$${latest#charger-v}; \
+		major=$$(echo $$ver | awk -F. '{print $$1}'); \
+		minor=$$(echo $$ver | awk -F. '{print $$2}'); \
+		next="$$major.$$((minor + 1)).0"; \
+	fi; \
+	tag="charger-v$$next"; \
+	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists. Aborting."; \
+		exit 1; \
+	fi; \
+	echo "Releasing charger v$$next..."; \
+	git tag -a "$$tag" -m "Charger release v$$next" && \
+	git push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag"
+
+release-charger-major: ## Bump charger major version, tag, and push (auto-detects next version from charger-v* tags)
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+		exit 1; \
+	fi
+	@latest=$$(git tag -l 'charger-v*' | sort -V | tail -n 1); \
+	if [ -z "$$latest" ]; then \
+		next="1.0.0"; \
+	else \
+		ver=$${latest#charger-v}; \
+		major=$$(echo $$ver | awk -F. '{print $$1}'); \
+		next="$$((major + 1)).0.0"; \
+	fi; \
+	tag="charger-v$$next"; \
+	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists. Aborting."; \
+		exit 1; \
+	fi; \
+	echo "Releasing charger v$$next..."; \
+	git tag -a "$$tag" -m "Charger release v$$next" && \
+	git push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag"
 
 # ─────────────────────────────────────────────────────────────────────────
 # Aggregate Firmware Targets
