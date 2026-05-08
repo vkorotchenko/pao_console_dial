@@ -38,6 +38,25 @@ const CHAR_ON_OFF         = '0000ff06-0000-1000-8000-00805f9b34fb';
 // Firmware version characteristic (Read + Notify, 4 bytes little-endian: [major, minor, patch, build])
 const CHAR_FW_VERSION     = '0000ff25-0000-1000-8000-00805f9b34fb';
 
+// ── OTA characteristics (Phase 5) ───────────────────────────────────────────
+// 0xFF26: WRITE_WITHOUT_RESPONSE — chunked firmware bytes. We rely on the
+// BLE link-layer framing here, with a small windowing protocol on top
+// (16 chunks then wait for an ACK on 0xFF27) to avoid drowning the ESP32
+// write queue.
+const CHAR_OTA_DATA       = '0000ff26-0000-1000-8000-00805f9b34fb';
+// 0xFF27: NOTIFY-only status pipe. 5-byte payload:
+// [status_code: u8][bytes_received: u32 LE]. Status codes are documented in
+// services/firmwareTransfer.ts.
+const CHAR_OTA_STATUS     = '0000ff27-0000-1000-8000-00805f9b34fb';
+
+// OTA command opcodes (write to existing CHAR_CONFIG_CMD = 0xFF05).
+// The cmd byte is followed by an opcode-specific payload; the firmware
+// dispatches based on byte[0]. Empty payload = just write the cmd byte.
+export const CMD_OTA_BEGIN  = 10; // payload: 4-byte LE total_size + 32-byte SHA256 (binary, NOT hex)
+export const CMD_OTA_END    = 11; // payload: empty
+export const CMD_OTA_ABORT  = 12; // payload: empty
+export const CMD_OTA_VERIFY = 13; // payload: empty (post-reconnect verify gate)
+
 /**
  * Decode the 4-byte firmware version payload (little-endian) to the canonical
  * bare semver string (no "v" prefix — the prefix is a display-time concern,
@@ -427,6 +446,155 @@ export class ChargerBleManager {
 
   async writeResetToDefaults(): Promise<void> {
     await this.writeConfigCmd(5, 0);
+  }
+
+  // ── Phase 5 — OTA primitives ──────────────────────────────────────────────
+  // Low-level, transport-only. The orchestration / windowed protocol /
+  // reconnect / verify lives in services/firmwareTransfer.ts and
+  // services/otaOrchestrator.ts. The manager only knows how to push bytes
+  // and watch the status pipe.
+
+  /**
+   * Returns the current connected device, for the OTA orchestrator's reconnect
+   * flow (it needs to monitor disconnect signals on the *new* device after a
+   * reboot, and re-subscribe to characteristics on it). The orchestrator must
+   * not retain this reference across a disconnect — fetch it fresh post-reconnect.
+   */
+  getConnectedDevice(): Device | null {
+    return this.connectedDevice;
+  }
+
+  /**
+   * Request MTU 517 — the max permitted by the BLE spec. The actual negotiated
+   * MTU depends on what the central + peripheral agree on (Android typically
+   * lands on 247, iOS auto-negotiates around 185). We always ask for the max
+   * and use whatever we get.
+   *
+   * On iOS this is a no-op at the API level (the OS auto-negotiates), so we
+   * can't pass MTU through and `requestMTU` resolves with whatever it knows.
+   * Returns the negotiated MTU, falling back to 23 (the BLE spec default) if
+   * the call isn't supported or fails — chunkSize then becomes 20, which is
+   * slow but always safe.
+   */
+  async requestOtaMtu(): Promise<number> {
+    if (!this.connectedDevice) {
+      throw new Error('ChargerBle: Not connected');
+    }
+    try {
+      const updated = await this.connectedDevice.requestMTU(517);
+      // The Device proxy exposes the negotiated MTU on the returned object.
+      // If unavailable, default to 23 — the BLE spec minimum.
+      const mtu = (updated as any)?.mtu ?? 23;
+      console.log(`[OTA] negotiated MTU=${mtu} (chunkSize=${Math.max(20, mtu - 3)})`);
+      return mtu;
+    } catch (e) {
+      console.warn('[OTA] requestMTU failed, falling back to 23:', e);
+      return 23;
+    }
+  }
+
+  /**
+   * Subscribe to the OTA status notify pipe (0xFF27). The 5-byte payload is
+   * [status_code: u8][bytes_received: u32 LE]; we parse and forward to the
+   * caller. Subscription lifetime is owned by the caller — call .remove() on
+   * the returned object when done. We DON'T add this subscription to
+   * `this.subscriptions` because the orchestrator needs to manage its
+   * lifecycle independently of normal connect/disconnect (and re-subscribe
+   * on the new device after reconnect).
+   */
+  subscribeOtaStatus(
+    handler: (code: number, bytesReceived: number) => void,
+  ): Subscription {
+    if (!this.connectedDevice) {
+      throw new Error('ChargerBle: Not connected');
+    }
+    return this.connectedDevice.monitorCharacteristicForService(
+      CHARGER_SERVICE_UUID,
+      CHAR_OTA_STATUS,
+      (error: BleError | null, characteristic: any) => {
+        if (error) {
+          // EOF / cancellation surfaces here on disconnect — that's expected
+          // mid-OTA (the charger reboots). The orchestrator's disconnect
+          // listener handles the actual state transition.
+          if (!error.message?.includes('cancelled')) {
+            console.warn(`[OTA] status monitor error: ${error.message}`);
+          }
+          return;
+        }
+        if (!characteristic?.value) return;
+        const bytes = Buffer.from(characteristic.value, 'base64');
+        if (bytes.length < 5) {
+          console.warn(`[OTA] short status payload: ${bytes.length} bytes`);
+          return;
+        }
+        const code = bytes[0];
+        // u32 little-endian — DataView handles alignment cleanly.
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        const bytesReceived = view.getUint32(1, true);
+        handler(code, bytesReceived);
+      },
+    );
+  }
+
+  /**
+   * Write an OTA command to the cmd dispatcher characteristic (0xFF05) with
+   * an optional payload. Format on the wire: [cmd: u8, ...payload]. Uses
+   * write-with-response for reliability (the charger ACKs the write before
+   * we proceed to the next state).
+   */
+  async writeOtaCommand(cmd: number, payload?: Uint8Array): Promise<void> {
+    if (!this.connectedDevice) {
+      throw new Error('ChargerBle: Not connected');
+    }
+    const len = 1 + (payload?.byteLength ?? 0);
+    const buf = Buffer.alloc(len);
+    buf[0] = cmd;
+    if (payload) {
+      buf.set(payload, 1);
+    }
+    await this.connectedDevice.writeCharacteristicWithResponseForService(
+      CHARGER_SERVICE_UUID,
+      CHAR_CONFIG_CMD,
+      buf.toString('base64'),
+    );
+  }
+
+  /**
+   * Write a single OTA data chunk to 0xFF26 with no link-layer ACK — this is
+   * the hot path. With windowing on top (see firmwareTransfer.ts), we trade
+   * per-chunk ACK reliability for bulk throughput, then catch up on the
+   * status pipe every 16 chunks.
+   */
+  async writeOtaChunk(chunk: Uint8Array): Promise<void> {
+    if (!this.connectedDevice) {
+      throw new Error('ChargerBle: Not connected');
+    }
+    const buf = Buffer.from(chunk);
+    await this.connectedDevice.writeCharacteristicWithoutResponseForService(
+      CHARGER_SERVICE_UUID,
+      CHAR_OTA_DATA,
+      buf.toString('base64'),
+    );
+  }
+
+  /**
+   * Read the firmware version characteristic and return the decoded semver
+   * string ("MAJOR.MINOR.PATCH" or "MAJOR.MINOR.PATCH+BUILD"). Used by the
+   * OTA orchestrator after reconnect to confirm the new image booted before
+   * sending CMD_OTA_VERIFY.
+   */
+  async readFirmwareVersion(): Promise<string | null> {
+    if (!this.connectedDevice) return null;
+    try {
+      const ch = await this.connectedDevice.readCharacteristicForService(
+        CHARGER_SERVICE_UUID,
+        CHAR_FW_VERSION,
+      );
+      return decodeFirmwareVersion(ch.value);
+    } catch (e) {
+      console.warn('[OTA] readFirmwareVersion failed:', e);
+      return null;
+    }
   }
 
   /**

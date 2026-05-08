@@ -46,13 +46,23 @@ interface AppState {
   // OTA flow state — NOT persisted (resets on every launch).
   // Phase 4 extends this enum: 'downloading' (fetching .bin),
   // 'verifying' (computing SHA256), 'ready' (verified, bytes in memory).
-  // Phase 5 will add the actual flash states.
+  // Phase 5 adds the flash states:
+  //   'transferring'  — bytes streaming to charger via 0xFF26
+  //   'rebooting'     — charger received OTA_END, restarting
+  //   'reconnecting'  — scanning + reconnecting to the new image
+  //   'finalizing'    — sending CMD_OTA_VERIFY, awaiting VERIFIED notify
+  //   'done'          — success terminal; UI auto-clears to 'idle' after a beat
   otaState:
     | 'idle'
     | 'checking'
     | 'downloading'
     | 'verifying'
     | 'ready'
+    | 'transferring'
+    | 'rebooting'
+    | 'reconnecting'
+    | 'finalizing'
+    | 'done'
     | 'error';
   otaError: string | null;
   // Phase 4 ephemeral progress fields. Live alongside `otaProgress`
@@ -115,6 +125,11 @@ interface AppState {
       | 'downloading'
       | 'verifying'
       | 'ready'
+      | 'transferring'
+      | 'rebooting'
+      | 'reconnecting'
+      | 'finalizing'
+      | 'done'
       | 'error',
   ) => void;
   setOtaError: (e: string | null) => void;

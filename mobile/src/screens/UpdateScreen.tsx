@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useEffect, useRef} from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
   Linking,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {useAppStore} from '../store/useAppStore';
@@ -14,7 +16,9 @@ import {
   cancelOtaPreparation,
   getReadyOtaSha256,
 } from '../services/otaController';
+import {flashChargerFirmware} from '../services/otaOrchestrator';
 import {formatVersion} from '../services/semver';
+import {activateKeepAwake, deactivateKeepAwake} from '../utils/keepAwake';
 
 interface UpdateScreenProps {
   onClose: () => void;
@@ -60,6 +64,7 @@ export default function UpdateScreen({onClose}: UpdateScreenProps) {
   const latestReleaseUrl = useAppStore(s => s.latestReleaseUrl);
   const latestReleaseSize = useAppStore(s => s.latestReleaseSize);
   const latestReleaseNotes = useAppStore(s => s.latestReleaseNotes);
+  const chargerBleStatus = useAppStore(s => s.chargerBleStatus);
 
   // Phase 4 — OTA flow state.
   const otaState = useAppStore(s => s.otaState);
@@ -68,11 +73,25 @@ export default function UpdateScreen({onClose}: UpdateScreenProps) {
   const otaBytesReceived = useAppStore(s => s.otaBytesReceived);
   const otaBytesTotal = useAppStore(s => s.otaBytesTotal);
 
+  // Phase 5 — pre-flight modal + abort controller for the flash flow.
+  // The flash AbortController is owned by the screen so the user can cancel
+  // mid-transfer. Recreated for each flash attempt.
+  const [showPreflight, setShowPreflight] = React.useState(false);
+  const flashAbortRef = useRef<AbortController | null>(null);
+
   const hasRelease = !!latestReleaseVersion;
   const isInFlight =
     otaState === 'checking' ||
     otaState === 'downloading' ||
     otaState === 'verifying';
+
+  // Phase 5 in-flight: any state where a flash is actively running. Determines
+  // whether the screen shows transfer/reboot/etc UI vs. the install button.
+  const isFlashing =
+    otaState === 'transferring' ||
+    otaState === 'rebooting' ||
+    otaState === 'reconnecting' ||
+    otaState === 'finalizing';
 
   const startInstall = () => {
     // prepareOtaPayload swallows its own errors into the store. Don't await.
@@ -82,6 +101,77 @@ export default function UpdateScreen({onClose}: UpdateScreenProps) {
   const onCancel = () => {
     cancelOtaPreparation();
   };
+
+  // ── Phase 5 — flash flow handlers ───────────────────────────────────────
+  // The flash flow is gated behind a pre-flight modal that warns the user
+  // about charger-must-be-off and stay-foreground requirements. Tapping the
+  // primary modal action kicks off the orchestrator.
+
+  const onFlashRequest = () => {
+    setShowPreflight(true);
+  };
+
+  const onPreflightCancel = () => {
+    setShowPreflight(false);
+  };
+
+  const onPreflightConfirm = () => {
+    setShowPreflight(false);
+    // Abort any prior run defensively; create a fresh controller.
+    flashAbortRef.current?.abort();
+    const controller = new AbortController();
+    flashAbortRef.current = controller;
+
+    // Wake-lock for the duration. Released in the finally below + on unmount.
+    activateKeepAwake();
+
+    // Errors already routed to otaState='error' + otaError by the
+    // orchestrator — we just need to drop the wake-lock either way.
+    // (Skipping `.finally` because TS lib is targeting es2017.)
+    const releaseWakeLock = () => deactivateKeepAwake();
+    flashChargerFirmware({
+      signal: controller.signal,
+      // Progress + phase already pushed into the store by the orchestrator —
+      // we don't need to wire them through the screen.
+    }).then(releaseWakeLock, releaseWakeLock);
+    // Don't clear flashAbortRef — we want signal.aborted to remain true
+    // for any late callbacks from the orchestrator. The next flash
+    // attempt creates a fresh controller anyway.
+  };
+
+  const onFlashCancel = () => {
+    flashAbortRef.current?.abort();
+  };
+
+  // Auto-clear `done` → `idle` after a few seconds so the success UI doesn't
+  // stick around forever. Releases wake-lock too in case it slipped past.
+  useEffect(() => {
+    if (otaState === 'done') {
+      const t = setTimeout(() => {
+        const s = useAppStore.getState();
+        // Only revert if we're still in 'done' — guard against rapid fire.
+        if (s.otaState === 'done') {
+          s.setOtaState('idle');
+        }
+      }, 3000);
+      return () => clearTimeout(t);
+    }
+    // Defensive: if the screen rerenders into idle/error after a flash,
+    // make sure the wake-lock was released.
+    if (otaState === 'idle' || otaState === 'error') {
+      deactivateKeepAwake();
+    }
+    return undefined;
+  }, [otaState]);
+
+  // On unmount, drop wake-lock and abort any in-flight flash. Backstops the
+  // happy-path cleanup above.
+  useEffect(() => {
+    return () => {
+      deactivateKeepAwake();
+      flashAbortRef.current?.abort();
+    };
+  }, []);
 
   const notesPreview = (() => {
     if (!latestReleaseNotes) {
@@ -167,10 +257,17 @@ export default function UpdateScreen({onClose}: UpdateScreenProps) {
         ) : null}
       </View>
 
-      {/* Install CTA area — Phase 4.
-          Phase 4 adds download + SHA256 verify. The "Ready to flash"
-          terminal state is intentionally non-actionable; Phase 5 will
-          enable the actual BLE OTA push. */}
+      {/* Install CTA area — Phase 5.
+          Pipeline:
+            (no payload)            → "Install update" — runs prepareOtaPayload
+            checking/downloading/   → progress card with cancel
+              verifying
+            ready                   → "Flash now" CTA (gated behind preflight modal)
+            transferring/rebooting/ → flash progress card (cancel in transferring only)
+              reconnecting/finalizing
+            done                    → success card (auto-dismisses to idle)
+            error                   → error message + "Try again" / "Close"
+      */}
       <View style={styles.ctaContainer}>
         {isInFlight ? (
           <View style={styles.progressCard}>
@@ -218,13 +315,106 @@ export default function UpdateScreen({onClose}: UpdateScreenProps) {
               <Text style={styles.cancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
+        ) : isFlashing ? (
+          <View style={styles.progressCard}>
+            <Text style={styles.progressLabel}>
+              {otaState === 'transferring'
+                ? 'Sending firmware…'
+                : otaState === 'rebooting'
+                ? 'Charger restarting…'
+                : otaState === 'reconnecting'
+                ? 'Reconnecting (this can take up to 30 seconds)…'
+                : 'Verifying update…'}
+            </Text>
+
+            {otaState === 'transferring' ? (
+              <>
+                <View style={styles.progressBarTrack}>
+                  <View
+                    style={[
+                      styles.progressBarFill,
+                      {
+                        width: `${Math.round(
+                          Math.max(0, Math.min(1, otaProgress)) * 100,
+                        )}%`,
+                      },
+                    ]}
+                  />
+                </View>
+                {otaBytesReceived !== null &&
+                otaBytesTotal !== null &&
+                otaBytesTotal > 0 ? (
+                  <Text style={styles.progressBytes}>
+                    {formatBytesShort(otaBytesReceived)}
+                    {' / '}
+                    {formatBytesShort(otaBytesTotal)}
+                  </Text>
+                ) : (
+                  <Text style={styles.progressBytes}>
+                    {Math.round(
+                      Math.max(0, Math.min(1, otaProgress)) * 100,
+                    )}
+                    %
+                  </Text>
+                )}
+                <TouchableOpacity
+                  onPress={onFlashCancel}
+                  style={styles.cancelButton}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel flash">
+                  <Text style={styles.cancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              // rebooting / reconnecting / finalizing — spinner + caption.
+              // Cancel is intentionally NOT offered here: once the OTA_END
+              // is sent, aborting on the mobile side does nothing useful;
+              // the bootloader will roll back if anything's off.
+              <View style={styles.spinnerWrapper}>
+                <ActivityIndicator size="large" color="#00C853" />
+              </View>
+            )}
+          </View>
+        ) : otaState === 'done' ? (
+          <View style={styles.doneCard}>
+            <Icon name="check-circle" size={32} color="#00C853" />
+            <Text style={styles.doneText}>
+              Updated to{' '}
+              {chargerFirmwareVersion
+                ? formatVersion(chargerFirmwareVersion)
+                : ''}
+            </Text>
+          </View>
         ) : otaState === 'ready' ? (
           <>
-            <View style={styles.readyButton}>
-              <Icon name="check-circle" size={18} color="#9E9E9E" />
-              <Text style={styles.readyText}>Ready to flash</Text>
-            </View>
-            <Text style={styles.ctaHelper}>Coming in next update</Text>
+            <TouchableOpacity
+              onPress={onFlashRequest}
+              disabled={chargerBleStatus !== 'connected'}
+              style={[
+                styles.installButton,
+                chargerBleStatus !== 'connected' &&
+                  styles.installButtonDisabledState,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Flash firmware now">
+              <Icon
+                name="flash"
+                size={18}
+                color={chargerBleStatus === 'connected' ? '#0D0D0D' : '#666'}
+              />
+              <Text
+                style={[
+                  styles.installText,
+                  chargerBleStatus !== 'connected' && styles.installTextDisabled,
+                ]}>
+                Flash now
+              </Text>
+            </TouchableOpacity>
+            {chargerBleStatus !== 'connected' ? (
+              <Text style={styles.ctaHelper}>
+                Connect to the charger to flash
+              </Text>
+            ) : null}
             {(() => {
               const hex = getReadyOtaSha256();
               return hex ? (
@@ -266,6 +456,52 @@ export default function UpdateScreen({onClose}: UpdateScreenProps) {
           </>
         )}
       </View>
+
+      {/* Pre-flight modal — shown before kicking off the flash flow. */}
+      <Modal
+        visible={showPreflight}
+        transparent
+        animationType="fade"
+        onRequestClose={onPreflightCancel}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Icon
+              name="alert-circle-outline"
+              size={32}
+              color="#F4A340"
+              style={styles.modalIcon}
+            />
+            <Text style={styles.modalTitle}>Before you flash</Text>
+            <Text style={styles.modalBody}>
+              • Make sure the charger is{' '}
+              <Text style={styles.modalBold}>OFF</Text> (not charging).{'\n'}
+              • Keep the app foreground for ~1-2 minutes.{'\n'}
+              • Don't lock your screen.
+            </Text>
+            <Text style={styles.modalBody}>
+              The charger will restart and reconnect automatically. If anything
+              goes wrong the bootloader will roll back to the previous version
+              on the next power cycle.
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                onPress={onPreflightCancel}
+                style={styles.modalCancel}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel flash">
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={onPreflightConfirm}
+                style={styles.modalConfirm}
+                accessibilityRole="button"
+                accessibilityLabel="Start flashing">
+                <Text style={styles.modalConfirmText}>Start</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <TouchableOpacity
         onPress={onClose}
@@ -404,26 +640,86 @@ const styles = StyleSheet.create({
   installTextDisabled: {
     color: '#666',
   },
-  // "Ready to flash" terminal state — intentionally non-actionable. Phase 5
-  // will enable the actual BLE OTA push and replace this with a button.
-  readyButton: {
-    flexDirection: 'row',
+  // Phase 5 — flash-flow UI styles.
+  spinnerWrapper: {
+    paddingVertical: 16,
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    backgroundColor: '#1A1A1A',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#333',
-    minWidth: 200,
-    gap: 8,
-    opacity: 0.7,
   },
-  readyText: {
-    color: '#9E9E9E',
+  doneCard: {
+    width: '100%',
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    padding: 24,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#00C853',
+  },
+  doneText: {
+    color: '#E0E0E0',
     fontSize: 16,
     fontWeight: '600',
+    marginTop: 12,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  modalCard: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalIcon: {
+    alignSelf: 'center',
+    marginBottom: 8,
+  },
+  modalTitle: {
+    color: '#E0E0E0',
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  modalBody: {
+    color: '#C0C0C0',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 12,
+  },
+  modalBold: {
+    color: '#F4A340',
+    fontWeight: '700',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginTop: 12,
+  },
+  modalCancel: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 6,
+  },
+  modalCancelText: {
+    color: '#9E9E9E',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  modalConfirm: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: '#00C853',
+    borderRadius: 6,
+  },
+  modalConfirmText: {
+    color: '#0D0D0D',
+    fontSize: 15,
+    fontWeight: '700',
   },
   shaText: {
     color: '#666',
