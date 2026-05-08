@@ -103,9 +103,11 @@ export default function UpdateScreen({onClose}: UpdateScreenProps) {
   };
 
   // ── Phase 5 — flash flow handlers ───────────────────────────────────────
-  // The flash flow is gated behind a pre-flight modal that warns the user
-  // about charger-must-be-off and stay-foreground requirements. Tapping the
-  // primary modal action kicks off the orchestrator.
+  // The flash flow is gated behind a pre-flight modal that confirms the user
+  // wants to proceed and reminds them of the stay-foreground requirement.
+  // Charging is force-paused by firmware during OTA and resumed on completion,
+  // so the user no longer needs to manually disable it. Tapping the primary
+  // modal action kicks off the orchestrator.
 
   const onFlashRequest = () => {
     setShowPreflight(true);
@@ -471,12 +473,11 @@ export default function UpdateScreen({onClose}: UpdateScreenProps) {
               color="#F4A340"
               style={styles.modalIcon}
             />
-            <Text style={styles.modalTitle}>Before you flash</Text>
+            <Text style={styles.modalTitle}>Update charger firmware?</Text>
             <Text style={styles.modalBody}>
-              • Make sure the charger is{' '}
-              <Text style={styles.modalBold}>OFF</Text> (not charging).{'\n'}
-              • Keep the app foreground for ~1-2 minutes.{'\n'}
-              • Don't lock your screen.
+              Charging will pause during the update and resume when it's done.
+              Make sure the vehicle is parked. Keep the app open and don't lock
+              the screen — the update takes about a minute.
             </Text>
             <Text style={styles.modalBody}>
               The charger will restart and reconnect automatically. If anything
