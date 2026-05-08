@@ -6,12 +6,41 @@ import {useAppStore} from '../store/useAppStore';
 import {paoBleManager} from '../ble/PaoBleManager';
 import {chargerBleManager} from '../ble/ChargerBleManager';
 import {requestBlePermissions} from '../utils/permissions';
+import {checkForChargerUpdate} from '../services/otaController';
+import {compare, formatVersion, parse} from '../services/semver';
 import _ScreenBrightness from 'react-native-screen-brightness';
 import {PageHeader} from '../components/PageHeader';
 const ScreenBrightness = _ScreenBrightness as any;
 
 const PAO_DEVICE_ID_KEY = 'pao_device_id';
 const CHARGER_DEVICE_ID_KEY = 'charger_device_id';
+
+// Tiny relative-time formatter for the "Last checked" line. Intentionally
+// coarse — we don't need second-level granularity here.
+function formatRelative(now: number, then: number | null): string {
+  if (then === null) {
+    return 'Never';
+  }
+  const deltaMs = now - then;
+  if (deltaMs < 0) {
+    // Clock skew — clamp to "Just now".
+    return 'Just now';
+  }
+  const sec = Math.floor(deltaMs / 1000);
+  if (sec < 60) {
+    return 'Just now';
+  }
+  const min = Math.floor(sec / 60);
+  if (min < 60) {
+    return `${min} minute${min === 1 ? '' : 's'} ago`;
+  }
+  const hr = Math.floor(min / 60);
+  if (hr < 24) {
+    return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+  }
+  const days = Math.floor(hr / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
 
 export default function SettingsScreen() {
   const bleStatus = useAppStore(state => state.bleStatus);
@@ -40,7 +69,19 @@ export default function SettingsScreen() {
   const socWarnThresholdPct = useAppStore(state => state.socWarnThresholdPct);
   const setSocWarnThresholdPct = useAppStore(state => state.setSocWarnThresholdPct);
   const chargerFirmwareVersion = useAppStore(state => state.chargerFirmwareVersion);
+  const otaState = useAppStore(state => state.otaState);
+  const otaError = useAppStore(state => state.otaError);
+  const latestReleaseCheckedAt = useAppStore(state => state.latestReleaseCheckedAt);
+  const latestReleaseVersion = useAppStore(state => state.latestReleaseVersion);
   const [hasWriteSettings, setHasWriteSettings] = useState<boolean | null>(null);
+  // Tick once a minute so the "Last checked" relative time updates without
+  // forcing a re-render of the rest of the screen. Cheap; runs only while
+  // SettingsScreen is mounted.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     ScreenBrightness.hasPermission().then(setHasWriteSettings).catch(() => setHasWriteSettings(false));
@@ -137,6 +178,61 @@ export default function SettingsScreen() {
     chargerBleManager.disconnect();
     setChargerData(null);
     AsyncStorage.removeItem(CHARGER_DEVICE_ID_KEY).catch(() => {});
+  };
+
+  // Phase 3: forced GitHub release check.
+  // The banner is the primary "you have an update" signal — this button is
+  // for users who want to verify they're current. So:
+  //   - If the request fails, show the error.
+  //   - If the running version is unknown OR unparseable, say so honestly.
+  //     We must NOT silently say "up to date" in that case — that's how the
+  //     "vv0.0.0 / Up to date" bug masked the real "0.0.0 vs 0.1.0" mismatch.
+  //   - If no release exists, say "No releases available yet" (also distinct
+  //     from "up to date").
+  //   - If a release is found AND it's newer than running fw, say nothing
+  //     (the banner already conveys that; alerting too would be noisy).
+  //   - Otherwise, alert "You're on the latest version".
+  const handleCheckForUpdates = async () => {
+    const result = await checkForChargerUpdate({force: true});
+    if (!result.ok) {
+      Alert.alert('Update check failed', result.errorMessage ?? 'Unknown error');
+      return;
+    }
+    // Re-read the freshly-set values (the controller has already updated the store).
+    const {
+      chargerFirmwareVersion: fw,
+      latestReleaseVersion: latest,
+    } = useAppStore.getState();
+
+    // Distinguish all four real states honestly. Order matters: handle the
+    // "unknown running version" case BEFORE comparing, otherwise a null fw
+    // would fall through and we'd silently say "up to date".
+    if (!fw) {
+      Alert.alert(
+        "Couldn't determine running firmware",
+        'Connect to the charger to check for updates.',
+      );
+      return;
+    }
+    if (!parse(fw)) {
+      Alert.alert(
+        "Couldn't determine running firmware",
+        `The charger reported an unrecognized firmware version (${fw}). Please reconnect or reflash.`,
+      );
+      return;
+    }
+    if (!latest) {
+      Alert.alert('No releases available yet', 'No published charger firmware release was found.');
+      return;
+    }
+    if (compare(latest, fw) === 1) {
+      // Newer release exists — banner is already showing. Stay silent.
+      return;
+    }
+    Alert.alert(
+      "You're on the latest version",
+      `Running ${formatVersion(fw)}.`,
+    );
   };
 
   return (
@@ -241,8 +337,29 @@ export default function SettingsScreen() {
         <View style={styles.row}>
           <View style={styles.rowText}>
             <Text style={styles.label}>Charger firmware</Text>
+            {latestReleaseVersion ? (
+              <Text style={styles.hint}>Latest available: {formatVersion(latestReleaseVersion)}</Text>
+            ) : null}
           </View>
-          <Text style={styles.value}>{chargerFirmwareVersion ?? '—'}</Text>
+          <Text style={styles.value}>{chargerFirmwareVersion ? formatVersion(chargerFirmwareVersion) : '—'}</Text>
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>Check for updates</Text>
+            <Text style={styles.hint}>
+              {otaState === 'error' && otaError
+                ? otaError
+                : `Last checked: ${formatRelative(now, latestReleaseCheckedAt)}`}
+            </Text>
+          </View>
+          <Button
+            mode="contained"
+            onPress={handleCheckForUpdates}
+            disabled={otaState === 'checking'}
+            style={styles.bleButton}>
+            {otaState === 'checking' ? 'Checking…' : 'Check'}
+          </Button>
         </View>
       </View>
 
