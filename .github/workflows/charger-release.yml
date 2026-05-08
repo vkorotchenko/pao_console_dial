@@ -27,6 +27,10 @@ jobs:
         with:
           # Full history so gen_version.py can fall back to `git describe` if needed.
           fetch-depth: 0
+          # `charger/` is a git submodule (vkorotchenko/pao_charger). Without this,
+          # the directory would be empty in CI and the PlatformIO build would fail.
+          # `recursive` is defensive in case the submodule itself has nested submodules.
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v5
