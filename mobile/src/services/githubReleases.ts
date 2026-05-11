@@ -6,7 +6,7 @@ import {compare, parse} from './semver';
 //
 // Contract from Phase 2 (charger-release.yml):
 //   - Tag shape:     charger-vMAJOR.MINOR.PATCH[-(rc|beta|alpha).N]
-//   - Repo:          vkorotchenko/pao_console_dial (public)
+//   - Repo:          vkorotchenko/pao_charger (public, submodule of pao_console_dial)
 //   - Asset names:   charger-firmware-<version>.bin
 //                    charger-firmware-<version>.bin.sha256
 //                    (no `v` prefix on the version inside the filename)
@@ -23,10 +23,19 @@ import {compare, parse} from './semver';
 // tag, dev push, etc.).
 const TAG_REGEX = /^charger-v(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?$/;
 
-const RELEASES_URL =
-  'https://api.github.com/repos/vkorotchenko/pao_console_dial/releases?per_page=10';
+// Hoisted so future repo relocations are a one-line edit. Charger releases
+// moved out of the outer pao_console_dial repo into the pao_charger submodule
+// repo on 2026-05-11.
+const RELEASES_REPO = 'vkorotchenko/pao_charger';
 
-const STORAGE_KEY = 'pao.gh.releases.charger';
+const RELEASES_URL = `https://api.github.com/repos/${RELEASES_REPO}/releases?per_page=10`;
+
+// Cache key was bumped from `pao.gh.releases.charger` to `...v2` when the
+// release source moved to pao_charger. Old cache entries (under the v1 key)
+// hold asset URLs that point at pao_console_dial and must not be served.
+// Bumping the key forces a clean miss; the old key is left to age out — there
+// is no migration step.
+const STORAGE_KEY = 'pao.gh.releases.charger.v2';
 const TTL_MS = 60 * 60 * 1_000; // 1 hour
 
 // User-Agent is REQUIRED by the GitHub API. Without it, requests return 403.

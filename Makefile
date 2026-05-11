@@ -53,7 +53,7 @@ clean-controller: ## Clean controller build artifacts
 
 .PHONY: build-charger upload-charger monitor-charger clean-charger release-charger-patch release-charger-minor release-charger-major
 
-build-charger: ## Build charger firmware (SAMD21)
+build-charger: ## Build charger firmware (ESP32 V2)
 	cd charger && pio run
 
 upload-charger: ## Upload charger firmware to device
@@ -65,12 +65,18 @@ monitor-charger: ## Open serial monitor for charger device
 clean-charger: ## Clean charger build artifacts
 	cd charger && pio run -t clean
 
-release-charger-patch: ## Bump charger patch version, tag, and push (auto-detects next version from charger-v* tags)
-	@if ! git diff --quiet || ! git diff --cached --quiet; then \
-		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+release-charger-patch: ## Bump charger patch version, tag, and push (auto-detects next version from charger-v* tags in submodule)
+	@if ! git -C charger diff --quiet || ! git -C charger diff --cached --quiet; then \
+		echo "❌ charger submodule working tree is dirty. Commit or stash changes inside charger/ before tagging a release."; \
 		exit 1; \
 	fi
-	@latest=$$(git tag -l 'charger-v*' | sort -V | tail -n 1); \
+	@echo "Fetching charger submodule origin..."; \
+	git -C charger fetch origin >/dev/null 2>&1 || { echo "❌ Failed to fetch charger submodule origin."; exit 1; }; \
+	if ! git -C charger merge-base --is-ancestor HEAD origin/main; then \
+		echo "❌ Submodule HEAD is ahead of origin. cd charger && git push, then retry."; \
+		exit 1; \
+	fi
+	@latest=$$(git -C charger tag -l 'charger-v*' | sort -V | tail -n 1); \
 	if [ -z "$$latest" ]; then \
 		next="0.0.1"; \
 	else \
@@ -81,21 +87,27 @@ release-charger-patch: ## Bump charger patch version, tag, and push (auto-detect
 		next="$$major.$$minor.$$((patch + 1))"; \
 	fi; \
 	tag="charger-v$$next"; \
-	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
-		echo "❌ Tag $$tag already exists. Aborting."; \
+	if git -C charger rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists in submodule. Aborting."; \
 		exit 1; \
 	fi; \
 	echo "Releasing charger v$$next..."; \
-	git tag -a "$$tag" -m "Charger release v$$next" && \
-	git push origin "$$tag" && \
-	echo "✅ Tagged and pushed $$tag"
+	git -C charger tag -a "$$tag" -m "Charger release v$$next" && \
+	git -C charger push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag (in charger submodule)"
 
-release-charger-minor: ## Bump charger minor version, tag, and push (auto-detects next version from charger-v* tags)
-	@if ! git diff --quiet || ! git diff --cached --quiet; then \
-		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+release-charger-minor: ## Bump charger minor version, tag, and push (auto-detects next version from charger-v* tags in submodule)
+	@if ! git -C charger diff --quiet || ! git -C charger diff --cached --quiet; then \
+		echo "❌ charger submodule working tree is dirty. Commit or stash changes inside charger/ before tagging a release."; \
 		exit 1; \
 	fi
-	@latest=$$(git tag -l 'charger-v*' | sort -V | tail -n 1); \
+	@echo "Fetching charger submodule origin..."; \
+	git -C charger fetch origin >/dev/null 2>&1 || { echo "❌ Failed to fetch charger submodule origin."; exit 1; }; \
+	if ! git -C charger merge-base --is-ancestor HEAD origin/main; then \
+		echo "❌ Submodule HEAD is ahead of origin. cd charger && git push, then retry."; \
+		exit 1; \
+	fi
+	@latest=$$(git -C charger tag -l 'charger-v*' | sort -V | tail -n 1); \
 	if [ -z "$$latest" ]; then \
 		next="0.1.0"; \
 	else \
@@ -105,21 +117,27 @@ release-charger-minor: ## Bump charger minor version, tag, and push (auto-detect
 		next="$$major.$$((minor + 1)).0"; \
 	fi; \
 	tag="charger-v$$next"; \
-	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
-		echo "❌ Tag $$tag already exists. Aborting."; \
+	if git -C charger rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists in submodule. Aborting."; \
 		exit 1; \
 	fi; \
 	echo "Releasing charger v$$next..."; \
-	git tag -a "$$tag" -m "Charger release v$$next" && \
-	git push origin "$$tag" && \
-	echo "✅ Tagged and pushed $$tag"
+	git -C charger tag -a "$$tag" -m "Charger release v$$next" && \
+	git -C charger push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag (in charger submodule)"
 
-release-charger-major: ## Bump charger major version, tag, and push (auto-detects next version from charger-v* tags)
-	@if ! git diff --quiet || ! git diff --cached --quiet; then \
-		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+release-charger-major: ## Bump charger major version, tag, and push (auto-detects next version from charger-v* tags in submodule)
+	@if ! git -C charger diff --quiet || ! git -C charger diff --cached --quiet; then \
+		echo "❌ charger submodule working tree is dirty. Commit or stash changes inside charger/ before tagging a release."; \
 		exit 1; \
 	fi
-	@latest=$$(git tag -l 'charger-v*' | sort -V | tail -n 1); \
+	@echo "Fetching charger submodule origin..."; \
+	git -C charger fetch origin >/dev/null 2>&1 || { echo "❌ Failed to fetch charger submodule origin."; exit 1; }; \
+	if ! git -C charger merge-base --is-ancestor HEAD origin/main; then \
+		echo "❌ Submodule HEAD is ahead of origin. cd charger && git push, then retry."; \
+		exit 1; \
+	fi
+	@latest=$$(git -C charger tag -l 'charger-v*' | sort -V | tail -n 1); \
 	if [ -z "$$latest" ]; then \
 		next="1.0.0"; \
 	else \
@@ -128,14 +146,14 @@ release-charger-major: ## Bump charger major version, tag, and push (auto-detect
 		next="$$((major + 1)).0.0"; \
 	fi; \
 	tag="charger-v$$next"; \
-	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
-		echo "❌ Tag $$tag already exists. Aborting."; \
+	if git -C charger rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists in submodule. Aborting."; \
 		exit 1; \
 	fi; \
 	echo "Releasing charger v$$next..."; \
-	git tag -a "$$tag" -m "Charger release v$$next" && \
-	git push origin "$$tag" && \
-	echo "✅ Tagged and pushed $$tag"
+	git -C charger tag -a "$$tag" -m "Charger release v$$next" && \
+	git -C charger push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag (in charger submodule)"
 
 # ─────────────────────────────────────────────────────────────────────────
 # Aggregate Firmware Targets
@@ -206,5 +224,5 @@ reset-android-cache: ## Reset Android build cache
 
 version: ## Show project version info
 	@echo "PAO Console Dial — Multi-project Build System"
-	@echo "Firmware sub-projects: peripheral (ESP32-S3), controller (SAMD21), charger (SAMD21)"
+	@echo "Firmware sub-projects: peripheral (ESP32-S3), controller (SAMD21), charger (ESP32 V2)"
 	@echo "Mobile app: React Native"
