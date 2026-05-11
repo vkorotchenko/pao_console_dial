@@ -16,3 +16,5 @@
 .claude/
 .squad/agents/*
 .gitignore
+mobile/paoconsole-release.jks
+mobile/paoconsole-release.jks.b64
