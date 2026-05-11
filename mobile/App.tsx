@@ -10,6 +10,7 @@ import {
   getCachedAppVersion,
   getCachedAppBuildNumber,
 } from './src/services/appVersion';
+import {checkForMobileUpdate} from './src/services/mobileUpdateController';
 
 LogBox.ignoreLogs(['Cannot start scanning operation']);
 
@@ -25,6 +26,14 @@ function App(): React.JSX.Element {
         useAppStore.getState().setAppVersion(v, b);
       }
     });
+  }, []);
+
+  // Phase 3 of mobile self-update: fire-and-forget GitHub release check on
+  // mount, mirroring the charger detection in AppNavigator. Errors land in
+  // the store as appUpdateState='error' — never bubble. 1-hour TTL inside the
+  // service prevents thrashing on rapid app relaunches.
+  useEffect(() => {
+    checkForMobileUpdate().catch(() => {});
   }, []);
 
   return (
