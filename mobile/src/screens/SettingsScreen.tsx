@@ -7,6 +7,8 @@ import {
   Alert,
   ActivityIndicator,
   TouchableOpacity,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
 import {Switch, SegmentedButtons, Button} from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -561,6 +563,38 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
       deactivateKeepAwake();
     }
   }, [appUpdateState]);
+
+  // Install-hang recovery. The 'installing' state is set right before we fire
+  // the system install intent. On the success path Android kills our process
+  // and the new APK replaces us — this listener never fires. If the user taps
+  // Cancel on the system dialog, or Android refuses the install (e.g. signing
+  // mismatch), control returns to us with `appUpdateState` stuck at
+  // 'installing' and the UI showing "Waiting for installer…" indefinitely.
+  //
+  // Detect that case by listening for AppState → 'active' while we're in the
+  // installing state. The 1.5s delay is a race-tolerance window: if Android
+  // is going to replace us, the process dies within milliseconds, so a
+  // sustained 'installing' state after a foreground transition means the
+  // install didn't go through.
+  useEffect(() => {
+    const sub = AppState.addEventListener(
+      'change',
+      (next: AppStateStatus) => {
+        if (next !== 'active') return;
+        // Read fresh — the outer-closure value may be stale.
+        if (useAppStore.getState().appUpdateState !== 'installing') return;
+        setTimeout(() => {
+          const s = useAppStore.getState();
+          if (s.appUpdateState !== 'installing') return;
+          s.setAppUpdateError(
+            'Install was cancelled or refused. The downloaded update may be signed with a different key than the installed app — try downloading and installing the APK manually once.',
+          );
+          s.setAppUpdateState('error');
+        }, 1500);
+      },
+    );
+    return () => sub.remove();
+  }, []);
 
   const onAppUpdateCancel = () => {
     cancelAppUpdatePreparation();
