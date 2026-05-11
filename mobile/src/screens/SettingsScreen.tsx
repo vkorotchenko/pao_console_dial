@@ -315,14 +315,12 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       latestReleaseVersion: latest,
     } = useAppStore.getState();
 
-    if (!fw) {
-      Alert.alert(
-        "Couldn't determine running firmware",
-        'Connect to the charger to check for updates.',
-      );
-      return;
-    }
-    if (!parse(fw)) {
+    // Note: the "no running firmware version" branch is unreachable here
+    // because the Check button is gated on charger BLE connection. If we
+    // can't talk to the charger, we never reach this handler. The
+    // "unrecognized version string" branch below is still reachable —
+    // charger may be connected but reporting a garbage version.
+    if (fw && !parse(fw)) {
       Alert.alert(
         "Couldn't determine running firmware",
         `The charger reported an unrecognized firmware version (${fw}). Please reconnect or reflash.`,
@@ -333,7 +331,12 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       Alert.alert('No releases available yet', 'No published charger firmware release was found.');
       return;
     }
-    if (compare(latest, fw) === 1) {
+    // `fw` defensively guarded: the button is gated on charger BLE connection
+    // so `fw` should be present when we get here. If for some reason it isn't,
+    // we silently no-op rather than alert — the "Last checked" timestamp still
+    // updated via `checkForChargerUpdate`, and the red dot will appear if a
+    // newer release exists once a running version becomes known.
+    if (fw && compare(latest, fw) === 1) {
       // Newer release exists — red dot + contextual button already convey it.
       return;
     }
@@ -1138,18 +1141,16 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
               <Button
                 mode="contained"
                 onPress={onFirmwareButtonPress}
-                disabled={
-                  hasUpdateAvailable &&
-                  chargerBleStatus !== 'connected'
-                }
+                disabled={chargerBleStatus !== 'connected'}
                 style={styles.fwFullWidthButton}>
                 {firmwareButtonLabel}
               </Button>
             </View>
             <Text style={styles.fwHint}>
-              {hasUpdateAvailable &&
-              chargerBleStatus !== 'connected'
-                ? 'Connect to the charger to install the update'
+              {chargerBleStatus !== 'connected'
+                ? hasUpdateAvailable
+                  ? 'Connect to the charger to install the update'
+                  : 'Connect to the charger to check for updates'
                 : `Last checked: ${formatRelative(now, latestReleaseCheckedAt)}`}
             </Text>
           </View>
