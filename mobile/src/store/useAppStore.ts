@@ -78,6 +78,14 @@ interface AppState {
   // even when bleStatus / chargerBleStatus haven't changed value.
   scanTrigger: number;
 
+  // App's own versionName / versionCode (read once at boot from native via
+  // services/appVersion.ts). Persisted so the Settings "App" row doesn't flash
+  // an em-dash on cold start before init resolves — the value rarely changes
+  // and we'll overwrite it on the next boot anyway. Phase 1 of mobile
+  // self-update: display-only.
+  appVersion: string | null;
+  appBuildNumber: string | null;
+
   // Persisted settings
   showGearTab: boolean;
   speedUnit: 'kmh' | 'mph';
@@ -149,6 +157,9 @@ interface AppState {
   // Actions (scan trigger)
   incrementScanTrigger: () => void;
 
+  // Actions (app version)
+  setAppVersion: (version: string, build: string) => void;
+
   // Actions (settings)
   setShowGearTab: (show: boolean) => void;
   setSpeedUnit: (unit: 'kmh' | 'mph') => void;
@@ -199,6 +210,10 @@ export const useAppStore = create<AppState>()(
 
       // Initial state — scan trigger
       scanTrigger: 0,
+
+      // Initial state — app version (overwritten at boot by services/appVersion.ts)
+      appVersion: null,
+      appBuildNumber: null,
 
       // Initial state — settings
       showGearTab: false,
@@ -272,6 +287,10 @@ export const useAppStore = create<AppState>()(
       // Actions — scan trigger
       incrementScanTrigger: () => set(state => ({scanTrigger: state.scanTrigger + 1})),
 
+      // Actions — app version
+      setAppVersion: (version, build) =>
+        set({appVersion: version, appBuildNumber: build}),
+
       // Actions — settings
       setShowGearTab: show => set({showGearTab: show}),
       setSpeedUnit: unit => set({speedUnit: unit}),
@@ -337,6 +356,10 @@ export const useAppStore = create<AppState>()(
         latestReleaseNotes: state.latestReleaseNotes,
         latestReleaseCheckedAt: state.latestReleaseCheckedAt,
         latestReleaseEtag: state.latestReleaseEtag,
+        // App's own version — persisted to avoid an em-dash flash on cold
+        // start. Overwritten by initAppVersion() at every boot.
+        appVersion: state.appVersion,
+        appBuildNumber: state.appBuildNumber,
       }),
     },
   ),

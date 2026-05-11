@@ -29,6 +29,7 @@ const ScreenBrightness = _ScreenBrightness as any;
 
 interface SettingsScreenProps {
   onOpenFirmwareInfo?: () => void;
+  onOpenAppInfo?: () => void;
 }
 
 // Compact form for the in-flight progress UI ("412 KB / 612 KB"). Mirrors the
@@ -85,7 +86,7 @@ function formatRelative(now: number, then: number | null): string {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
-export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps = {}) {
+export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: SettingsScreenProps = {}) {
   const bleStatus = useAppStore(state => state.bleStatus);
   const deviceId = useAppStore(state => state.deviceId);
   const chargerBleStatus = useAppStore(state => state.chargerBleStatus);
@@ -119,6 +120,9 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
   const otaBytesTotal = useAppStore(state => state.otaBytesTotal);
   const latestReleaseCheckedAt = useAppStore(state => state.latestReleaseCheckedAt);
   const latestReleaseVersion = useAppStore(state => state.latestReleaseVersion);
+  // App self-update Phase 1 — display-only. We only need versionName here;
+  // the build number lives in AppInfoScreen for the "details" view.
+  const appVersion = useAppStore(state => state.appVersion);
 
   // ── OTA flash flow state (consolidated into Settings — Phase 5 polish) ──
   // AbortController for the live flash run. We mirror the lifecycle that used
@@ -817,6 +821,37 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
             </Text>
           </View>
         )}
+      </View>
+
+      {/* App Section — Phase 1 of mobile self-update.
+          Display-only: the running app's versionName plus a ⓘ that opens a
+          minimal AppInfoScreen stub. No update detection / banner / button
+          here yet — those land in later phases and will mirror the Firmware
+          section's contextual button + red-dot pattern. */}
+      <Text style={styles.sectionHeader}>App</Text>
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <View style={styles.fwTitleRow}>
+            <Text style={styles.label}>PAO Console</Text>
+            <TouchableOpacity
+              onPress={() => onOpenAppInfo?.()}
+              accessibilityRole="button"
+              accessibilityLabel="Open app info"
+              hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+              style={styles.infoIcon}>
+              <Icon
+                name="information-outline"
+                size={18}
+                color="#5BA8C4"
+              />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.fwVersionRow}>
+            <Text style={styles.value}>
+              {appVersion ? `v${appVersion}` : '—'}
+            </Text>
+          </View>
+        </View>
       </View>
 
       {/* Navigation Section */}

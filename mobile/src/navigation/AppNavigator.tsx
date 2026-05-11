@@ -9,6 +9,7 @@ import ChargerScreen from '../screens/ChargerScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import HUDScreen from '../screens/HUDScreen';
 import FirmwareInfoScreen from '../screens/FirmwareInfoScreen';
+import AppInfoScreen from '../screens/AppInfoScreen';
 import {FloatingIcons} from '../components/FloatingIcons';
 import {useAppStore} from '../store/useAppStore';
 import {paoBleManager, PAO_SERVICE_UUID} from '../ble/PaoBleManager';
@@ -28,7 +29,8 @@ type Screen =
   | 'gear'
   | 'settings'
   | 'hud'
-  | 'firmware-info';
+  | 'firmware-info'
+  | 'app-info';
 
 const SCAN_TIMEOUT_MS = 15_000; // stop scanning after 15s if nothing found
 const MAX_RETRIES = 3;
@@ -536,13 +538,26 @@ export default function AppNavigator() {
     setCurrentScreen('firmware-info');
   };
 
+  // App self-update Phase 1 — minimal info screen reached from Settings → App ⓘ.
+  // Mirrors the firmware-info open/close pair so navigation feels symmetric.
+  const closeAppInfo = () => {
+    Orientation.lockToPortrait();
+    setCurrentScreen('settings');
+  };
+
+  const openAppInfo = () => {
+    Orientation.lockToPortrait();
+    setCurrentScreen('app-info');
+  };
+
   const renderScreen = (screen: Screen) => {
     switch (screen) {
       case 'hud': return <HUDScreen onClose={() => { Orientation.lockToPortrait(); setCurrentScreen('dashboard'); }} />;
       case 'charger': return <ChargerScreen />;
       case 'gear': return <GearScreen />;
-      case 'settings': return <SettingsScreen onOpenFirmwareInfo={openFirmwareInfo} />;
+      case 'settings': return <SettingsScreen onOpenFirmwareInfo={openFirmwareInfo} onOpenAppInfo={openAppInfo} />;
       case 'firmware-info': return <FirmwareInfoScreen onClose={closeFirmwareInfo} />;
+      case 'app-info': return <AppInfoScreen onClose={closeAppInfo} />;
       default: return <DashboardScreen />;
     }
   };
@@ -563,6 +578,17 @@ export default function AppNavigator() {
     return (
       <View style={styles.container}>
         {renderScreen('firmware-info')}
+        <FloatingIcons onNavigate={navigate} showGearTab={showGearTab} currentScreen={currentScreen} isHUD={false} />
+      </View>
+    );
+  }
+
+  // App-info screen: same overlay pattern as firmware-info. Reached via the
+  // ⓘ button in Settings → App. Phase 1 of mobile self-update — display only.
+  if (currentScreen === 'app-info') {
+    return (
+      <View style={styles.container}>
+        {renderScreen('app-info')}
         <FloatingIcons onNavigate={navigate} showGearTab={showGearTab} currentScreen={currentScreen} isHUD={false} />
       </View>
     );
