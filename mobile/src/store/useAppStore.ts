@@ -78,6 +78,47 @@ interface AppState {
   // even when bleStatus / chargerBleStatus haven't changed value.
   scanTrigger: number;
 
+  // App's own versionName / versionCode (read once at boot from native via
+  // services/appVersion.ts). Persisted so the Settings "App" row doesn't flash
+  // an em-dash on cold start before init resolves — the value rarely changes
+  // and we'll overwrite it on the next boot anyway. Phase 1 of mobile
+  // self-update: display-only.
+  appVersion: string | null;
+  appBuildNumber: string | null;
+
+  // ── Mobile self-update: latest GitHub release (Phase 3 — detection only) ──
+  // Populated by services/githubReleases.ts (mobile config) when a fresh
+  // `mobile-v*` release is found. Persisted via partialize so the red dot can
+  // render immediately at next launch. Only overwritten when a fresh fetch
+  // returns a different shape, never reset on launch. Cleared explicitly only
+  // by store.reset().
+  //
+  // Phase 4 will use latestAppReleaseAssetUrl / latestAppReleaseSha256Url to
+  // download + verify; Phase 5 will hand the APK off to PackageManager.
+  latestAppReleaseTag: string | null; // e.g. "mobile-v0.3.4"
+  latestAppReleaseVersion: string | null; // e.g. "0.3.4"
+  latestAppReleaseUrl: string | null; // GitHub HTML URL (changelog target)
+  latestAppReleaseAssetUrl: string | null; // browser_download_url for .apk
+  latestAppReleaseSha256Url: string | null; // browser_download_url for .apk.sha256
+  latestAppReleaseSize: number | null; // bytes
+  latestAppReleaseCheckedAt: number | null; // Date.now() of last check (success OR 304)
+  latestAppReleaseEtag: string | null; // last ETag for conditional GET
+
+  // App-update flow state — NOT persisted (resets on every launch).
+  // Phase 3 only fires `idle | checking | error`. The remaining phases are
+  // reserved for Phase 4 (downloading / verifying / ready) and Phase 5
+  // (installing). Listed here so the type doesn't have to be rewritten when
+  // those land.
+  appUpdateState:
+    | 'idle'
+    | 'checking'
+    | 'downloading'
+    | 'verifying'
+    | 'ready'
+    | 'installing'
+    | 'error';
+  appUpdateError: string | null;
+
   // Persisted settings
   showGearTab: boolean;
   speedUnit: 'kmh' | 'mph';
@@ -149,6 +190,40 @@ interface AppState {
   // Actions (scan trigger)
   incrementScanTrigger: () => void;
 
+  // Actions (app version)
+  setAppVersion: (version: string, build: string) => void;
+
+  // Actions (mobile self-update — Phase 3)
+  // Mirrors setLatestRelease for the charger. Pass `null` to clear, a
+  // populated object to overwrite. `checkedAt` is ALWAYS updated; the rest
+  // only when info is non-null.
+  setLatestAppRelease: (
+    info: {
+      tag: string;
+      version: string;
+      htmlUrl: string;
+      apkAssetUrl: string;
+      apkAssetSize: number;
+      sha256AssetUrl: string;
+      etag: string | null;
+    } | null,
+    checkedAt: number,
+  ) => void;
+  setAppUpdateState: (
+    s:
+      | 'idle'
+      | 'checking'
+      | 'downloading'
+      | 'verifying'
+      | 'ready'
+      | 'installing'
+      | 'error',
+  ) => void;
+  setAppUpdateError: (e: string | null) => void;
+  // Used after a 304 response so the "Last checked" timestamp updates without
+  // disturbing the cached fields. Mirrors the charger's touch fn.
+  touchLatestAppReleaseCheckedAt: (checkedAt: number) => void;
+
   // Actions (settings)
   setShowGearTab: (show: boolean) => void;
   setSpeedUnit: (unit: 'kmh' | 'mph') => void;
@@ -199,6 +274,24 @@ export const useAppStore = create<AppState>()(
 
       // Initial state — scan trigger
       scanTrigger: 0,
+
+      // Initial state — app version (overwritten at boot by services/appVersion.ts)
+      appVersion: null,
+      appBuildNumber: null,
+
+      // Initial state — mobile self-update (Phase 3). Persisted fields are
+      // hydrated by zustand-persist; this initializer only runs on first
+      // launch / after store.reset().
+      latestAppReleaseTag: null,
+      latestAppReleaseVersion: null,
+      latestAppReleaseUrl: null,
+      latestAppReleaseAssetUrl: null,
+      latestAppReleaseSha256Url: null,
+      latestAppReleaseSize: null,
+      latestAppReleaseCheckedAt: null,
+      latestAppReleaseEtag: null,
+      appUpdateState: 'idle',
+      appUpdateError: null,
 
       // Initial state — settings
       showGearTab: false,
@@ -272,6 +365,40 @@ export const useAppStore = create<AppState>()(
       // Actions — scan trigger
       incrementScanTrigger: () => set(state => ({scanTrigger: state.scanTrigger + 1})),
 
+      // Actions — app version
+      setAppVersion: (version, build) =>
+        set({appVersion: version, appBuildNumber: build}),
+
+      // Actions — mobile self-update (Phase 3)
+      setLatestAppRelease: (info, checkedAt) =>
+        set(
+          info
+            ? {
+                latestAppReleaseTag: info.tag,
+                latestAppReleaseVersion: info.version,
+                latestAppReleaseUrl: info.htmlUrl,
+                latestAppReleaseAssetUrl: info.apkAssetUrl,
+                latestAppReleaseSha256Url: info.sha256AssetUrl,
+                latestAppReleaseSize: info.apkAssetSize,
+                latestAppReleaseCheckedAt: checkedAt,
+                latestAppReleaseEtag: info.etag,
+              }
+            : {
+                latestAppReleaseTag: null,
+                latestAppReleaseVersion: null,
+                latestAppReleaseUrl: null,
+                latestAppReleaseAssetUrl: null,
+                latestAppReleaseSha256Url: null,
+                latestAppReleaseSize: null,
+                latestAppReleaseCheckedAt: checkedAt,
+                latestAppReleaseEtag: null,
+              },
+        ),
+      setAppUpdateState: s => set({appUpdateState: s}),
+      setAppUpdateError: e => set({appUpdateError: e}),
+      touchLatestAppReleaseCheckedAt: checkedAt =>
+        set({latestAppReleaseCheckedAt: checkedAt}),
+
       // Actions — settings
       setShowGearTab: show => set({showGearTab: show}),
       setSpeedUnit: unit => set({speedUnit: unit}),
@@ -309,6 +436,16 @@ export const useAppStore = create<AppState>()(
           otaProgress: 0,
           otaBytesReceived: null,
           otaBytesTotal: null,
+          latestAppReleaseTag: null,
+          latestAppReleaseVersion: null,
+          latestAppReleaseUrl: null,
+          latestAppReleaseAssetUrl: null,
+          latestAppReleaseSha256Url: null,
+          latestAppReleaseSize: null,
+          latestAppReleaseCheckedAt: null,
+          latestAppReleaseEtag: null,
+          appUpdateState: 'idle',
+          appUpdateError: null,
         }),
     }),
     {
@@ -337,6 +474,22 @@ export const useAppStore = create<AppState>()(
         latestReleaseNotes: state.latestReleaseNotes,
         latestReleaseCheckedAt: state.latestReleaseCheckedAt,
         latestReleaseEtag: state.latestReleaseEtag,
+        // App's own version — persisted to avoid an em-dash flash on cold
+        // start. Overwritten by initAppVersion() at every boot.
+        appVersion: state.appVersion,
+        appBuildNumber: state.appBuildNumber,
+        // Mobile self-update — Phase 3 persisted fields. appUpdateState /
+        // appUpdateError NOT included (deliberate — they should reset to
+        // 'idle'/null on every launch, same pattern as the charger's
+        // otaState/otaError).
+        latestAppReleaseTag: state.latestAppReleaseTag,
+        latestAppReleaseVersion: state.latestAppReleaseVersion,
+        latestAppReleaseUrl: state.latestAppReleaseUrl,
+        latestAppReleaseAssetUrl: state.latestAppReleaseAssetUrl,
+        latestAppReleaseSha256Url: state.latestAppReleaseSha256Url,
+        latestAppReleaseSize: state.latestAppReleaseSize,
+        latestAppReleaseCheckedAt: state.latestAppReleaseCheckedAt,
+        latestAppReleaseEtag: state.latestAppReleaseEtag,
       }),
     },
   ),

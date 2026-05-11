@@ -104,8 +104,11 @@ android {
         applicationId = "com.paoconsole"
         minSdkVersion = rootProject.ext.minSdkVersion
         targetSdkVersion = rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // versionCode / versionName are injected by CI via `-PversionCode=...`
+        // and `-PversionName=...`. Local builds fall back to dev defaults so
+        // `./gradlew assembleRelease` keeps working without arguments.
+        versionCode project.hasProperty('versionCode') ? project.versionCode.toInteger() : 1
+        versionName project.hasProperty('versionName') ? project.versionName : "0.0.1-dev"
     }
     signingConfigs {
         debug {

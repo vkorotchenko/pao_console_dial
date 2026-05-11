@@ -20,6 +20,7 @@ import {
   prepareOtaPayload,
   cancelOtaPreparation,
 } from '../services/otaController';
+import {checkForMobileUpdate} from '../services/mobileUpdateController';
 import {flashChargerFirmware} from '../services/otaOrchestrator';
 import {activateKeepAwake, deactivateKeepAwake} from '../utils/keepAwake';
 import {compare, formatVersion, parse} from '../services/semver';
@@ -29,6 +30,7 @@ const ScreenBrightness = _ScreenBrightness as any;
 
 interface SettingsScreenProps {
   onOpenFirmwareInfo?: () => void;
+  onOpenAppInfo?: () => void;
 }
 
 // Compact form for the in-flight progress UI ("412 KB / 612 KB"). Mirrors the
@@ -85,7 +87,7 @@ function formatRelative(now: number, then: number | null): string {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
-export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps = {}) {
+export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: SettingsScreenProps = {}) {
   const bleStatus = useAppStore(state => state.bleStatus);
   const deviceId = useAppStore(state => state.deviceId);
   const chargerBleStatus = useAppStore(state => state.chargerBleStatus);
@@ -119,6 +121,18 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
   const otaBytesTotal = useAppStore(state => state.otaBytesTotal);
   const latestReleaseCheckedAt = useAppStore(state => state.latestReleaseCheckedAt);
   const latestReleaseVersion = useAppStore(state => state.latestReleaseVersion);
+  // App self-update Phase 1 — display-only versionName.
+  // Phase 3 adds the detection fields (latestAppReleaseVersion, etc) so the
+  // App row mirrors the Firmware row's red-dot + "Latest available" hint +
+  // contextual button pattern. Install logic remains a no-op until Phase 4/5.
+  const appVersion = useAppStore(state => state.appVersion);
+  const latestAppReleaseVersion = useAppStore(
+    state => state.latestAppReleaseVersion,
+  );
+  const latestAppReleaseCheckedAt = useAppStore(
+    state => state.latestAppReleaseCheckedAt,
+  );
+  const appUpdateState = useAppStore(state => state.appUpdateState);
 
   // ── OTA flash flow state (consolidated into Settings — Phase 5 polish) ──
   // AbortController for the live flash run. We mirror the lifecycle that used
@@ -410,6 +424,92 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
     if (!parse(chargerFirmwareVersion)) return false;
     return compare(latestReleaseVersion, chargerFirmwareVersion) === 1;
   })();
+
+  // Same idea for the App section. We need both the running app version AND
+  // a fetched latest release; if either is missing we can't compare. parse()
+  // is the guard against weird native build outputs (alpha/beta tags that
+  // don't fit X.Y.Z).
+  const hasAppUpdateAvailable = (() => {
+    if (!appVersion || !latestAppReleaseVersion) return false;
+    if (!parse(appVersion)) return false;
+    return compare(latestAppReleaseVersion, appVersion) === 1;
+  })();
+  const isAppCheckInFlight = appUpdateState === 'checking';
+
+  // Forced GitHub release check used by the App section's contextual button.
+  // Alerts mirror handleCheckForUpdates for the charger:
+  //  - explicit "up to date" when running >= latest
+  //  - silent when newer release exists (red dot + button label cover it)
+  //  - explicit "no releases yet" when GitHub returns nothing matching
+  const handleCheckForAppUpdates = async () => {
+    const result = await checkForMobileUpdate({force: true});
+    if (!result.ok) {
+      Alert.alert('Update check failed', result.errorMessage ?? 'Unknown error');
+      return;
+    }
+    const {
+      appVersion: running,
+      latestAppReleaseVersion: latest,
+    } = useAppStore.getState();
+
+    if (!running) {
+      Alert.alert(
+        "Couldn't determine running app version",
+        'Restart the app and try again.',
+      );
+      return;
+    }
+    if (!parse(running)) {
+      Alert.alert(
+        "Couldn't determine running app version",
+        `The app reported an unrecognized version (${running}).`,
+      );
+      return;
+    }
+    if (!latest) {
+      Alert.alert('No releases available yet', 'No published app release was found.');
+      return;
+    }
+    if (compare(latest, running) === 1) {
+      // Newer release exists — red dot + contextual button already convey it.
+      return;
+    }
+    Alert.alert(
+      "You're on the latest version",
+      `Running ${formatVersion(running)}.`,
+    );
+  };
+
+  // Phase 3 stops here — no download, no install. The "Update to vX.Y.Z"
+  // button is wired for visual parity but does NOT start an install. Tapping
+  // it surfaces a benign "coming soon" notice so users know it's intentional.
+  // Phase 4 (download + verify) and Phase 5 (PackageManager handoff) will
+  // replace this with the real flow.
+  const onAppUpdateRequest = () => {
+    Alert.alert(
+      'Update coming soon',
+      latestAppReleaseVersion
+        ? `In-app install for v${latestAppReleaseVersion} ships in the next release. For now, grab the APK from the GitHub release page.`
+        : 'In-app install ships in the next release.',
+    );
+  };
+
+  const appButtonLabel = (() => {
+    if (isAppCheckInFlight) return 'Checking…';
+    if (hasAppUpdateAvailable && latestAppReleaseVersion) {
+      return `Update to ${formatVersion(latestAppReleaseVersion)}`;
+    }
+    return 'Check for updates';
+  })();
+
+  const onAppButtonPress = () => {
+    if (isAppCheckInFlight) return;
+    if (hasAppUpdateAvailable) {
+      onAppUpdateRequest();
+      return;
+    }
+    handleCheckForAppUpdates();
+  };
 
   const isOtaInFlight =
     otaState === 'checking' ||
@@ -817,6 +917,72 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
             </Text>
           </View>
         )}
+      </View>
+
+      {/* App Section — Phase 3 of mobile self-update.
+          Mirrors the Firmware section's layout for visual + cognitive parity:
+            - Top row: "PAO Console  ⓘ          v0.3.3  •"
+              (• red dot only when latestAppReleaseVersion > appVersion)
+            - Optional hint: "Latest available: v0.3.4"
+            - Divider
+            - Button: "Check for updates" OR "Update to v0.3.4" when newer
+              (the update button is a no-op until Phase 4/5 — alerts a benign
+              "coming soon" notice instead of starting an install)
+            - Last-checked timestamp underneath
+          Install logic is NOT here yet — that lands in Phase 4 (download +
+          verify) and Phase 5 (PackageManager handoff). */}
+      <Text style={styles.sectionHeader}>App</Text>
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <View style={styles.fwTitleRow}>
+            <Text style={styles.label}>PAO Console</Text>
+            <TouchableOpacity
+              onPress={() => onOpenAppInfo?.()}
+              accessibilityRole="button"
+              accessibilityLabel="Open app info"
+              hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+              style={styles.infoIcon}>
+              <Icon
+                name="information-outline"
+                size={18}
+                color="#5BA8C4"
+              />
+            </TouchableOpacity>
+            {hasAppUpdateAvailable && latestAppReleaseVersion ? (
+              <Text style={styles.fwHint}>
+                Latest available: {formatVersion(latestAppReleaseVersion)}
+              </Text>
+            ) : null}
+          </View>
+          <View style={styles.fwVersionRow}>
+            <Text style={styles.value}>
+              {appVersion ? `v${appVersion}` : '—'}
+            </Text>
+            {hasAppUpdateAvailable ? (
+              <View
+                style={styles.updateDot}
+                accessibilityLabel="App update available"
+              />
+            ) : null}
+          </View>
+        </View>
+
+        <View style={styles.divider} />
+
+        <View style={styles.fwBody}>
+          <View style={styles.fwButtonRow}>
+            <Button
+              mode="contained"
+              onPress={onAppButtonPress}
+              disabled={isAppCheckInFlight}
+              style={styles.fwFullWidthButton}>
+              {appButtonLabel}
+            </Button>
+          </View>
+          <Text style={styles.fwHint}>
+            Last checked: {formatRelative(now, latestAppReleaseCheckedAt)}
+          </Text>
+        </View>
       </View>
 
       {/* Navigation Section */}
