@@ -182,7 +182,13 @@ export class ChargerBleManager {
         charUUID,
         (error: BleError | null, characteristic: any) => {
           if (error) {
-            console.error(`ChargerBle monitor error (${charUUID}):`, error);
+            // Suppress noise when the charger is intentionally rebooting as
+            // part of the OTA flow — the disconnect that fires here is
+            // expected protocol behavior, not an error worth shouting about.
+            const otaPhase = useAppStore.getState().otaState;
+            if (otaPhase !== 'rebooting' && otaPhase !== 'reconnecting') {
+              console.error(`ChargerBle monitor error (${charUUID}):`, error);
+            }
             return;
           }
           if (characteristic?.value) {
@@ -250,7 +256,10 @@ export class ChargerBleManager {
         CHAR_FW_VERSION,
         (error: BleError | null, characteristic: any) => {
           if (error) {
-            console.error(`ChargerBle monitor error (${CHAR_FW_VERSION}):`, error);
+            const otaPhase = useAppStore.getState().otaState;
+            if (otaPhase !== 'rebooting' && otaPhase !== 'reconnecting') {
+              console.error(`ChargerBle monitor error (${CHAR_FW_VERSION}):`, error);
+            }
             return;
           }
           if (characteristic?.value) {

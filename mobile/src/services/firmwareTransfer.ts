@@ -147,6 +147,37 @@ function isErrorCode(code: number): boolean {
 }
 
 /**
+ * Recognize the family of BLE errors that fire when the charger reboots
+ * immediately after acknowledging cmd=11 (OTA_END). The firmware is doing
+ * exactly what we want — flashing the new image and restarting — but the
+ * GATT stack on the phone never sees the response, so the write Promise
+ * rejects with a generic disconnect or status-133 error. We swallow these
+ * here so the orchestrator's reconnect phase can drive forward instead of
+ * the user seeing a scary "Device was disconnected" toast.
+ *
+ * Heuristics covered (Android + iOS):
+ *   - errorCode 201 / "Device ... was disconnected"
+ *   - androidErrorCode 133 (GATT_ERROR) + errorCode 401 ("Operation was rejected")
+ *   - Plain message matches for safety on RN-ble-plx versions that don't
+ *     expose the numeric codes uniformly.
+ */
+export function isExpectedRebootError(err: unknown): boolean {
+  if (!err) return false;
+  const e = err as any;
+  const msg = String(e?.message ?? e ?? '');
+  const ec = e?.errorCode;
+  const ace = e?.androidErrorCode;
+
+  if (msg.includes('was disconnected')) return true;
+  if (msg.includes('Device disconnected')) return true;
+  if (ec === 201 || ec === 205) return true; // DeviceDisconnected family
+  // GATT 133 surfacing as "Operation was rejected" during the cmd=11 write.
+  if (ace === 133) return true;
+  if (ec === 401 && msg.toLowerCase().includes('rejected')) return true;
+  return false;
+}
+
+/**
  * Convert a 64-character lowercase hex string into 32 raw bytes. Throws if
  * the input isn't well-formed — this guards against accidentally sending
  * the hex *string* (64 ASCII bytes) instead of the binary digest (32 bytes).
@@ -428,17 +459,46 @@ export async function transferFirmware(
     checkAbort();
 
     // ── 6. OTA_END ──────────────────────────────────────────────────────────
+    // Expected protocol reality: after the charger receives cmd=11 it commits
+    // the image and reboots. On Android, the GATT stack frequently drops the
+    // ACK for this write because the link tears down faster than the stack
+    // can confirm it — surfacing as `GATT_ERROR status 133` / `errorCode 401`
+    // or a `Device was disconnected` error directly on the write call. Both
+    // are the firmware doing the right thing (rebooting) and NOT a failure.
+    // Swallow them here so the orchestrator can proceed to the reconnect
+    // phase instead of bubbling a confusing error to the UI.
     onPhase?.('sending_end');
-    await chargerBleManager.writeOtaCommand(CMD_OTA_END);
+    try {
+      await chargerBleManager.writeOtaCommand(CMD_OTA_END);
+    } catch (endErr: any) {
+      if (isExpectedRebootError(endErr)) {
+        console.log('[OTA] cmd=11 write returned an expected post-reboot disconnect — proceeding to reconnect');
+      } else {
+        throw endErr;
+      }
+    }
 
     // ── 7. await REBOOTING ─────────────────────────────────────────────────
     // The firmware may emit COMMITTING first; expectStatus tolerates that
-    // (it skips intermediate non-error codes).
-    await expectStatus(
-      pipe,
-      [OTA_STATUS.REBOOTING, OTA_STATUS.COMMITTING],
-      REBOOT_TIMEOUT_MS,
-    );
+    // (it skips intermediate non-error codes). The reboot itself races the
+    // notification — if the link is already torn down we'll never see
+    // REBOOTING, so we tolerate a timeout here: the orchestrator's disconnect
+    // listener is the authoritative "reboot happened" signal.
+    try {
+      await expectStatus(
+        pipe,
+        [OTA_STATUS.REBOOTING, OTA_STATUS.COMMITTING],
+        REBOOT_TIMEOUT_MS,
+      );
+    } catch (waitErr: any) {
+      // Either a pipe timeout (link dropped before REBOOTING was sent) or an
+      // OtaProtocolError. Protocol errors are real — re-throw those. Timeouts
+      // are expected when the reboot races the notify path.
+      if (waitErr instanceof OtaProtocolError) {
+        throw waitErr;
+      }
+      console.log('[OTA] no REBOOTING notify before link drop — orchestrator will handle reconnect');
+    }
     // If we got COMMITTING, wait one more notification for REBOOTING.
     // (Most firmware emits both; some emits only REBOOTING.) The expected
     // case is REBOOTING; if we don't see it within a few seconds, the

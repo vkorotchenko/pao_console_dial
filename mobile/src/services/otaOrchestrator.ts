@@ -13,6 +13,7 @@ import {
   OtaProtocolError,
   OTA_STATUS,
   statusCodeToMessage,
+  isExpectedRebootError,
 } from './firmwareTransfer';
 
 // ---------------------------------------------------------------------------
@@ -174,6 +175,23 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
     // with it via connect(). We log for traceability.
     console.log(`[OTA] flash complete; reconnected device id=${reconnectedId}`);
   } catch (e) {
+    // Phase 5 polish: BLE errors thrown during 'rebooting' or 'reconnecting'
+    // phases are the EXPECTED side-effect of the charger restarting after
+    // cmd=11. Don't surface those to the UI as flash failures.
+    const phase = store().otaState;
+    if ((phase === 'rebooting' || phase === 'reconnecting') && isExpectedRebootError(e)) {
+      // Stay in current phase; let downstream logic (scan + reconnect) keep
+      // driving forward. A real failure here would have come from the verify
+      // step or the 30s reconnect timeout, both handled below.
+      console.log(`[OTA] swallowed expected disconnect during ${phase} phase`);
+      // Re-throw NOTHING here — but we need to bail out cleanly because the
+      // pipeline above is now broken. Convert to an abort-like soft fail
+      // and let the user retry. Power-cycle hint via dedicated message.
+      const message = 'Charger restarted but did not come back online — power-cycle and reconnect to check version.';
+      store().setOtaState('error');
+      store().setOtaError(message);
+      throw new Error(message);
+    }
     const message = mapErrorToMessage(e);
     console.error('[OTA] flash error:', e);
     store().setOtaState('error');

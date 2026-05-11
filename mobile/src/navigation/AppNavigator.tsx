@@ -8,9 +8,8 @@ import GearScreen from '../screens/GearScreen';
 import ChargerScreen from '../screens/ChargerScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import HUDScreen from '../screens/HUDScreen';
-import UpdateScreen from '../screens/UpdateScreen';
+import FirmwareInfoScreen from '../screens/FirmwareInfoScreen';
 import {FloatingIcons} from '../components/FloatingIcons';
-import {UpdateAvailableBanner} from '../components/UpdateAvailableBanner';
 import {useAppStore} from '../store/useAppStore';
 import {paoBleManager, PAO_SERVICE_UUID} from '../ble/PaoBleManager';
 import {chargerBleManager, CHARGER_SERVICE_UUID} from '../ble/ChargerBleManager';
@@ -23,7 +22,13 @@ import MediaControl from '../native/MediaControl';
 import _ScreenBrightness from 'react-native-screen-brightness';
 const ScreenBrightness = _ScreenBrightness as any;
 
-type Screen = 'dashboard' | 'charger' | 'gear' | 'settings' | 'hud' | 'update';
+type Screen =
+  | 'dashboard'
+  | 'charger'
+  | 'gear'
+  | 'settings'
+  | 'hud'
+  | 'firmware-info';
 
 const SCAN_TIMEOUT_MS = 15_000; // stop scanning after 15s if nothing found
 const MAX_RETRIES = 3;
@@ -494,9 +499,14 @@ export default function AppNavigator() {
     setCurrentScreen(screen as Screen);
   };
 
-  const closeUpdate = () => {
+  const closeFirmwareInfo = () => {
     Orientation.lockToPortrait();
-    setCurrentScreen('dashboard');
+    setCurrentScreen('settings');
+  };
+
+  const openFirmwareInfo = () => {
+    Orientation.lockToPortrait();
+    setCurrentScreen('firmware-info');
   };
 
   const renderScreen = (screen: Screen) => {
@@ -504,8 +514,8 @@ export default function AppNavigator() {
       case 'hud': return <HUDScreen onClose={() => { Orientation.lockToPortrait(); setCurrentScreen('dashboard'); }} />;
       case 'charger': return <ChargerScreen />;
       case 'gear': return <GearScreen />;
-      case 'settings': return <SettingsScreen />;
-      case 'update': return <UpdateScreen onClose={closeUpdate} />;
+      case 'settings': return <SettingsScreen onOpenFirmwareInfo={openFirmwareInfo} />;
+      case 'firmware-info': return <FirmwareInfoScreen onClose={closeFirmwareInfo} />;
       default: return <DashboardScreen />;
     }
   };
@@ -519,14 +529,13 @@ export default function AppNavigator() {
     );
   }
 
-  // Update screen: full-screen modal-style overlay (not part of swipe pager).
-  // Mirrors the HUD branch's pattern. No banner here — user is already on the
-  // update screen — and FloatingIcons is shown so the user can navigate back
-  // to any other screen.
-  if (currentScreen === 'update') {
+  // Firmware-info screen: full-screen overlay outside the swipe pager. The
+  // user reaches it via the ⓘ button in Settings → Firmware. FloatingIcons
+  // stays mounted so the user can jump elsewhere at any time.
+  if (currentScreen === 'firmware-info') {
     return (
       <View style={styles.container}>
-        {renderScreen('update')}
+        {renderScreen('firmware-info')}
         <FloatingIcons onNavigate={navigate} showGearTab={showGearTab} currentScreen={currentScreen} isHUD={false} />
       </View>
     );
@@ -534,10 +543,6 @@ export default function AppNavigator() {
 
   return (
     <View style={styles.container}>
-      {/* Phase 3: thin update-available bar above all pager screens. The
-          component returns null when there's nothing to show, so the layout
-          collapses cleanly. Tapping it routes to the UpdateScreen. */}
-      <UpdateAvailableBanner onPress={() => navigate('update')} />
       <PagerView
         ref={pagerRef}
         style={styles.pager}
