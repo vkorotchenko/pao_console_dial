@@ -6,7 +6,6 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
-  Modal,
   TouchableOpacity,
 } from 'react-native';
 import {Switch, SegmentedButtons, Button} from 'react-native-paper';
@@ -35,7 +34,16 @@ interface SettingsScreenProps {
 // Compact form for the in-flight progress UI ("412 KB / 612 KB"). Mirrors the
 // helper that used to live in UpdateScreen; pulled in-line since the OTA UI
 // now lives here.
-function formatBytesShort(bytes: number): string {
+//
+// Defensive against null / NaN / non-finite. During post-transfer phases
+// (rebooting / reconnecting / finalizing / done) the byte counters can be
+// null or zero, and we'd rather render an em-dash than crash on
+// `null.toFixed()`. Callers should still guard the *line* itself when bytes
+// are missing — this is belt-and-suspenders.
+function formatBytesShort(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) {
+    return '—';
+  }
   if (bytes < 1024) {
     return `${bytes} B`;
   }
@@ -113,11 +121,10 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
   const latestReleaseVersion = useAppStore(state => state.latestReleaseVersion);
 
   // ── OTA flash flow state (consolidated into Settings — Phase 5 polish) ──
-  // Pre-flight modal gate + AbortController for the live flash run. We mirror
-  // the lifecycle that used to live in UpdateScreen: own the controller in a
-  // ref so the user can cancel a transferring flash, recreate on each fresh
-  // attempt, release the wake-lock on settle, and abort on unmount.
-  const [showPreflight, setShowPreflight] = useState(false);
+  // AbortController for the live flash run. We mirror the lifecycle that used
+  // to live in UpdateScreen: own the controller in a ref so the user can
+  // cancel a transferring flash, recreate on each fresh attempt, release the
+  // wake-lock on settle, and abort on unmount.
   const flashAbortRef = useRef<AbortController | null>(null);
   const [hasWriteSettings, setHasWriteSettings] = useState<boolean | null>(null);
   // Tick once a minute so the "Last checked" relative time updates without
@@ -272,28 +279,25 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
   // ── OTA flash flow handlers (Phase 5 polish — consolidated into Settings) ─
   // The contextual Firmware button delegates here when an update is available.
   // We mirror the lifecycle that used to live in UpdateScreen:
-  //   1. tap → show pre-flight modal
-  //   2. confirm → activate wake-lock, kick off prepareOtaPayload (downloads
-  //      + verifies). The orchestrator runs the moment otaState flips to
+  //   1. tap → activate wake-lock, kick off prepareOtaPayload (downloads +
+  //      verifies). The orchestrator runs the moment otaState flips to
   //      'ready' (handled in the watcher effect below — keeps the button a
   //      single "Update to vX.Y.Z" tap instead of two).
-  //   3. cancel during transfer → abort the controller; orchestrator catches
+  //   2. cancel during transfer → abort the controller; orchestrator catches
   //      it and lands in 'idle' / 'error'.
 
   const onUpdateRequest = () => {
-    setShowPreflight(true);
-  };
-
-  const onPreflightCancel = () => {
-    setShowPreflight(false);
-  };
-
-  const onPreflightConfirm = () => {
-    setShowPreflight(false);
     // Reset any prior abort controller defensively.
     flashAbortRef.current?.abort();
     flashAbortRef.current = new AbortController();
-    activateKeepAwake();
+    // KeepAwake is wrapped already in utils/keepAwake but some Android versions
+    // can still throw under odd activation orderings (e.g. activate-deactivate
+    // races during rapid OTA re-attempts). Extra belt-and-suspenders try/catch.
+    try {
+      activateKeepAwake();
+    } catch (e) {
+      console.warn('[OTA] activateKeepAwake failed:', e);
+    }
     // Start the download/verify. Errors land in the store via the controller,
     // not via throw — no .catch needed here.
     prepareOtaPayload();
@@ -308,7 +312,18 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
       return;
     }
     const controller = flashAbortRef.current;
-    const releaseWakeLock = () => deactivateKeepAwake();
+    // releaseWakeLock fires on BOTH success and failure of flashChargerFirmware,
+    // and can fire after this component unmounts (the orchestrator's tail
+    // runs independently of the UI lifecycle). Guard the deactivate call —
+    // KeepAwake itself is forgiving but RN/Android can throw on duplicate
+    // deactivates or post-unmount calls in rare cases.
+    const releaseWakeLock = () => {
+      try {
+        deactivateKeepAwake();
+      } catch (e) {
+        console.warn('[OTA] deactivateKeepAwake (post-flash) failed:', e);
+      }
+    };
     flashChargerFirmware({signal: controller.signal}).then(
       releaseWakeLock,
       releaseWakeLock,
@@ -327,26 +342,64 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
 
   // Auto-clear 'done' → 'idle' after a brief success display, so the contextual
   // button can revert to "Check for updates" and the success line disappears.
+  //
+  // The timer id lives in a ref so the unmount cleanup below can clear it even
+  // if the effect's own cleanup hasn't fired yet (e.g. parent navigated away
+  // mid-3s wait — the state is global Zustand so writing to it after unmount
+  // is technically safe, but we still want to avoid the no-op work + keep the
+  // diagnostic log tidy). `mountedRef` gates the actual setState call as a
+  // second line of defense against any path that might keep the timer alive.
+  const autoRevertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
   useEffect(() => {
     if (otaState === 'done') {
-      const t = setTimeout(() => {
+      // Clear any prior timer defensively (shouldn't happen — effect cleanup
+      // handles it — but cheap insurance against rapid re-entries).
+      if (autoRevertTimerRef.current) {
+        clearTimeout(autoRevertTimerRef.current);
+      }
+      autoRevertTimerRef.current = setTimeout(() => {
+        autoRevertTimerRef.current = null;
+        if (!mountedRef.current) {
+          return;
+        }
+        console.log('[OTA] auto-revert to idle after done');
         const s = useAppStore.getState();
         if (s.otaState === 'done') {
           s.setOtaState('idle');
         }
       }, 3000);
-      return () => clearTimeout(t);
+      return () => {
+        if (autoRevertTimerRef.current) {
+          clearTimeout(autoRevertTimerRef.current);
+          autoRevertTimerRef.current = null;
+        }
+      };
     }
     if (otaState === 'idle' || otaState === 'error') {
-      deactivateKeepAwake();
+      try {
+        deactivateKeepAwake();
+      } catch (e) {
+        console.warn('[OTA] deactivateKeepAwake on idle/error failed:', e);
+      }
     }
     return undefined;
   }, [otaState]);
 
-  // Drop wake-lock + abort on unmount.
+  // Drop wake-lock + abort on unmount. Also flips mountedRef so the auto-revert
+  // timer (if still pending) becomes a no-op when it eventually fires.
   useEffect(() => {
     return () => {
-      deactivateKeepAwake();
+      mountedRef.current = false;
+      if (autoRevertTimerRef.current) {
+        clearTimeout(autoRevertTimerRef.current);
+        autoRevertTimerRef.current = null;
+      }
+      try {
+        deactivateKeepAwake();
+      } catch (e) {
+        console.warn('[OTA] deactivateKeepAwake on unmount failed:', e);
+      }
       flashAbortRef.current?.abort();
     };
   }, []);
@@ -367,9 +420,44 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
     otaState === 'reconnecting' ||
     otaState === 'finalizing';
 
-  const progressPct = Math.round(
-    Math.max(0, Math.min(1, otaProgress)) * 100,
-  );
+  // Defensive: clamp + guard against null/NaN/Infinity. `otaProgress` is typed
+  // `number` in the store and defaults to 0, but if a future path slips a null
+  // through, `Math.round(NaN * 100) = NaN` would render as "NaN%" — ugly, and
+  // a templated `width: NaN%` style can also throw on Android.
+  const progressPctRaw = Number.isFinite(otaProgress)
+    ? Math.max(0, Math.min(1, otaProgress as number)) * 100
+    : 0;
+  const progressPct = Math.round(progressPctRaw);
+
+  // Bytes line render guard. Only show "X KB / Y KB (NN%)" when:
+  //   - we're in a phase where the orchestrator is actually streaming bytes
+  //     (downloading or transferring — the post-transfer phases reset bytes)
+  //   - both counters are present, finite, non-negative numbers
+  //   - total > 0 (no divide-by-zero, no "X / 0")
+  // For every other phase (rebooting / reconnecting / finalizing / done) we
+  // render JUST the phase label and bar. The phase label is enough context;
+  // showing "(NaN%)" or "(100%)" forever after transfer is worse than nothing.
+  const bytesPresent =
+    typeof otaBytesReceived === 'number' &&
+    Number.isFinite(otaBytesReceived) &&
+    otaBytesReceived >= 0 &&
+    typeof otaBytesTotal === 'number' &&
+    Number.isFinite(otaBytesTotal) &&
+    otaBytesTotal > 0;
+  const showBytesLine =
+    (otaState === 'downloading' || otaState === 'transferring') && bytesPresent;
+
+  // Diagnostic: if we're showing progress but bytes are null, that's the
+  // suspected post-transfer null window. Log it once per render so the next
+  // reproduction's logcat pinpoints whether we hit the bad branch.
+  if (!bytesPresent && otaProgress > 0 && otaState !== 'idle') {
+    console.log(
+      '[OTA] render guard: bytes null at progress',
+      otaProgress,
+      'state',
+      otaState,
+    );
+  }
 
   // Phase label shown above the progress bar — one human-readable word per
   // pipeline stage. Order tracks the orchestrator's otaState transitions.
@@ -571,15 +659,13 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
 
         <View style={styles.divider} />
 
-        {/* In-flight: progress bar + label + optional bytes + Cancel */}
+        {/* In-flight: phase label + progress bar + optional bytes/percent + Cancel
+            Layout intentionally puts the phase title ABOVE the bar and moves the
+            percentage out of the bar's row into the bytes line as
+            "X KB / Y KB (NN%)". For phases without a byte counter (rebooting,
+            reconnecting, finalizing) we just show "(NN%)" on its own line. */}
         {isOtaInFlight ? (
           <View style={styles.fwBody}>
-            <View style={styles.progressBarTrack}>
-              <View
-                style={[styles.progressBarFill, {width: `${progressPct}%`}]}
-              />
-              <Text style={styles.progressPctOverlay}>{progressPct}%</Text>
-            </View>
             <Text style={styles.fwPhase}>
               {phaseLabel}
               {otaState === 'rebooting' ||
@@ -592,13 +678,16 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
                 />
               ) : null}
             </Text>
-            {(otaState === 'downloading' || otaState === 'transferring') &&
-            otaBytesReceived !== null &&
-            otaBytesTotal !== null &&
-            otaBytesTotal > 0 ? (
+            <View style={styles.progressBarTrack}>
+              <View
+                style={[styles.progressBarFill, {width: `${progressPct}%`}]}
+              />
+            </View>
+            {showBytesLine ? (
               <Text style={styles.fwBytes}>
                 {formatBytesShort(otaBytesReceived)} /{' '}
                 {formatBytesShort(otaBytesTotal)}
+                {` (${progressPct}%)`}
               </Text>
             ) : null}
             {otaState === 'transferring' ||
@@ -664,53 +753,6 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
           </View>
         )}
       </View>
-
-      {/* Pre-flight modal — same copy as the old UpdateScreen, just rendered
-          from Settings now. Confirms intent and reminds about foreground/parked
-          requirements before kicking off the flash flow. */}
-      <Modal
-        visible={showPreflight}
-        transparent
-        animationType="fade"
-        onRequestClose={onPreflightCancel}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Icon
-              name="alert-circle-outline"
-              size={32}
-              color="#F4A340"
-              style={styles.modalIcon}
-            />
-            <Text style={styles.modalTitle}>Update charger firmware?</Text>
-            <Text style={styles.modalBody}>
-              Charging will pause during the update and resume when it's done.
-              Make sure the vehicle is parked. Keep the app open and don't lock
-              the screen — the update takes about a minute.
-            </Text>
-            <Text style={styles.modalBody}>
-              The charger will restart and reconnect automatically. If anything
-              goes wrong the bootloader will roll back to the previous version
-              on the next power cycle.
-            </Text>
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                onPress={onPreflightCancel}
-                style={styles.modalCancel}
-                accessibilityRole="button"
-                accessibilityLabel="Cancel update">
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={onPreflightConfirm}
-                style={styles.modalConfirm}
-                accessibilityRole="button"
-                accessibilityLabel="Start update">
-                <Text style={styles.modalConfirmText}>Start</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {/* Navigation Section */}
       <Text style={styles.sectionHeader}>Navigation</Text>
@@ -1067,70 +1109,5 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: '#00C853',
     borderRadius: 7,
-  },
-  progressPctOverlay: {
-    alignSelf: 'center',
-    color: '#0D0D0D',
-    fontSize: 11,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  // Pre-flight modal styles (lifted verbatim from UpdateScreen).
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
-  modalCard: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 12,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  modalIcon: {
-    alignSelf: 'center',
-    marginBottom: 8,
-  },
-  modalTitle: {
-    color: '#E0E0E0',
-    fontSize: 18,
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 12,
-  },
-  modalBody: {
-    color: '#C0C0C0',
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 12,
-  },
-  modalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-    marginTop: 12,
-  },
-  modalCancel: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 6,
-  },
-  modalCancelText: {
-    color: '#9E9E9E',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  modalConfirm: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    backgroundColor: '#00C853',
-    borderRadius: 6,
-  },
-  modalConfirmText: {
-    color: '#0D0D0D',
-    fontSize: 15,
-    fontWeight: '700',
   },
 });

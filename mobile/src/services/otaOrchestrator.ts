@@ -69,6 +69,15 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
   const {signal, onProgress, onPhase} = opts;
   const store = useAppStore.getState;
 
+  // Tiny helper: forward to setOtaState while emitting a diagnostic log so a
+  // post-crash logcat dump pinpoints exactly which transition we were on when
+  // things went sideways. Stays in flashChargerFirmware so it captures every
+  // state change driven by the orchestrator without scattering logs.
+  const setState = (newState: Parameters<ReturnType<typeof store>['setOtaState']>[0]) => {
+    console.log('[OTA] state →', newState);
+    store().setOtaState(newState);
+  };
+
   // 1. Preflight ────────────────────────────────────────────────────────────
   const bytes = getReadyOtaBytes();
   const expectedSha = getReadyOtaSha256();
@@ -92,7 +101,7 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
   try {
     // 2. Transfer ──────────────────────────────────────────────────────────
     onPhase?.('transferring');
-    store().setOtaState('transferring');
+    setState('transferring');
     store().setOtaProgress(0, 0, bytes.byteLength);
 
     await transferFirmware(bytes, expectedSha, {
@@ -117,7 +126,7 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
     // the status pipe is unreliable post-reboot — the GATT connection is
     // already torn down).
     onPhase?.('rebooting');
-    store().setOtaState('rebooting');
+    setState('rebooting');
 
     await waitForDisconnect(initialDeviceId, signal);
 
@@ -128,7 +137,7 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
 
     // 4. Reconnect ────────────────────────────────────────────────────────
     onPhase?.('reconnecting');
-    store().setOtaState('reconnecting');
+    setState('reconnecting');
 
     const reconnectedId = await scanAndReconnect(signal);
 
@@ -155,13 +164,13 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
 
     // 6. Verify ────────────────────────────────────────────────────────────
     onPhase?.('verifying');
-    store().setOtaState('finalizing');
+    setState('finalizing');
 
     await sendVerifyAndAwait(signal);
 
     // 7. Done ──────────────────────────────────────────────────────────────
     onPhase?.('done');
-    store().setOtaState('done');
+    setState('done');
     store().setOtaError(null);
 
     // Re-set the firmware version one more time using whatever the device
@@ -188,13 +197,13 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
       // pipeline above is now broken. Convert to an abort-like soft fail
       // and let the user retry. Power-cycle hint via dedicated message.
       const message = 'Charger restarted but did not come back online — power-cycle and reconnect to check version.';
-      store().setOtaState('error');
+      setState('error');
       store().setOtaError(message);
       throw new Error(message);
     }
     const message = mapErrorToMessage(e);
     console.error('[OTA] flash error:', e);
-    store().setOtaState('error');
+    setState('error');
     store().setOtaError(message);
     throw e;
   }
