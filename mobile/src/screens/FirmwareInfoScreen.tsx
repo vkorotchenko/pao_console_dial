@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Linking,
+  BackHandler,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {useAppStore} from '../store/useAppStore';
@@ -77,6 +78,19 @@ export default function FirmwareInfoScreen({onClose}: FirmwareInfoScreenProps) {
     const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
+
+  // Android hardware back button: this screen is a full-screen overlay in the
+  // custom state-driven router (AppNavigator's `currentScreen`), not a member
+  // of the swipe pager. Without an explicit BackHandler, Android's default
+  // behavior on the back press is to exit the app. Intercept and route back
+  // to Settings via the same onClose path the header chevron uses.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      onClose();
+      return true; // mark handled — prevents default app-exit
+    });
+    return () => sub.remove();
+  }, [onClose]);
 
   // Prefer the locally-verified hash (we just downloaded + verified the .bin)
   // over any future store-level field. Falls back to '—' when no payload is

@@ -610,6 +610,67 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
         </View>
       </View>
 
+      {/* Display Section */}
+      <Text style={styles.sectionHeader}>Display</Text>
+      <View style={styles.card}>
+        <Text style={styles.label}>Speed Unit</Text>
+        <View style={styles.segmentedWrapper}>
+          <SegmentedButtons
+            value={speedUnit}
+            onValueChange={async val => {
+              const unit = val as 'kmh' | 'mph';
+              setSpeedUnit(unit);
+              if (bleStatus === 'connected') {
+                try {
+                  await paoBleManager.writeSpeedUnit(unit);
+                } catch (e) {
+                  console.warn('Could not write speed unit to peripheral:', e);
+                }
+              }
+            }}
+            buttons={[
+              {value: 'kmh', label: 'km/h'},
+              {value: 'mph', label: 'mph'},
+            ]}
+          />
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>Auto-brighten HUD</Text>
+            <Text style={styles.hint}>Maximizes screen brightness while HUD</Text>
+          </View>
+          <Switch
+            value={hudAutoBrighten}
+            onValueChange={setHudAutoBrighten}
+            color="#00C853"
+          />
+        </View>
+        {hudAutoBrighten && (
+          <View style={[styles.row, styles.subRow]}>
+            <View style={styles.rowText}>
+              <Text style={styles.label}>Only while charging</Text>
+              <Text style={styles.hint}>Limit brightness boost to when the phone is plugged in</Text>
+            </View>
+            <Switch
+              value={hudBrightenOnlyWhenCharging}
+              onValueChange={setHudBrightenOnlyWhenCharging}
+              color="#00C853"
+            />
+          </View>
+        )}
+        {hudAutoBrighten && hasWriteSettings === false && (
+          <View style={styles.row}>
+            <View style={styles.rowText}>
+              <Text style={styles.hint}>Grant "Modify system settings" for full brightness</Text>
+            </View>
+            <Button mode="outlined" onPress={requestWriteSettings} style={styles.bleButton}>
+              Grant
+            </Button>
+          </View>
+        )}
+      </View>
+
       {/* Firmware Section — consolidated OTA UI (Phase 5 polish).
           Layout:
             - Top row: "Charger firmware  ⓘ          v0.1.5  •"
@@ -858,66 +919,6 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
         )}
       </View>
 
-      {/* Display Section */}
-      <Text style={styles.sectionHeader}>Display</Text>
-      <View style={styles.card}>
-        <Text style={styles.label}>Speed Unit</Text>
-        <View style={styles.segmentedWrapper}>
-          <SegmentedButtons
-            value={speedUnit}
-            onValueChange={async val => {
-              const unit = val as 'kmh' | 'mph';
-              setSpeedUnit(unit);
-              if (bleStatus === 'connected') {
-                try {
-                  await paoBleManager.writeSpeedUnit(unit);
-                } catch (e) {
-                  console.warn('Could not write speed unit to peripheral:', e);
-                }
-              }
-            }}
-            buttons={[
-              {value: 'kmh', label: 'km/h'},
-              {value: 'mph', label: 'mph'},
-            ]}
-          />
-        </View>
-        <View style={styles.divider} />
-        <View style={styles.row}>
-          <View style={styles.rowText}>
-            <Text style={styles.label}>Auto-brighten HUD</Text>
-            <Text style={styles.hint}>Maximizes screen brightness while HUD</Text>
-          </View>
-          <Switch
-            value={hudAutoBrighten}
-            onValueChange={setHudAutoBrighten}
-            color="#00C853"
-          />
-        </View>
-        {hudAutoBrighten && (
-          <View style={[styles.row, styles.subRow]}>
-            <View style={styles.rowText}>
-              <Text style={styles.label}>Only while charging</Text>
-              <Text style={styles.hint}>Limit brightness boost to when the phone is plugged in</Text>
-            </View>
-            <Switch
-              value={hudBrightenOnlyWhenCharging}
-              onValueChange={setHudBrightenOnlyWhenCharging}
-              color="#00C853"
-            />
-          </View>
-        )}
-        {hudAutoBrighten && hasWriteSettings === false && (
-          <View style={styles.row}>
-            <View style={styles.rowText}>
-              <Text style={styles.hint}>Grant "Modify system settings" for full brightness</Text>
-            </View>
-            <Button mode="outlined" onPress={requestWriteSettings} style={styles.bleButton}>
-              Grant
-            </Button>
-          </View>
-        )}
-      </View>
     </ScrollView>
   );
 }
