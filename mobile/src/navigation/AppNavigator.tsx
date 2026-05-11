@@ -44,6 +44,17 @@ export default function AppNavigator() {
   // Bug 1 fix: track whether BLE permissions have been granted so scan effects
   // never run before the system dialog has resolved.
   const [permissionsGranted, setPermissionsGranted] = useState(false);
+  // Pending tab hint for SettingsScreen. Set whenever we navigate back to
+  // Settings from a sub-screen (FirmwareInfo / AppInfo) so the user lands on
+  // the tab they were already looking at instead of always defaulting to
+  // Bluetooth. Reset to undefined on the next user-driven navigation away
+  // from Settings so explicit re-entries (tap Settings in tab bar) start
+  // clean. Type is the same string-union SettingsScreen uses internally —
+  // kept loose here to avoid coupling navigator + screen file via a shared
+  // type export for a 1-string-wide concern.
+  const [pendingSettingsTab, setPendingSettingsTab] = useState<
+    'bluetooth' | 'charging' | 'firmware' | 'display' | undefined
+  >(undefined);
 
   const showGearTab = useAppStore(state => state.showGearTab);
   const bleStatus = useAppStore(state => state.bleStatus);
@@ -530,6 +541,9 @@ export default function AppNavigator() {
 
   const closeFirmwareInfo = () => {
     Orientation.lockToPortrait();
+    // Both info screens hang off the Firmware tab, so returning to Settings
+    // should drop the user back on Firmware — not the default Bluetooth tab.
+    setPendingSettingsTab('firmware');
     setCurrentScreen('settings');
   };
 
@@ -542,6 +556,9 @@ export default function AppNavigator() {
   // Mirrors the firmware-info open/close pair so navigation feels symmetric.
   const closeAppInfo = () => {
     Orientation.lockToPortrait();
+    // Same as firmware-info: the App row lives in the Firmware tab, so the
+    // user expects to return there.
+    setPendingSettingsTab('firmware');
     setCurrentScreen('settings');
   };
 
@@ -555,7 +572,13 @@ export default function AppNavigator() {
       case 'hud': return <HUDScreen onClose={() => { Orientation.lockToPortrait(); setCurrentScreen('dashboard'); }} />;
       case 'charger': return <ChargerScreen />;
       case 'gear': return <GearScreen />;
-      case 'settings': return <SettingsScreen onOpenFirmwareInfo={openFirmwareInfo} onOpenAppInfo={openAppInfo} />;
+      case 'settings': return (
+        <SettingsScreen
+          onOpenFirmwareInfo={openFirmwareInfo}
+          onOpenAppInfo={openAppInfo}
+          initialTab={pendingSettingsTab}
+        />
+      );
       case 'firmware-info': return <FirmwareInfoScreen onClose={closeFirmwareInfo} />;
       case 'app-info': return <AppInfoScreen onClose={closeAppInfo} />;
       default: return <DashboardScreen />;

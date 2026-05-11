@@ -9,10 +9,13 @@ import {
   TouchableOpacity,
   AppState,
   AppStateStatus,
+  StatusBar,
+  Platform,
 } from 'react-native';
 import {Switch, SegmentedButtons, Button} from 'react-native-paper';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useAppStore} from '../store/useAppStore';
 import {paoBleManager} from '../ble/PaoBleManager';
 import {chargerBleManager} from '../ble/ChargerBleManager';
@@ -43,6 +46,11 @@ const ScreenBrightness = _ScreenBrightness as any;
 interface SettingsScreenProps {
   onOpenFirmwareInfo?: () => void;
   onOpenAppInfo?: () => void;
+  // Initial tab override — set by AppNavigator when returning from
+  // FirmwareInfoScreen / AppInfoScreen so the user lands back on the tab
+  // they were already looking at (Firmware) instead of always defaulting
+  // to Bluetooth. Optional; undefined means use the default initial tab.
+  initialTab?: SettingsTab;
 }
 
 // Compact form for the in-flight progress UI ("412 KB / 612 KB"). Mirrors the
@@ -99,7 +107,21 @@ function formatRelative(now: number, then: number | null): string {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
-export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: SettingsScreenProps = {}) {
+// Settings is now a 4-tab screen. Tap-only top tab bar (no swipe / no
+// PagerView) — keeping the UX dead simple and avoiding a new dependency.
+// Each tab mounts its own ScrollView so long tabs (Charging in particular,
+// which holds Charging + Notifications) scroll independently and tab swaps
+// reset scroll position cleanly.
+type SettingsTab = 'bluetooth' | 'charging' | 'firmware' | 'display';
+
+const TABS: ReadonlyArray<{key: SettingsTab; label: string}> = [
+  {key: 'bluetooth', label: 'Bluetooth'},
+  {key: 'charging', label: 'Charging'},
+  {key: 'firmware', label: 'Firmware'},
+  {key: 'display', label: 'Display'},
+];
+
+export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initialTab}: SettingsScreenProps = {}) {
   const bleStatus = useAppStore(state => state.bleStatus);
   const deviceId = useAppStore(state => state.deviceId);
   const chargerBleStatus = useAppStore(state => state.chargerBleStatus);
@@ -166,6 +188,16 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
   // forcing a re-render of the rest of the screen. Cheap; runs only while
   // SettingsScreen is mounted.
   const [now, setNow] = useState(Date.now());
+
+  // Tap-only tab state. Bluetooth is the natural default — it's the first
+  // thing the user sees and the most common reason to open Settings. When
+  // AppNavigator passes an `initialTab` (set when returning from
+  // FirmwareInfoScreen / AppInfoScreen), seed the active tab from it so the
+  // user lands back where they were instead of being bounced to Bluetooth.
+  const [activeTab, setActiveTab] = useState<SettingsTab>(
+    initialTab ?? 'bluetooth',
+  );
+
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
@@ -305,10 +337,12 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
       // Newer release exists — red dot + contextual button already convey it.
       return;
     }
-    Alert.alert(
-      "You're on the latest version",
-      `Running ${formatVersion(fw)}.`,
-    );
+    // Up-to-date (latest <= running) → silent. The Firmware tab already
+    // shows "Charger firmware: vX.Y.Z" and "Latest available: vX.Y.Z" right
+    // there, so a modal alert would be redundant. The "Last checked: just
+    // now" line updates via `latestReleaseCheckedAt` (touched inside
+    // `checkForChargerUpdate`) so the user still gets feedback. Network /
+    // unknown-version / no-release error branches above continue to alert.
   };
 
   // ── OTA flash flow handlers (Phase 5 polish — consolidated into Settings) ─
@@ -478,10 +512,12 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
       // Newer release exists — red dot + contextual button already convey it.
       return;
     }
-    Alert.alert(
-      "You're on the latest version",
-      `Running ${formatVersion(running)}.`,
-    );
+    // Up-to-date (latest <= running) → silent. The Firmware tab already
+    // shows "PAO Console: vX.Y.Z" and "Latest available: vX.Y.Z" right
+    // there, so a modal alert would be redundant. The "Last checked: just
+    // now" line updates via `latestAppReleaseCheckedAt` (touched inside
+    // `checkForMobileUpdate`) so the user still gets feedback. Network /
+    // unknown-version / no-release error branches above continue to alert.
   };
 
   // Phase 4 + 5 — real install flow. On tap:
@@ -768,21 +804,25 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
     handleCheckForUpdates();
   };
 
-  return (
-    <ScrollView
-      style={styles.scrollView}
-      contentContainerStyle={styles.container}>
-      {/* Wake-lock note: the previous implementation used `react-native-keep-awake`,
-          which was abandoned and referenced the removed `jcenter()` Gradle repo,
-          breaking CI on Gradle 9. It has been replaced with a tiny in-tree
-          native module (`KeepAwakeModule.kt` + `KeepAwakePackage.kt`) wrapped
-          by `utils/keepAwake.ts`. The JS wrapper Platform-checks for Android
-          and is a no-op on iOS. The module toggles FLAG_KEEP_SCREEN_ON on the
-          Activity window — activated when the user kicks off an OTA, released
-          when otaState transitions to a terminal state (idle / error / done)
-          and again in the unmount effect as belt-and-suspenders. */}
-      <PageHeader title="Settings" bleSource="peripheral" showBleIndicator={false} style={{paddingHorizontal: 0}} />
+  // Safe-area padding for the tab bar. PageHeader handles the status bar
+  // already (paddingTop:44), but we apply the defensive pattern here too so
+  // future layouts that drop PageHeader don't have the tab bar slide under
+  // the status bar on Android. Both react-native-safe-area-context insets
+  // and StatusBar.currentHeight are checked; we take whichever is bigger.
+  const insets = useSafeAreaInsets();
+  const tabBarSafeTop = Math.max(
+    insets.top,
+    (Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0),
+  );
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Tab-content renderers. Kept inline so they close over the same state /
+  // handlers / store selectors as the main component. Each returns the raw
+  // section JSX that used to live directly in the screen's ScrollView.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const renderBluetoothTab = () => (
+    <>
       {/* Bluetooth Section */}
       <Text style={styles.sectionHeader}>Bluetooth</Text>
       <View style={styles.card}>
@@ -872,68 +912,102 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
           />
         </View>
       </View>
+    </>
+  );
 
-      {/* Display Section */}
-      <Text style={styles.sectionHeader}>Display</Text>
+  const renderChargingTab = () => (
+    <>
+      {/* Charging Section — the "Extend Time Button" lived previously under a
+          Charging section; it's the wake-time / extend-time setting the user
+          referenced. Notifications merge in here too (they're charge-related
+          milestone alerts, not display config). */}
+      <Text style={styles.sectionHeader}>Charging</Text>
       <View style={styles.card}>
-        <Text style={styles.label}>Speed Unit</Text>
+        <Text style={styles.label}>Extend Time Button</Text>
+        <Text style={styles.hint}>Amount added by the +Xm button on the charging screen</Text>
         <View style={styles.segmentedWrapper}>
           <SegmentedButtons
-            value={speedUnit}
-            onValueChange={async val => {
-              const unit = val as 'kmh' | 'mph';
-              setSpeedUnit(unit);
-              if (bleStatus === 'connected') {
-                try {
-                  await paoBleManager.writeSpeedUnit(unit);
-                } catch (e) {
-                  console.warn('Could not write speed unit to peripheral:', e);
-                }
-              }
-            }}
+            value={String(chargeTimeExtendMinutes)}
+            onValueChange={val => setChargeTimeExtendMinutes(Number(val))}
             buttons={[
-              {value: 'kmh', label: 'km/h'},
-              {value: 'mph', label: 'mph'},
+              {value: '15', label: '15m'},
+              {value: '30', label: '30m'},
+              {value: '45', label: '45m'},
+              {value: '60', label: '60m'},
             ]}
           />
         </View>
-        <View style={styles.divider} />
+      </View>
+
+      {/* Notifications Section */}
+      <Text style={styles.sectionHeader}>Notifications</Text>
+      <View style={styles.card}>
         <View style={styles.row}>
           <View style={styles.rowText}>
-            <Text style={styles.label}>Auto-brighten HUD</Text>
-            <Text style={styles.hint}>Maximizes screen brightness while HUD</Text>
+            <Text style={styles.label}>Enable notifications</Text>
+            <Text style={styles.hint}>Alert when a charging milestone is reached</Text>
           </View>
           <Switch
-            value={hudAutoBrighten}
-            onValueChange={setHudAutoBrighten}
+            value={notificationsEnabled}
+            onValueChange={setNotificationsEnabled}
             color="#00C853"
           />
         </View>
-        {hudAutoBrighten && (
-          <View style={[styles.row, styles.subRow]}>
-            <View style={styles.rowText}>
-              <Text style={styles.label}>Only while charging</Text>
-              <Text style={styles.hint}>Limit brightness boost to when the phone is plugged in</Text>
+        {notificationsEnabled && (
+          <>
+            <Text style={styles.subLabel}>Alert type</Text>
+            <View style={styles.segmentedWrapper}>
+              <SegmentedButtons
+                value={notificationMode}
+                onValueChange={val => setNotificationMode(val as 'time' | 'soc')}
+                buttons={[
+                  {value: 'time', label: 'Time remaining'},
+                  {value: 'soc',  label: 'Charge level'},
+                ]}
+              />
             </View>
-            <Switch
-              value={hudBrightenOnlyWhenCharging}
-              onValueChange={setHudBrightenOnlyWhenCharging}
-              color="#00C853"
-            />
-          </View>
-        )}
-        {hudAutoBrighten && hasWriteSettings === false && (
-          <View style={styles.row}>
-            <View style={styles.rowText}>
-              <Text style={styles.hint}>Grant "Modify system settings" for full brightness</Text>
-            </View>
-            <Button mode="outlined" onPress={requestWriteSettings} style={styles.bleButton}>
-              Grant
-            </Button>
-          </View>
+            {notificationMode === 'time' && (
+              <>
+                <Text style={styles.subLabel}>Warn when time left</Text>
+                <View style={styles.segmentedWrapper}>
+                  <SegmentedButtons
+                    value={String(chargeTimeWarnMinutes)}
+                    onValueChange={val => setChargeTimeWarnMinutes(Number(val))}
+                    buttons={[
+                      {value: '5',  label: '5m'},
+                      {value: '10', label: '10m'},
+                      {value: '15', label: '15m'},
+                      {value: '30', label: '30m'},
+                    ]}
+                  />
+                </View>
+              </>
+            )}
+            {notificationMode === 'soc' && (
+              <>
+                <Text style={styles.subLabel}>Alert at SOC</Text>
+                <View style={styles.segmentedWrapper}>
+                  <SegmentedButtons
+                    value={String(socWarnThresholdPct)}
+                    onValueChange={val => setSocWarnThresholdPct(Number(val))}
+                    buttons={[
+                      {value: '80', label: '80%'},
+                      {value: '85', label: '85%'},
+                      {value: '90', label: '90%'},
+                      {value: '95', label: '95%'},
+                    ]}
+                  />
+                </View>
+              </>
+            )}
+          </>
         )}
       </View>
+    </>
+  );
 
+  const renderFirmwareTab = () => (
+    <>
       {/* Firmware Section — consolidated OTA UI (Phase 5 polish).
           Layout:
             - Top row: "Charger firmware  ⓘ          v0.1.5  •"
@@ -947,7 +1021,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
                 done                  → "✓ Update complete" success line
                 error                 → "⚠ {message}" + [Try again]
       */}
-      <Text style={styles.sectionHeader}>Firmware</Text>
+      <Text style={styles.sectionHeader}>Charger Firmware</Text>
       <View style={styles.card}>
         <View style={styles.row}>
           <View style={styles.fwTitleRow}>
@@ -1197,6 +1271,71 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
           </View>
         )}
       </View>
+    </>
+  );
+
+  const renderDisplayTab = () => (
+    <>
+      {/* Display Section */}
+      <Text style={styles.sectionHeader}>Display</Text>
+      <View style={styles.card}>
+        <Text style={styles.label}>Speed Unit</Text>
+        <View style={styles.segmentedWrapper}>
+          <SegmentedButtons
+            value={speedUnit}
+            onValueChange={async val => {
+              const unit = val as 'kmh' | 'mph';
+              setSpeedUnit(unit);
+              if (bleStatus === 'connected') {
+                try {
+                  await paoBleManager.writeSpeedUnit(unit);
+                } catch (e) {
+                  console.warn('Could not write speed unit to peripheral:', e);
+                }
+              }
+            }}
+            buttons={[
+              {value: 'kmh', label: 'km/h'},
+              {value: 'mph', label: 'mph'},
+            ]}
+          />
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>Auto-brighten HUD</Text>
+            <Text style={styles.hint}>Maximizes screen brightness while HUD</Text>
+          </View>
+          <Switch
+            value={hudAutoBrighten}
+            onValueChange={setHudAutoBrighten}
+            color="#00C853"
+          />
+        </View>
+        {hudAutoBrighten && (
+          <View style={[styles.row, styles.subRow]}>
+            <View style={styles.rowText}>
+              <Text style={styles.label}>Only while charging</Text>
+              <Text style={styles.hint}>Limit brightness boost to when the phone is plugged in</Text>
+            </View>
+            <Switch
+              value={hudBrightenOnlyWhenCharging}
+              onValueChange={setHudBrightenOnlyWhenCharging}
+              color="#00C853"
+            />
+          </View>
+        )}
+        {hudAutoBrighten && hasWriteSettings === false && (
+          <View style={styles.row}>
+            <View style={styles.rowText}>
+              <Text style={styles.hint}>Grant "Modify system settings" for full brightness</Text>
+            </View>
+            <Button mode="outlined" onPress={requestWriteSettings} style={styles.bleButton}>
+              Grant
+            </Button>
+          </View>
+        )}
+      </View>
 
       {/* Navigation Section */}
       <Text style={styles.sectionHeader}>Navigation</Text>
@@ -1213,96 +1352,88 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
           />
         </View>
       </View>
+    </>
+  );
 
-      {/* Charging Section */}
-      <Text style={styles.sectionHeader}>Charging</Text>
-      <View style={styles.card}>
-        <Text style={styles.label}>Extend Time Button</Text>
-        <Text style={styles.hint}>Amount added by the +Xm button on the charging screen</Text>
-        <View style={styles.segmentedWrapper}>
-          <SegmentedButtons
-            value={String(chargeTimeExtendMinutes)}
-            onValueChange={val => setChargeTimeExtendMinutes(Number(val))}
-            buttons={[
-              {value: '15', label: '15m'},
-              {value: '30', label: '30m'},
-              {value: '45', label: '45m'},
-              {value: '60', label: '60m'},
-            ]}
-          />
-        </View>
-      </View>
+  // Pick which tab body to render. Only one is mounted at a time — keeps
+  // scroll state reset and avoids stacking multiple ScrollViews. The active
+  // tab's contents render inside the shared ScrollView below.
+  const renderActiveTab = () => {
+    switch (activeTab) {
+      case 'bluetooth':
+        return renderBluetoothTab();
+      case 'charging':
+        return renderChargingTab();
+      case 'firmware':
+        return renderFirmwareTab();
+      case 'display':
+        return renderDisplayTab();
+      default:
+        return null;
+    }
+  };
 
-      {/* Notifications Section */}
-      <Text style={styles.sectionHeader}>Notifications</Text>
-      <View style={styles.card}>
-        <View style={styles.row}>
-          <View style={styles.rowText}>
-            <Text style={styles.label}>Enable notifications</Text>
-            <Text style={styles.hint}>Alert when a charging milestone is reached</Text>
-          </View>
-          <Switch
-            value={notificationsEnabled}
-            onValueChange={setNotificationsEnabled}
-            color="#00C853"
-          />
-        </View>
-        {notificationsEnabled && (
-          <>
-            <Text style={styles.subLabel}>Alert type</Text>
-            <View style={styles.segmentedWrapper}>
-              <SegmentedButtons
-                value={notificationMode}
-                onValueChange={val => setNotificationMode(val as 'time' | 'soc')}
-                buttons={[
-                  {value: 'time', label: 'Time remaining'},
-                  {value: 'soc',  label: 'Charge level'},
+  return (
+    <View style={styles.screen}>
+      {/* Wake-lock note: the previous implementation used `react-native-keep-awake`,
+          which was abandoned and referenced the removed `jcenter()` Gradle repo,
+          breaking CI on Gradle 9. It has been replaced with a tiny in-tree
+          native module (`KeepAwakeModule.kt` + `KeepAwakePackage.kt`) wrapped
+          by `utils/keepAwake.ts`. The JS wrapper Platform-checks for Android
+          and is a no-op on iOS. The module toggles FLAG_KEEP_SCREEN_ON on the
+          Activity window — activated when the user kicks off an OTA, released
+          when otaState transitions to a terminal state (idle / error / done)
+          and again in the unmount effect as belt-and-suspenders. */}
+      <PageHeader title="Settings" bleSource="peripheral" showBleIndicator={false} style={{paddingHorizontal: 16}} />
+
+      {/* Tap-only top tab bar. Underline indicator on active tab. Lives
+          immediately below the page header — paddingTop falls back to
+          StatusBar.currentHeight on Android in case PageHeader is ever
+          removed; today PageHeader handles the visible top inset. */}
+      <View style={[styles.tabBar, {paddingTop: Math.max(0, tabBarSafeTop - 44) /* PageHeader already absorbs 44px */}]}>
+        {TABS.map(tab => {
+          const active = tab.key === activeTab;
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              onPress={() => setActiveTab(tab.key)}
+              accessibilityRole="tab"
+              accessibilityLabel={tab.label}
+              accessibilityState={{selected: active}}
+              style={styles.tabItem}>
+              <Text
+                style={[
+                  styles.tabLabel,
+                  active && styles.tabLabelActive,
+                ]}
+                numberOfLines={1}>
+                {tab.label}
+              </Text>
+              <View
+                style={[
+                  styles.tabUnderline,
+                  active && styles.tabUnderlineActive,
                 ]}
               />
-            </View>
-            {notificationMode === 'time' && (
-              <>
-                <Text style={styles.subLabel}>Warn when time left</Text>
-                <View style={styles.segmentedWrapper}>
-                  <SegmentedButtons
-                    value={String(chargeTimeWarnMinutes)}
-                    onValueChange={val => setChargeTimeWarnMinutes(Number(val))}
-                    buttons={[
-                      {value: '5',  label: '5m'},
-                      {value: '10', label: '10m'},
-                      {value: '15', label: '15m'},
-                      {value: '30', label: '30m'},
-                    ]}
-                  />
-                </View>
-              </>
-            )}
-            {notificationMode === 'soc' && (
-              <>
-                <Text style={styles.subLabel}>Alert at SOC</Text>
-                <View style={styles.segmentedWrapper}>
-                  <SegmentedButtons
-                    value={String(socWarnThresholdPct)}
-                    onValueChange={val => setSocWarnThresholdPct(Number(val))}
-                    buttons={[
-                      {value: '80', label: '80%'},
-                      {value: '85', label: '85%'},
-                      {value: '90', label: '90%'},
-                      {value: '95', label: '95%'},
-                    ]}
-                  />
-                </View>
-              </>
-            )}
-          </>
-        )}
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
-    </ScrollView>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.container}>
+        {renderActiveTab()}
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: '#0D0D0D',
+  },
   scrollView: {
     flex: 1,
     backgroundColor: '#0D0D0D',
@@ -1310,6 +1441,43 @@ const styles = StyleSheet.create({
   container: {
     padding: 16,
     paddingBottom: 120,
+  },
+  // ── Top tab bar ────────────────────────────────────────────────────────
+  // Horizontal row of 4 equal-width tap targets. Underline indicator on the
+  // active tab matches the app's existing accent color (#5BA8C4 — same blue
+  // used by info icons + page titles). Inactive label is muted #9E9E9E so
+  // the active label visually pops.
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#0D0D0D',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#2A2A2A',
+    paddingHorizontal: 8,
+  },
+  tabItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingTop: 10,
+    paddingBottom: 0,
+  },
+  tabLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#9E9E9E',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    paddingBottom: 8,
+  },
+  tabLabelActive: {
+    color: '#87CEEB',
+  },
+  tabUnderline: {
+    height: 2,
+    width: '70%',
+    backgroundColor: 'transparent',
+  },
+  tabUnderlineActive: {
+    backgroundColor: '#5BA8C4',
   },
   sectionHeader: {
     fontSize: 12,
