@@ -4,28 +4,26 @@ import {compare, parse} from './semver';
 // ---------------------------------------------------------------------------
 // Generic GitHub Releases lookup.
 //
-// Phase 3 of mobile self-update generalized what used to be a charger-only
-// fetcher into a parametric one. Each target (charger / mobile / peripheral
-// /  controller) provides its own config — repo, tag-prefix regex, asset name
-// pattern, cache key — and the shared machinery handles HTTP, ETag conditional
-// GETs, AsyncStorage TTL caching, semver-sorted release selection, and asset
-// resolution.
+// Each target (charger / mobile / peripheral / controller) provides its own
+// config — repo, tag-prefix regex, asset name pattern, cache key — and the
+// shared machinery handles HTTP, ETag conditional GETs, AsyncStorage TTL
+// caching, semver-sorted release selection, and asset resolution.
 //
-// Original charger contract (Phase 2 charger-release.yml):
+// Charger contract (charger-release.yml):
 //   - Tag shape:     charger-vMAJOR.MINOR.PATCH[-(rc|beta|alpha).N]
 //   - Repo:          vkorotchenko/pao_charger
 //   - Assets:        charger-firmware-<version>.bin
 //                    charger-firmware-<version>.bin.sha256
 //
-// Mobile contract (Phase 2 mobile-release.yml):
+// Mobile contract (mobile-release.yml):
 //   - Tag shape:     mobile-vMAJOR.MINOR.PATCH[-(rc|beta|alpha).N]
 //   - Repo:          vkorotchenko/pao_console_dial  (outer repo — not a submodule)
 //   - Assets:        pao-console-mobile-<version>.apk
 //                    pao-console-mobile-<version>.apk.sha256
 //
 // This module only DETECTS the latest release. No download, no flashing/install
-// — those live in firmwareDownload / firmwareTransfer (charger) and Phase 4 / 5
-// of the mobile self-update plan.
+// — those live in firmwareDownload / firmwareTransfer (charger) and
+// mobileAppDownload / apkInstaller (mobile).
 // ---------------------------------------------------------------------------
 
 // User-Agent is REQUIRED by the GitHub API. Without it, requests return 403.
@@ -344,7 +342,7 @@ export async function fetchLatestRelease(
 // otaOrchestrator.ts, useAppStore.ts etc. don't change.
 // ---------------------------------------------------------------------------
 
-// Strict tag regex — matches Phase 2's charger-release.yml workflow exactly.
+// Strict tag regex — matches the charger-release.yml workflow exactly.
 //   charger-v0.1.0
 //   charger-v0.1.0-rc.1
 //   charger-v1.2.3-beta.5
@@ -412,12 +410,11 @@ export async function fetchLatestChargerRelease(
 }
 
 // ---------------------------------------------------------------------------
-// Mobile-specific wrapper. Used by Phase 3 of the mobile self-update plan to
-// detect when a newer `mobile-v*` release exists. No download / install yet
-// — Phase 4 will add APK download + verification, Phase 5 the actual install.
+// Mobile-specific wrapper. Detects when a newer `mobile-v*` release exists.
+// Download + verify lives in mobileAppDownload; install lives in apkInstaller.
 // ---------------------------------------------------------------------------
 
-// Strict tag regex — matches Phase 2's mobile-release.yml workflow exactly.
+// Strict tag regex — matches the mobile-release.yml workflow exactly.
 //   mobile-v0.3.4
 //   mobile-v1.0.0-rc.1
 const MOBILE_TAG_REGEX = /^mobile-v(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?$/;
@@ -460,7 +457,8 @@ export interface AppReleaseInfo {
 /**
  * Fetch the newest non-prerelease `mobile-v*` release.
  *
- * Detection-only. No download, no install — those land in Phase 4 / 5.
+ * Detection-only. Download + verify lives in mobileAppDownload; install
+ * lives in apkInstaller.
  */
 export async function fetchLatestMobileRelease(
   opts: {force?: boolean} = {},

@@ -17,7 +17,7 @@ import {
 } from './firmwareTransfer';
 
 // ---------------------------------------------------------------------------
-// Phase 5 — orchestrator that owns the full charger-flash pipeline.
+// Orchestrator that owns the full charger-flash pipeline.
 //
 // Pipeline:
 //   1. preflight — readyOtaBytes + sha must be present
@@ -189,9 +189,9 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
     // with it via connect(). We log for traceability.
     console.log(`[OTA] flash complete; reconnected device id=${reconnectedId}`);
   } catch (e) {
-    // Phase 5 polish: BLE errors thrown during 'rebooting' or 'reconnecting'
-    // phases are the EXPECTED side-effect of the charger restarting after
-    // cmd=11. Don't surface those to the UI as flash failures.
+    // BLE errors thrown during 'rebooting' or 'reconnecting' states are the
+    // EXPECTED side-effect of the charger restarting after cmd=11. Don't
+    // surface those to the UI as flash failures.
     const phase = store().otaState;
     if ((phase === 'rebooting' || phase === 'reconnecting') && isExpectedRebootError(e)) {
       // Stay in current phase; let downstream logic (scan + reconnect) keep

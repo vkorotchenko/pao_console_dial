@@ -58,14 +58,11 @@ function formatRelative(now: number, then: number | null): string {
 }
 
 /**
- * Phase 3 of mobile self-update. Read-only supplementary info for the app —
- * mirrors FirmwareInfoScreen's structure: "Running" version on top, "Latest
- * available" with tag/size/last-checked, and a "View changelog" link to the
- * GitHub release page.
- *
- * No actions and no install path here — Phase 4 (download + verify) and
- * Phase 5 (PackageManager install) will add those. The primary entry point
- * for triggering a check remains the Settings "App" section's button.
+ * Read-only supplementary info for the app — mirrors FirmwareInfoScreen's
+ * structure: "Running" version on top, "Latest available" with
+ * tag/size/last-checked, and a "View changelog" link to the GitHub release
+ * page. The primary entry point for triggering a check remains the Settings
+ * "App" section's button.
  */
 export default function AppInfoScreen({onClose}: AppInfoScreenProps) {
   const appVersion = useAppStore(s => s.appVersion);
@@ -196,20 +193,6 @@ export default function AppInfoScreen({onClose}: AppInfoScreenProps) {
         </TouchableOpacity>
       </View>
 
-      {/* Updates — the install path lands in Phase 4/5. Until then this row
-          is purely informational so users know the section is intentional
-          and not broken. */}
-      <Text style={styles.sectionHeader}>Updates</Text>
-      <View style={styles.card}>
-        <View style={styles.row}>
-          <View style={styles.rowText}>
-            <Text style={styles.label}>In-app install</Text>
-            <Text style={styles.hint}>
-              Coming soon — grab the APK from GitHub for now
-            </Text>
-          </View>
-        </View>
-      </View>
     </ScrollView>
   );
 }

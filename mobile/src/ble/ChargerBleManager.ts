@@ -38,7 +38,7 @@ const CHAR_ON_OFF         = '0000ff06-0000-1000-8000-00805f9b34fb';
 // Firmware version characteristic (Read + Notify, 4 bytes little-endian: [major, minor, patch, build])
 const CHAR_FW_VERSION     = '0000ff25-0000-1000-8000-00805f9b34fb';
 
-// ── OTA characteristics (Phase 5) ───────────────────────────────────────────
+// ── OTA characteristics ─────────────────────────────────────────────────────
 // 0xFF26: WRITE_WITHOUT_RESPONSE — chunked firmware bytes. We rely on the
 // BLE link-layer framing here, with a small windowing protocol on top
 // (16 chunks then wait for an ACK on 0xFF27) to avoid drowning the ESP32
@@ -511,7 +511,7 @@ export class ChargerBleManager {
     await this.writeConfigCmd(5, 0);
   }
 
-  // ── Phase 5 — OTA primitives ──────────────────────────────────────────────
+  // ── OTA primitives ────────────────────────────────────────────────────────
   // Low-level, transport-only. The orchestration / windowed protocol /
   // reconnect / verify lives in services/firmwareTransfer.ts and
   // services/otaOrchestrator.ts. The manager only knows how to push bytes

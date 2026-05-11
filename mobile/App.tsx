@@ -16,9 +16,9 @@ import {cleanupOldApks} from './src/services/mobileAppDownload';
 LogBox.ignoreLogs(['Cannot start scanning operation']);
 
 function App(): React.JSX.Element {
-  // Phase 1 of mobile self-update: read the running app's versionName /
-  // versionCode from native once at boot and stash in the store. Fire-and-
-  // forget — failures leave cached state null and the UI shows "—".
+  // Read the running app's versionName / versionCode from native once at
+  // boot and stash in the store. Fire-and-forget — failures leave cached
+  // state null and the UI shows "—".
   useEffect(() => {
     initAppVersion().then(() => {
       const v = getCachedAppVersion();
@@ -29,15 +29,15 @@ function App(): React.JSX.Element {
     });
   }, []);
 
-  // Phase 3 of mobile self-update: fire-and-forget GitHub release check on
-  // mount, mirroring the charger detection in AppNavigator. Errors land in
-  // the store as appUpdateState='error' — never bubble. 1-hour TTL inside the
-  // service prevents thrashing on rapid app relaunches.
+  // Fire-and-forget GitHub release check on mount, mirroring the charger
+  // detection in AppNavigator. Errors land in the store as
+  // appUpdateState='error' — never bubble. 1-hour TTL inside the service
+  // prevents thrashing on rapid app relaunches.
   useEffect(() => {
     checkForMobileUpdate().catch(() => {});
   }, []);
 
-  // Phase 4 housekeeping: at next launch, sweep CacheDir for any stale
+  // Housekeeping: at next launch, sweep CacheDir for any stale
   // `pao-console-mobile-*.apk` files left over from prior update attempts.
   // We can't reliably know when an Android install completes (the app gets
   // killed), so cleanup runs opportunistically next time we boot. Passing

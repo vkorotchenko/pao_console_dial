@@ -2,11 +2,11 @@ import {Subscription} from 'react-native-ble-plx';
 import {chargerBleManager, CMD_OTA_BEGIN, CMD_OTA_END, CMD_OTA_ABORT} from '../ble/ChargerBleManager';
 
 // ---------------------------------------------------------------------------
-// Phase 5 — pure BLE OTA transfer logic.
+// Pure BLE OTA transfer logic.
 //
 // Owns: MTU negotiation, OTA_BEGIN payload assembly, windowed chunk streaming,
 // OTA_END handshake, abort handling.
-// Does NOT own: download/verify (Phase 4 — otaController), reconnect/verify
+// Does NOT own: download/verify (otaController), reconnect/verify
 // (otaOrchestrator), UI state.
 //
 // Protocol contract (must match firmware exactly):

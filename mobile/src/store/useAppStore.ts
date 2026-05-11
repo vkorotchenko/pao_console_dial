@@ -27,7 +27,7 @@ interface AppState {
   // Cleared explicitly only by store.reset().
   chargerFirmwareVersion: string | null;
 
-  // ── OTA: latest GitHub release (Phase 3 — read-only detection) ──────────
+  // ── OTA: latest GitHub release (read-only detection) ────────────────────
   // All `latestRelease*` fields are populated by services/githubReleases.ts
   // when a fresh `charger-v*` release is found. They're persisted via
   // partialize so the banner can render immediately at next launch — only
@@ -44,9 +44,9 @@ interface AppState {
   latestReleaseEtag: string | null; // last ETag for conditional GET
 
   // OTA flow state — NOT persisted (resets on every launch).
-  // Phase 4 extends this enum: 'downloading' (fetching .bin),
-  // 'verifying' (computing SHA256), 'ready' (verified, bytes in memory).
-  // Phase 5 adds the flash states:
+  //   'downloading'   — fetching .bin
+  //   'verifying'     — computing SHA256
+  //   'ready'         — verified, bytes in memory
   //   'transferring'  — bytes streaming to charger via 0xFF26
   //   'rebooting'     — charger received OTA_END, restarting
   //   'reconnecting'  — scanning + reconnecting to the new image
@@ -65,12 +65,12 @@ interface AppState {
     | 'done'
     | 'error';
   otaError: string | null;
-  // Phase 4 ephemeral progress fields. Live alongside `otaProgress`
-  // (already 0..1). Set during 'downloading' from the streaming/arrayBuffer
-  // progress callback in `firmwareDownload.ts`. Both reset to null at every
-  // phase boundary that isn't actively downloading. NOT persisted — these
-  // describe an in-flight transfer and are meaningless across launches.
-  otaProgress: number; // 0..1, set explicitly at phase boundaries
+  // Ephemeral progress fields. Live alongside `otaProgress` (already 0..1).
+  // Set during 'downloading' from the streaming/arrayBuffer progress callback
+  // in `firmwareDownload.ts`. Both reset to null at every state boundary that
+  // isn't actively downloading. NOT persisted — these describe an in-flight
+  // transfer and are meaningless across launches.
+  otaProgress: number; // 0..1, set explicitly at state boundaries
   otaBytesReceived: number | null;
   otaBytesTotal: number | null;
 
@@ -81,20 +81,20 @@ interface AppState {
   // App's own versionName / versionCode (read once at boot from native via
   // services/appVersion.ts). Persisted so the Settings "App" row doesn't flash
   // an em-dash on cold start before init resolves — the value rarely changes
-  // and we'll overwrite it on the next boot anyway. Phase 1 of mobile
-  // self-update: display-only.
+  // and we'll overwrite it on the next boot anyway.
   appVersion: string | null;
   appBuildNumber: string | null;
 
-  // ── Mobile self-update: latest GitHub release (Phase 3 — detection only) ──
+  // ── Mobile self-update: latest GitHub release (detection only) ──────────
   // Populated by services/githubReleases.ts (mobile config) when a fresh
   // `mobile-v*` release is found. Persisted via partialize so the red dot can
   // render immediately at next launch. Only overwritten when a fresh fetch
   // returns a different shape, never reset on launch. Cleared explicitly only
   // by store.reset().
   //
-  // Phase 4 will use latestAppReleaseAssetUrl / latestAppReleaseSha256Url to
-  // download + verify; Phase 5 will hand the APK off to PackageManager.
+  // `latestAppReleaseAssetUrl` / `latestAppReleaseSha256Url` are consumed by
+  // `prepareAppPayload` (download + verify) and the verified APK is handed
+  // off to `apkInstaller.installApk`.
   latestAppReleaseTag: string | null; // e.g. "mobile-v0.3.4"
   latestAppReleaseVersion: string | null; // e.g. "0.3.4"
   latestAppReleaseUrl: string | null; // GitHub HTML URL (changelog target)
@@ -105,10 +105,6 @@ interface AppState {
   latestAppReleaseEtag: string | null; // last ETag for conditional GET
 
   // App-update flow state — NOT persisted (resets on every launch).
-  // Phase 3 only fires `idle | checking | error`. The remaining phases are
-  // reserved for Phase 4 (downloading / verifying / ready) and Phase 5
-  // (installing). Listed here so the type doesn't have to be rewritten when
-  // those land.
   appUpdateState:
     | 'idle'
     | 'checking'
@@ -118,9 +114,9 @@ interface AppState {
     | 'installing'
     | 'error';
   appUpdateError: string | null;
-  // Phase 4 ephemeral progress (mirrors the charger pattern, but kept in its
-  // own fields so the two state machines can run independently without one
-  // accidentally clearing the other's display). Reset at every phase boundary
+  // Ephemeral progress (mirrors the charger pattern, but kept in its own
+  // fields so the two state machines can run independently without one
+  // accidentally clearing the other's display). Reset at every state boundary
   // that isn't actively downloading. NOT persisted.
   appUpdateProgress: number; // 0..1
   appUpdateBytesReceived: number | null;
@@ -152,7 +148,7 @@ interface AppState {
   setChargerData: (d: ChargerDirectData | null) => void;
   setChargerFirmwareVersion: (v: string | null) => void;
 
-  // Actions (OTA — Phase 3)
+  // Actions (OTA)
   setLatestRelease: (
     info: {
       tag: string;
@@ -181,9 +177,9 @@ interface AppState {
       | 'error',
   ) => void;
   setOtaError: (e: string | null) => void;
-  // Phase 4 — explicit progress setters. `setOtaProgress` accepts both the
-  // 0..1 fraction and the optional received/total byte counts. Pass nulls
-  // to clear bytes display (e.g. when entering 'verifying' or 'ready').
+  // Explicit progress setters. `setOtaProgress` accepts both the 0..1
+  // fraction and the optional received/total byte counts. Pass nulls to
+  // clear bytes display (e.g. when entering 'verifying' or 'ready').
   setOtaProgress: (
     frac: number,
     received?: number | null,
@@ -200,7 +196,7 @@ interface AppState {
   // Actions (app version)
   setAppVersion: (version: string, build: string) => void;
 
-  // Actions (mobile self-update — Phase 3)
+  // Actions (mobile self-update)
   // Mirrors setLatestRelease for the charger. Pass `null` to clear, a
   // populated object to overwrite. `checkedAt` is ALWAYS updated; the rest
   // only when info is non-null.
@@ -227,7 +223,7 @@ interface AppState {
       | 'error',
   ) => void;
   setAppUpdateError: (e: string | null) => void;
-  // Phase 4 — explicit progress setters mirroring setOtaProgress / reset.
+  // Explicit progress setters mirroring setOtaProgress / reset.
   setAppUpdateProgress: (
     frac: number,
     received?: number | null,
@@ -269,7 +265,7 @@ export const useAppStore = create<AppState>()(
       chargerData: null,
       chargerFirmwareVersion: null,
 
-      // Initial state — OTA (Phase 3 — release metadata is persisted, but the
+      // Initial state — OTA (release metadata is persisted, but the
       // initializer here only runs on first launch / after store.reset()).
       latestReleaseTag: null,
       latestReleaseVersion: null,
@@ -293,9 +289,9 @@ export const useAppStore = create<AppState>()(
       appVersion: null,
       appBuildNumber: null,
 
-      // Initial state — mobile self-update (Phase 3). Persisted fields are
-      // hydrated by zustand-persist; this initializer only runs on first
-      // launch / after store.reset().
+      // Initial state — mobile self-update. Persisted fields are hydrated by
+      // zustand-persist; this initializer only runs on first launch / after
+      // store.reset().
       latestAppReleaseTag: null,
       latestAppReleaseVersion: null,
       latestAppReleaseUrl: null,
@@ -336,7 +332,7 @@ export const useAppStore = create<AppState>()(
       setChargerData: d => set({chargerData: d}),
       setChargerFirmwareVersion: v => set({chargerFirmwareVersion: v}),
 
-      // Actions — OTA (Phase 3)
+      // Actions — OTA
       // Pass `null` to clear all release fields (e.g. when GitHub returned
       // an empty list). Pass a populated object to overwrite. `checkedAt` is
       // always updated; the rest only when info is non-null.
@@ -386,7 +382,7 @@ export const useAppStore = create<AppState>()(
       setAppVersion: (version, build) =>
         set({appVersion: version, appBuildNumber: build}),
 
-      // Actions — mobile self-update (Phase 3)
+      // Actions — mobile self-update
       setLatestAppRelease: (info, checkedAt) =>
         set(
           info
@@ -495,8 +491,8 @@ export const useAppStore = create<AppState>()(
         chargeTimeWarnMinutes: state.chargeTimeWarnMinutes,
         socWarnThresholdPct: state.socWarnThresholdPct,
         chargerFirmwareVersion: state.chargerFirmwareVersion,
-        // OTA — Phase 3 persisted fields. otaState/otaError NOT included
-        // (deliberate — they should reset to 'idle'/null on every launch).
+        // OTA — persisted release-metadata fields. otaState/otaError NOT
+        // included (deliberate — they should reset to 'idle'/null on every launch).
         latestReleaseTag: state.latestReleaseTag,
         latestReleaseVersion: state.latestReleaseVersion,
         latestReleaseUrl: state.latestReleaseUrl,
@@ -514,10 +510,10 @@ export const useAppStore = create<AppState>()(
         // getVersion() is synchronous on Android, so the "em-dash flash" we
         // were avoiding is effectively a single frame at worst — not worth
         // the bug. These now live as ephemeral fields read fresh every boot.
-        // Mobile self-update — Phase 3 persisted fields. appUpdateState /
-        // appUpdateError NOT included (deliberate — they should reset to
-        // 'idle'/null on every launch, same pattern as the charger's
-        // otaState/otaError).
+        // Mobile self-update — persisted release-metadata fields.
+        // appUpdateState / appUpdateError NOT included (deliberate — they
+        // should reset to 'idle'/null on every launch, same pattern as the
+        // charger's otaState/otaError).
         latestAppReleaseTag: state.latestAppReleaseTag,
         latestAppReleaseVersion: state.latestAppReleaseVersion,
         latestAppReleaseUrl: state.latestAppReleaseUrl,

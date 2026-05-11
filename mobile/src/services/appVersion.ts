@@ -11,9 +11,6 @@
  * avoid a brief "—" flash on cold start, we read both at app boot via
  * `initAppVersion()` and cache the result in module scope. Components then read
  * synchronously through `getCachedAppVersion()` / `getCachedAppBuildNumber()`.
- *
- * Phase 1 of mobile self-update: display-only. No update detection, no
- * download, no install — those land in later phases.
  */
 import DeviceInfo from 'react-native-device-info';
 

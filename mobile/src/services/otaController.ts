@@ -115,13 +115,13 @@ export async function checkForChargerUpdate(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4 — download + verify orchestration.
+// Download + verify orchestration.
 // ---------------------------------------------------------------------------
 
 // Module-level stash for the verified bytes. INTENTIONALLY not in Zustand:
 // (1) Uint8Array doesn't survive zustand's structural cloning cleanly,
 // (2) we never want this to persist (a stale 600 KB blob in AsyncStorage is
-// worse than re-downloading), (3) Phase 5 reads this directly via
+// worse than re-downloading), (3) the BLE OTA writer reads this directly via
 // `getReadyOtaBytes()` — the only sanctioned consumer. Lifetime is until the
 // next `prepareOtaPayload()` call or until the JS context dies.
 let readyOtaBytes: Uint8Array | null = null;
@@ -137,9 +137,8 @@ let activeAbortController: AbortController | null = null;
 
 /**
  * Returns the verified firmware bytes if `otaState === 'ready'`, else null.
- * Phase 5's BLE OTA writer is the only intended consumer. Bytes are NOT
- * persisted anywhere — this is the single source of truth and lives only
- * in the JS heap.
+ * The BLE OTA writer is the only intended consumer. Bytes are NOT persisted
+ * anywhere — this is the single source of truth and lives only in the JS heap.
  */
 export function getReadyOtaBytes(): Uint8Array | null {
   return readyOtaBytes;
@@ -193,7 +192,7 @@ function downloadErrorMessage(e: unknown): string {
 
 /**
  * Downloads the latest charger firmware .bin, fetches its expected SHA256,
- * verifies, and stashes the bytes for Phase 5 to consume via
+ * verifies, and stashes the bytes for the BLE OTA writer to consume via
  * `getReadyOtaBytes()`.
  *
  * State transitions (in order on success):

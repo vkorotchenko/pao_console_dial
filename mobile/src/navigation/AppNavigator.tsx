@@ -169,18 +169,18 @@ export default function AppNavigator() {
     Orientation.lockToLandscapeLeft();
   }, []);
 
-  // Phase 3: fire-and-forget GitHub release check on app mount.
-  // Errors are swallowed inside checkForChargerUpdate — they live in the
-  // store as otaState='error', never bubble. The 1-hour TTL inside the
-  // service prevents thrashing if the app is restarted frequently.
+  // Fire-and-forget GitHub release check on app mount. Errors are swallowed
+  // inside checkForChargerUpdate — they live in the store as
+  // otaState='error', never bubble. The 1-hour TTL inside the service
+  // prevents thrashing if the app is restarted frequently.
   useEffect(() => {
     checkForChargerUpdate().catch(() => {});
   }, []);
 
-  // Phase 3: re-check whenever the charger connects.
-  // The 1-hour TTL still applies, so connect/disconnect cycles within an
-  // hour are essentially free (cache hit). Fresh data lands when the user
-  // reconnects after a long gap — exactly the moment they care.
+  // Re-check whenever the charger connects. The 1-hour TTL still applies,
+  // so connect/disconnect cycles within an hour are essentially free
+  // (cache hit). Fresh data lands when the user reconnects after a long gap
+  // — exactly the moment they care.
   useEffect(() => {
     if (chargerBleStatus === 'connected') {
       checkForChargerUpdate().catch(() => {});
@@ -305,10 +305,10 @@ export default function AppNavigator() {
     if (!permissionsGranted) { return; }
 
     // Guard: pause auto-reconnect while the OTA orchestrator owns the BLE
-    // pipeline. Phases 'rebooting' and 'reconnecting' explicitly cover the
+    // pipeline. States 'rebooting' and 'reconnecting' explicitly cover the
     // window where the orchestrator is scanning + connecting to the new
     // firmware. 'finalizing' is the verify step; the connection is live by
-    // then and we don't want to step on it. Other OTA phases (downloading,
+    // then and we don't want to step on it. Other OTA states (downloading,
     // verifying, ready, transferring) don't touch the shared scan/connect
     // surface so they're fine to let pass.
     if (
@@ -552,8 +552,8 @@ export default function AppNavigator() {
     setCurrentScreen('firmware-info');
   };
 
-  // App self-update Phase 1 — minimal info screen reached from Settings → App ⓘ.
-  // Mirrors the firmware-info open/close pair so navigation feels symmetric.
+  // Minimal info screen reached from Settings → App ⓘ. Mirrors the
+  // firmware-info open/close pair so navigation feels symmetric.
   const closeAppInfo = () => {
     Orientation.lockToPortrait();
     // Same as firmware-info: the App row lives in the Firmware tab, so the
@@ -607,7 +607,7 @@ export default function AppNavigator() {
   }
 
   // App-info screen: same overlay pattern as firmware-info. Reached via the
-  // ⓘ button in Settings → App. Phase 1 of mobile self-update — display only.
+  // ⓘ button in Settings → App. Display-only.
   if (currentScreen === 'app-info') {
     return (
       <View style={styles.container}>

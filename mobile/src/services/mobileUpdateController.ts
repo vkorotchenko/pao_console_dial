@@ -14,7 +14,7 @@ import {
 } from './mobileAppDownload';
 
 // ---------------------------------------------------------------------------
-// Phase 3 of mobile self-update — detection-only controller.
+// Mobile self-update — detection controller.
 //
 // Mirrors otaController.checkForChargerUpdate but for the running app itself.
 // Thin glue layer over fetchLatestMobileRelease: pushes results into the store
@@ -25,9 +25,8 @@ import {
 // `force` skips the 1-hour TTL but still benefits from ETag — a 304 returns
 // the cached entry without burning rate limit.
 //
-// What this DOES NOT do (deliberately): no download, no install, no progress
-// reporting. Phase 4 will add APK download + SHA256 verification; Phase 5
-// will hand off the verified APK to PackageManager.
+// Download + install logic lives in `prepareAppPayload` below (download +
+// SHA256 verify) and `apkInstaller.installApk` (PackageManager handoff).
 // ---------------------------------------------------------------------------
 
 export interface CheckForAppUpdateResult {
@@ -116,7 +115,7 @@ export async function checkForMobileUpdate(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4 — download + verify orchestration for the mobile self-update.
+// Download + verify orchestration for the mobile self-update.
 //
 // Mirrors `otaController.prepareOtaPayload` shape but for the APK:
 //   1. Sets appUpdateState = 'downloading', resets progress
@@ -128,8 +127,8 @@ export async function checkForMobileUpdate(
 //      On user-cancel: returns to 'idle' silently
 //      On any other failure: 'error' with a mapped message
 //
-// The verified APK path is exposed via `getReadyAppApkPath()` — Phase 5's
-// `installApk()` is the only intended consumer.
+// The verified APK path is exposed via `getReadyAppApkPath()` —
+// `apkInstaller.installApk()` is the only intended consumer.
 // ---------------------------------------------------------------------------
 
 // Module-level slot for the verified APK's on-disk path. Unlike the charger
@@ -149,7 +148,7 @@ let activeAppAbortController: AbortController | null = null;
 
 /**
  * Returns the verified APK path if `appUpdateState === 'ready'`, else null.
- * Phase 5's `installApk()` is the only intended consumer.
+ * `apkInstaller.installApk()` is the only intended consumer.
  */
 export function getReadyAppApkPath(): string | null {
   return readyAppApkPath;
@@ -201,7 +200,8 @@ function appDownloadErrorMessage(e: unknown): string {
 /**
  * Downloads the latest mobile-v* release APK, fetches its expected SHA256,
  * verifies (streamed — never loads the whole APK into JS memory), and stashes
- * the on-disk path for Phase 5 to consume via `getReadyAppApkPath()`.
+ * the on-disk path for `apkInstaller.installApk()` to consume via
+ * `getReadyAppApkPath()`.
  *
  * State transitions (in order on success):
  *   idle/error → 'downloading' → 'verifying' → 'ready'

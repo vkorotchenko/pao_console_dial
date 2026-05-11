@@ -4,7 +4,7 @@ import ReactNativeBlobUtil from 'react-native-blob-util';
 import type {AppReleaseInfo} from './githubReleases';
 
 // ---------------------------------------------------------------------------
-// Phase 4 — mobile self-update: download + verify the APK.
+// Mobile self-update: download + verify the APK.
 //
 // Differs from the charger flow (`firmwareDownload.ts`) in three places:
 //
@@ -17,7 +17,7 @@ import type {AppReleaseInfo} from './githubReleases';
 //     in base64) using `sha256.create()`/`update()`/`hex()`. Reading the whole
 //     file in one shot would defeat the point of writing to disk.
 //
-//  3. The returned value is a file PATH, not a byte buffer. Phase 5's install
+//  3. The returned value is a file PATH, not a byte buffer. The install
 //     intent (`installApk(path)`) consumes that path verbatim — it gets wrapped
 //     in a FileProvider URI on the Kotlin side.
 //

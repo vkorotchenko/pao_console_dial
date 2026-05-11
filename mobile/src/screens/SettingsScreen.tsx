@@ -115,10 +115,10 @@ function formatRelative(now: number, then: number | null): string {
 type SettingsTab = 'bluetooth' | 'charging' | 'firmware' | 'display';
 
 const TABS: ReadonlyArray<{key: SettingsTab; label: string}> = [
-  {key: 'bluetooth', label: 'Bluetooth'},
-  {key: 'charging', label: 'Charging'},
-  {key: 'firmware', label: 'Firmware'},
   {key: 'display', label: 'Display'},
+  {key: 'charging', label: 'Charging'},
+  {key: 'bluetooth', label: 'Bluetooth'},
+  {key: 'firmware', label: 'Firmware'},
 ];
 
 export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initialTab}: SettingsScreenProps = {}) {
@@ -155,10 +155,9 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   const otaBytesTotal = useAppStore(state => state.otaBytesTotal);
   const latestReleaseCheckedAt = useAppStore(state => state.latestReleaseCheckedAt);
   const latestReleaseVersion = useAppStore(state => state.latestReleaseVersion);
-  // App self-update Phase 1 — display-only versionName.
-  // Phase 3 adds the detection fields (latestAppReleaseVersion, etc) so the
-  // App row mirrors the Firmware row's red-dot + "Latest available" hint +
-  // contextual button pattern. Install logic remains a no-op until Phase 4/5.
+  // App self-update — running app versionName plus detection fields
+  // (latestAppReleaseVersion, etc) so the App row mirrors the Firmware row's
+  // red-dot + "Latest available" hint + contextual button pattern.
   const appVersion = useAppStore(state => state.appVersion);
   const latestAppReleaseVersion = useAppStore(
     state => state.latestAppReleaseVersion,
@@ -174,7 +173,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   );
   const appUpdateBytesTotal = useAppStore(state => state.appUpdateBytesTotal);
 
-  // ── OTA flash flow state (consolidated into Settings — Phase 5 polish) ──
+  // ── OTA flash flow state (consolidated into Settings) ──────────────────
   // AbortController for the live flash run. We mirror the lifecycle that used
   // to live in UpdateScreen: own the controller in a ref so the user can
   // cancel a transferring flash, recreate on each fresh attempt, and abort on
@@ -189,13 +188,13 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   // SettingsScreen is mounted.
   const [now, setNow] = useState(Date.now());
 
-  // Tap-only tab state. Bluetooth is the natural default — it's the first
-  // thing the user sees and the most common reason to open Settings. When
-  // AppNavigator passes an `initialTab` (set when returning from
-  // FirmwareInfoScreen / AppInfoScreen), seed the active tab from it so the
-  // user lands back where they were instead of being bounced to Bluetooth.
+  // Tap-only tab state. Display is the natural default — first-launch lands
+  // on the most general configuration tab. When AppNavigator passes an
+  // `initialTab` (set when returning from FirmwareInfoScreen / AppInfoScreen),
+  // seed the active tab from it so the user lands back where they were
+  // instead of being bounced to the default.
   const [activeTab, setActiveTab] = useState<SettingsTab>(
-    initialTab ?? 'bluetooth',
+    initialTab ?? 'display',
   );
 
   useEffect(() => {
@@ -341,14 +340,14 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       return;
     }
     // Up-to-date (latest <= running) → silent. The Firmware tab already
-    // shows "Charger firmware: vX.Y.Z" and "Latest available: vX.Y.Z" right
-    // there, so a modal alert would be redundant. The "Last checked: just
+    // shows "vX.Y.Z" + "Latest available: vX.Y.Z" right there on the
+    // charger-firmware row, so a modal alert would be redundant. The "Last checked: just
     // now" line updates via `latestReleaseCheckedAt` (touched inside
     // `checkForChargerUpdate`) so the user still gets feedback. Network /
     // unknown-version / no-release error branches above continue to alert.
   };
 
-  // ── OTA flash flow handlers (Phase 5 polish — consolidated into Settings) ─
+  // ── OTA flash flow handlers (consolidated into Settings) ────────────────
   // The contextual Firmware button delegates here when an update is available.
   // We mirror the lifecycle that used to live in UpdateScreen:
   //   1. tap → kick off prepareOtaPayload (downloads + verifies). The
@@ -516,14 +515,14 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       return;
     }
     // Up-to-date (latest <= running) → silent. The Firmware tab already
-    // shows "PAO Console: vX.Y.Z" and "Latest available: vX.Y.Z" right
+    // shows "Mobile App: vX.Y.Z" and "Latest available: vX.Y.Z" right
     // there, so a modal alert would be redundant. The "Last checked: just
     // now" line updates via `latestAppReleaseCheckedAt` (touched inside
     // `checkForMobileUpdate`) so the user still gets feedback. Network /
     // unknown-version / no-release error branches above continue to alert.
   };
 
-  // Phase 4 + 5 — real install flow. On tap:
+  // Real install flow. On tap:
   //   1. Check Android per-source install consent. If missing, prompt + deep
   //      link the user to Settings; abort this attempt (they retry after).
   //   2. Keep the screen awake for the whole download/verify (~30–60s on LTE).
@@ -538,7 +537,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       if (!can) {
         Alert.alert(
           'Permission required',
-          'Allow PAO Console to install updates? You\'ll be taken to Settings to grant "Install unknown apps" for this app, then return here and tap Update again.',
+          'Allow the Mobile App to install updates? You\'ll be taken to Settings to grant "Install unknown apps" for this app, then return here and tap Update again.',
           [
             {text: 'Cancel', style: 'cancel'},
             {
@@ -1011,10 +1010,11 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
 
   const renderFirmwareTab = () => (
     <>
-      {/* Firmware Section — consolidated OTA UI (Phase 5 polish).
+      {/* Firmware Section — consolidated OTA UI.
           Layout:
-            - Top row: "Charger firmware  ⓘ          v0.1.5  •"
-              (• red dot only when an update is available)
+            - Top row: 🔌 ⓘ          v0.1.5  •
+              (chip icon distinguishes the row from the App row below; •
+               red dot only when an update is available)
             - Optional hint: "Latest available: v0.1.6"
             - Divider
             - State-driven body:
@@ -1024,11 +1024,143 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
                 done                  → "✓ Update complete" success line
                 error                 → "⚠ {message}" + [Try again]
       */}
+      {/* App Section — mobile self-update.
+          Mirrors the Firmware section's layout for visual + cognitive parity:
+            - Top row: 📱 ⓘ          v0.3.3  •
+              (• red dot only when latestAppReleaseVersion > appVersion)
+            - Optional hint: "Latest available: v0.3.4"
+            - Divider
+            - Button: "Check for updates" OR "Update to v0.3.4" when newer
+            - Last-checked timestamp underneath */}
+      <Text style={styles.sectionHeader}>App</Text>
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <View style={styles.fwTitleRow}>
+            {/* Small phone icon distinguishes the mobile-app row from the
+                charger row above now that the redundant "PAO Console" /
+                "Mobile App" left-column label has been removed (we're
+                already inside the Firmware tab). */}
+            <Icon
+              name="cellphone"
+              size={18}
+              color="#9E9E9E"
+              style={styles.fwRowIcon}
+              accessibilityLabel="Mobile App"
+            />
+            <TouchableOpacity
+              onPress={() => onOpenAppInfo?.()}
+              accessibilityRole="button"
+              accessibilityLabel="Open app info"
+              hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+              style={styles.infoIcon}>
+              <Icon
+                name="information-outline"
+                size={18}
+                color="#5BA8C4"
+              />
+            </TouchableOpacity>
+            {hasAppUpdateAvailable && latestAppReleaseVersion ? (
+              <Text style={styles.fwHint}>
+                Latest available: {formatVersion(latestAppReleaseVersion)}
+              </Text>
+            ) : null}
+          </View>
+          <View style={styles.fwVersionRow}>
+            <Text style={styles.value}>
+              {appVersion ? `v${appVersion}` : '—'}
+            </Text>
+            {hasAppUpdateAvailable ? (
+              <View
+                style={styles.updateDot}
+                accessibilityLabel="App update available"
+              />
+            ) : null}
+          </View>
+        </View>
+
+        <View style={styles.divider} />
+
+        {/* In-flight: same visual language as the Firmware section's flash
+            progress — phase label + bar + optional bytes line + Cancel.
+            'installing' shows just the phase + bar (no cancel) because once
+            the system installer dialog is up, we can't interrupt it. No
+            spinner anywhere in this block — the progress bar carries the
+            visual feedback during download, and once the install intent
+            fires the Android system installer dialog takes over. */}
+        {isAppUpdateInFlight ? (
+          <View style={styles.fwBody}>
+            <Text style={styles.fwPhase}>{appPhaseLabel}</Text>
+            <View style={styles.progressBarTrack}>
+              <View
+                style={[
+                  styles.progressBarFill,
+                  {width: `${appProgressPct}%`},
+                ]}
+              />
+            </View>
+            {showAppBytesLine ? (
+              <Text style={styles.fwBytes}>
+                {formatBytesShort(appUpdateBytesReceived)} /{' '}
+                {formatBytesShort(appUpdateBytesTotal)}
+                {` (${appProgressPct}%)`}
+              </Text>
+            ) : null}
+            {appUpdateState === 'downloading' ? (
+              <View style={styles.fwButtonRow}>
+                <Button
+                  mode="outlined"
+                  onPress={onAppUpdateCancel}
+                  style={styles.fwFullWidthButton}>
+                  Cancel
+                </Button>
+              </View>
+            ) : null}
+          </View>
+        ) : appUpdateState === 'error' && appUpdateError ? (
+          <View style={styles.fwBody}>
+            <Text style={styles.errorText}>⚠ {appUpdateError}</Text>
+            <View style={styles.fwButtonRow}>
+              <Button
+                mode="contained"
+                onPress={onAppButtonPress}
+                style={styles.fwFullWidthButton}>
+                {appButtonLabel}
+              </Button>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.fwBody}>
+            <View style={styles.fwButtonRow}>
+              <Button
+                mode="contained"
+                onPress={onAppButtonPress}
+                disabled={isAppCheckInFlight}
+                style={styles.fwFullWidthButton}>
+                {appButtonLabel}
+              </Button>
+            </View>
+            <Text style={styles.fwHint}>
+              Last checked: {formatRelative(now, latestAppReleaseCheckedAt)}
+            </Text>
+          </View>
+        )}
+      </View>
+
       <Text style={styles.sectionHeader}>Charger Firmware</Text>
       <View style={styles.card}>
         <View style={styles.row}>
           <View style={styles.fwTitleRow}>
-            <Text style={styles.label}>Charger firmware</Text>
+            {/* Small chip icon distinguishes the charger-firmware row from
+                the app row below now that the redundant "Charger firmware"
+                left-column label has been removed (we're already inside the
+                Firmware tab — the label was duplicating the tab name). */}
+            <Icon
+              name="chip"
+              size={18}
+              color="#9E9E9E"
+              style={styles.fwRowIcon}
+              accessibilityLabel="Charger firmware"
+            />
             <TouchableOpacity
               onPress={() => onOpenFirmwareInfo?.()}
               disabled={isOtaInFlight}
@@ -1152,122 +1284,6 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
                   ? 'Connect to the charger to install the update'
                   : 'Connect to the charger to check for updates'
                 : `Last checked: ${formatRelative(now, latestReleaseCheckedAt)}`}
-            </Text>
-          </View>
-        )}
-      </View>
-
-      {/* App Section — Phase 3 of mobile self-update.
-          Mirrors the Firmware section's layout for visual + cognitive parity:
-            - Top row: "PAO Console  ⓘ          v0.3.3  •"
-              (• red dot only when latestAppReleaseVersion > appVersion)
-            - Optional hint: "Latest available: v0.3.4"
-            - Divider
-            - Button: "Check for updates" OR "Update to v0.3.4" when newer
-              (the update button is a no-op until Phase 4/5 — alerts a benign
-              "coming soon" notice instead of starting an install)
-            - Last-checked timestamp underneath
-          Install logic is NOT here yet — that lands in Phase 4 (download +
-          verify) and Phase 5 (PackageManager handoff). */}
-      <Text style={styles.sectionHeader}>App</Text>
-      <View style={styles.card}>
-        <View style={styles.row}>
-          <View style={styles.fwTitleRow}>
-            <Text style={styles.label}>PAO Console</Text>
-            <TouchableOpacity
-              onPress={() => onOpenAppInfo?.()}
-              accessibilityRole="button"
-              accessibilityLabel="Open app info"
-              hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
-              style={styles.infoIcon}>
-              <Icon
-                name="information-outline"
-                size={18}
-                color="#5BA8C4"
-              />
-            </TouchableOpacity>
-            {hasAppUpdateAvailable && latestAppReleaseVersion ? (
-              <Text style={styles.fwHint}>
-                Latest available: {formatVersion(latestAppReleaseVersion)}
-              </Text>
-            ) : null}
-          </View>
-          <View style={styles.fwVersionRow}>
-            <Text style={styles.value}>
-              {appVersion ? `v${appVersion}` : '—'}
-            </Text>
-            {hasAppUpdateAvailable ? (
-              <View
-                style={styles.updateDot}
-                accessibilityLabel="App update available"
-              />
-            ) : null}
-          </View>
-        </View>
-
-        <View style={styles.divider} />
-
-        {/* In-flight: same visual language as the Firmware section's flash
-            progress — phase label + bar + optional bytes line + Cancel.
-            'installing' shows just the phase + bar (no cancel) because once
-            the system installer dialog is up, we can't interrupt it. No
-            spinner anywhere in this block — the progress bar carries the
-            visual feedback during download, and once the install intent
-            fires the Android system installer dialog takes over. */}
-        {isAppUpdateInFlight ? (
-          <View style={styles.fwBody}>
-            <Text style={styles.fwPhase}>{appPhaseLabel}</Text>
-            <View style={styles.progressBarTrack}>
-              <View
-                style={[
-                  styles.progressBarFill,
-                  {width: `${appProgressPct}%`},
-                ]}
-              />
-            </View>
-            {showAppBytesLine ? (
-              <Text style={styles.fwBytes}>
-                {formatBytesShort(appUpdateBytesReceived)} /{' '}
-                {formatBytesShort(appUpdateBytesTotal)}
-                {` (${appProgressPct}%)`}
-              </Text>
-            ) : null}
-            {appUpdateState === 'downloading' ? (
-              <View style={styles.fwButtonRow}>
-                <Button
-                  mode="outlined"
-                  onPress={onAppUpdateCancel}
-                  style={styles.fwFullWidthButton}>
-                  Cancel
-                </Button>
-              </View>
-            ) : null}
-          </View>
-        ) : appUpdateState === 'error' && appUpdateError ? (
-          <View style={styles.fwBody}>
-            <Text style={styles.errorText}>⚠ {appUpdateError}</Text>
-            <View style={styles.fwButtonRow}>
-              <Button
-                mode="contained"
-                onPress={onAppButtonPress}
-                style={styles.fwFullWidthButton}>
-                {appButtonLabel}
-              </Button>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.fwBody}>
-            <View style={styles.fwButtonRow}>
-              <Button
-                mode="contained"
-                onPress={onAppButtonPress}
-                disabled={isAppCheckInFlight}
-                style={styles.fwFullWidthButton}>
-                {appButtonLabel}
-              </Button>
-            </View>
-            <Text style={styles.fwHint}>
-              Last checked: {formatRelative(now, latestAppReleaseCheckedAt)}
             </Text>
           </View>
         )}
@@ -1584,6 +1600,13 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     alignItems: 'center',
     marginRight: 12,
+  },
+  // Small leading icon used in place of the (removed) redundant left-column
+  // label on the Firmware-tab rows. Chip for the charger firmware row,
+  // cellphone for the mobile-app row — gives a glanceable distinction without
+  // re-introducing a full label.
+  fwRowIcon: {
+    marginRight: 2,
   },
   infoIcon: {
     marginLeft: 6,

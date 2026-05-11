@@ -1,11 +1,11 @@
 import {sha256} from 'js-sha256';
 
 // ---------------------------------------------------------------------------
-// Phase 4 — pure download + integrity verification.
+// Pure download + integrity verification.
 //
 // No file system writes (bytes live in memory only). No BLE writes. The bytes
 // returned here are consumed by `otaController.prepareOtaPayload`, which
-// stashes them in a module-level variable for Phase 5 to pick up.
+// stashes them in a module-level variable for the BLE OTA writer to pick up.
 //
 // Streaming-vs-arrayBuffer decision
 // ---------------------------------
@@ -17,7 +17,7 @@ import {sha256} from 'js-sha256';
 //
 // For a ~600 KB charger firmware artifact, the simplicity-vs-progress-fidelity
 // tradeoff strongly favours `arrayBuffer()` with synthetic 0 → 1 progress at
-// the phase boundary. We feature-detect `getReader` and use it when present
+// the boundary. We feature-detect `getReader` and use it when present
 // (fall back to `arrayBuffer` otherwise). Smooth UX > perfect progress
 // reporting at this scale.
 // ---------------------------------------------------------------------------
