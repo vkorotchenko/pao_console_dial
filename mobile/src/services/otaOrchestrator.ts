@@ -139,7 +139,12 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
     onPhase?.('reconnecting');
     setState('reconnecting');
 
-    const reconnectedId = await scanAndReconnect(signal);
+    // Pass the pre-reboot device id so scanAndReconnect can prefer matching
+    // by id (most reliable on Android — survives the reboot since the BT
+    // MAC stays the same). The store's chargerDeviceId is already cleared
+    // by the disconnect handler at this point, so we have to source it from
+    // the snapshot we took before the transfer began.
+    const reconnectedId = await scanAndReconnect(signal, initialDeviceId);
 
     // 5. Version check + re-init connection ───────────────────────────────
     // The chargerBleManager.connect() above set the connectedDevice
@@ -197,16 +202,47 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
       // pipeline above is now broken. Convert to an abort-like soft fail
       // and let the user retry. Power-cycle hint via dedicated message.
       const message = 'Charger restarted but did not come back online — power-cycle and reconnect to check version.';
+      // Critical: clear manager state so AppNavigator's auto-reconnect loop
+      // can take over without competing with stale orchestrator references.
+      // Without this the manager's connectedDevice may still point at the
+      // pre-reboot Device object, and chargerBleStatus may be stuck in a
+      // half-state that the auto-reconnect effect doesn't act on.
+      handOffToAppNavigatorReconnect();
       setState('error');
       store().setOtaError(message);
       throw new Error(message);
     }
     const message = mapErrorToMessage(e);
     console.error('[OTA] flash error:', e);
+    // Same hand-off on a generic error during/after reconnect — leaves the
+    // user with the error message visible but the manager state clean so a
+    // background reconnect can succeed silently.
+    if (phase === 'reconnecting' || phase === 'rebooting' || phase === 'finalizing') {
+      handOffToAppNavigatorReconnect();
+    }
     setState('error');
     store().setOtaError(message);
     throw e;
   }
+}
+
+/**
+ * Tear down whatever in-session BLE state the orchestrator was managing so
+ * the regular AppNavigator auto-reconnect loop can take over with a clean
+ * slate. Safe to call from any phase — chargerBleManager.disconnect() is
+ * idempotent against a null connectedDevice.
+ */
+function handOffToAppNavigatorReconnect(): void {
+  console.log('[OTA] reconnect: handing back to chargerBleManager');
+  try {
+    chargerBleManager.disconnect();
+  } catch (e) {
+    console.warn('[OTA] disconnect during hand-off failed (non-fatal):', e);
+  }
+  // disconnect() already sets chargerBleStatus='disconnected'. Bumping the
+  // scan trigger ensures AppNavigator's unified scan effect re-runs even if
+  // it was already in 'disconnected' (Zustand swallows no-op sets).
+  useAppStore.getState().incrementScanTrigger();
 }
 
 /**
@@ -275,15 +311,42 @@ function waitForDisconnect(
 }
 
 /**
- * Scan for a charger advertising the OTA service UUID and connect to the
- * first match. Resolves with the new device id. Times out after
- * RECONNECT_SCAN_TIMEOUT_MS.
+ * Scan for the charger after a reboot and connect to it. Resolves with the
+ * new device id. Times out after RECONNECT_SCAN_TIMEOUT_MS.
+ *
+ * Why no UUID filter:
+ *   Android scan filters only match the primary advertisement payload, and
+ *   even with our NimBLE charger setting `setScanResponse(true)` the name +
+ *   sometimes the UUID lands in the scan response. Historical Bluefruit
+ *   builds had the same quirk (charger UUID lived in scan response only).
+ *   AppNavigator already discovered this and switched to a null filter
+ *   (see the comment near the unified scan effect). We mirror that here so
+ *   the orchestrator's reconnect doesn't time out on Android.
+ *
+ * Match priority in the callback (highest first):
+ *   1. previously-saved chargerDeviceId (same physical hardware, same id post-reboot)
+ *   2. advertised service UUID matches CHARGER_SERVICE_UUID
+ *   3. device.name === "Pao Charger" (case-insensitive)
  */
-function scanAndReconnect(signal: AbortSignal): Promise<string> {
+function scanAndReconnect(
+  signal: AbortSignal,
+  preferredDeviceId: string | null,
+): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     if (signal.aborted) {
       return reject(new OtaAbortedError());
     }
+
+    // Prefer the id passed in by the caller (snapshotted before transfer);
+    // fall back to whatever's currently in the store. The disconnect handler
+    // clears chargerDeviceId synchronously when the reboot disconnect fires,
+    // so the store value is often null by the time we get here.
+    const savedChargerId =
+      preferredDeviceId ?? useAppStore.getState().chargerDeviceId ?? null;
+
+    console.log(
+      `[OTA] reconnect: scan started for service UUID=${CHARGER_SERVICE_UUID} (null filter, savedId=${savedChargerId ?? 'none'})`,
+    );
 
     let resolved = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -304,7 +367,7 @@ function scanAndReconnect(signal: AbortSignal): Promise<string> {
     signal.addEventListener('abort', onAbort);
 
     sharedBleManager.startDeviceScan(
-      [CHARGER_SERVICE_UUID],
+      null,
       null,
       (error: BleError | null, device: Device | null) => {
         if (error) {
@@ -315,19 +378,46 @@ function scanAndReconnect(signal: AbortSignal): Promise<string> {
         }
         if (!device) return;
 
-        console.log(`[OTA] reconnect scan found: ${device.name} ${device.id}`);
+        // Reject obviously-wrong devices fast (PAO Console is the other BLE
+        // peer in this product — never reconnect to it as the charger).
+        if (device.name === 'PAO Console') return;
+
+        const advertised = (device.serviceUUIDs ?? []).map(u =>
+          u.toLowerCase(),
+        );
+        const isCharger =
+          (savedChargerId != null && device.id === savedChargerId) ||
+          advertised.includes(CHARGER_SERVICE_UUID.toLowerCase()) ||
+          device.name?.toLowerCase() === 'pao charger';
+
+        if (!isCharger) return;
+
+        console.log(
+          `[OTA] reconnect: device found id=${device.id} name=${device.name}`,
+        );
         sharedBleManager.stopDeviceScan();
 
-        // Connect via the manager so the store + subscriptions stay in sync.
-        // ChargerBleManager.connect() handles state and disconnect handlers.
+        // Connect via the manager so the store + disconnect handler stay in
+        // sync. We then wire telemetry subscriptions so post-OTA the UI sees
+        // the same data flow it would after a normal AppNavigator connect —
+        // this is the critical fix: without subscriptions the connection
+        // looks healthy but no notifications reach the store.
         chargerBleManager
           .connect(device.id)
-          .then(() => finish({ok: true, id: device.id}))
-          .catch(e => finish({ok: false, err: e}));
+          .then(() => {
+            console.log(`[OTA] reconnect: connect success id=${device.id}`);
+            chargerBleManager.wirePostConnectSubscriptions();
+            finish({ok: true, id: device.id});
+          })
+          .catch(e => {
+            console.log(`[OTA] reconnect: connect failed: ${(e as any)?.message ?? e}`);
+            finish({ok: false, err: e});
+          });
       },
     );
 
     timer = setTimeout(() => {
+      console.log('[OTA] reconnect: scan timed out — handing back to chargerBleManager');
       finish({
         ok: false,
         err: new Error(

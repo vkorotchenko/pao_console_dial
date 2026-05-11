@@ -46,6 +46,13 @@ export default function AppNavigator() {
   const showGearTab = useAppStore(state => state.showGearTab);
   const bleStatus = useAppStore(state => state.bleStatus);
   const chargerBleStatus = useAppStore(state => state.chargerBleStatus);
+  // OTA phase — used to PAUSE the unified scan effect during an orchestrated
+  // OTA reconnect. Without this, the BLE-level disconnect that fires when
+  // the charger reboots would flip chargerBleStatus to 'disconnected',
+  // re-trigger this effect, and start a competing scan against the same
+  // sharedBleManager that the orchestrator is using — killing the
+  // orchestrator's scan and leaving the user stuck.
+  const otaState = useAppStore(state => state.otaState);
   // scanTrigger lives in the store so Settings screen "Connect" buttons can
   // increment it without starting their own independent scans.
   const scanTrigger = useAppStore(state => state.scanTrigger);
@@ -284,6 +291,22 @@ export default function AppNavigator() {
     // Guard: permissions must be granted before any scan attempt
     if (!permissionsGranted) { return; }
 
+    // Guard: pause auto-reconnect while the OTA orchestrator owns the BLE
+    // pipeline. Phases 'rebooting' and 'reconnecting' explicitly cover the
+    // window where the orchestrator is scanning + connecting to the new
+    // firmware. 'finalizing' is the verify step; the connection is live by
+    // then and we don't want to step on it. Other OTA phases (downloading,
+    // verifying, ready, transferring) don't touch the shared scan/connect
+    // surface so they're fine to let pass.
+    if (
+      otaState === 'rebooting' ||
+      otaState === 'reconnecting' ||
+      otaState === 'finalizing'
+    ) {
+      console.log(`[AppNavigator] auto-reconnect tick: paused (otaState=${otaState})`);
+      return;
+    }
+
     // Manual scan request: reset retry counters so a fresh set of 3 attempts begins
     if (scanTrigger !== prevScanTrigger.current) {
       prevScanTrigger.current = scanTrigger;
@@ -295,6 +318,10 @@ export default function AppNavigator() {
     // attempt is retried by the unified scan rather than being stuck forever.
     const needsPao = bleStatus === 'disconnected' || bleStatus === 'error';
     const needsCharger = chargerBleStatus === 'disconnected' || chargerBleStatus === 'error';
+
+    console.log(
+      `[AppNavigator] auto-reconnect tick: bleStatus=${bleStatus} chargerBleStatus=${chargerBleStatus} otaState=${otaState} needsPao=${needsPao} needsCharger=${needsCharger} scanTrigger=${scanTrigger}`,
+    );
 
     // Nothing to do if both are already connected/connecting/scanning/error
     if (!needsPao && !needsCharger) { return; }
@@ -488,7 +515,7 @@ export default function AppNavigator() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bleStatus, chargerBleStatus, permissionsGranted, scanTrigger]);
+  }, [bleStatus, chargerBleStatus, permissionsGranted, scanTrigger, otaState]);
 
   const navigate = (screen: string) => {
     if (screen === 'hud') {

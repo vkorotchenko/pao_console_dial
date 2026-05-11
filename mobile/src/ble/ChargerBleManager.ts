@@ -141,6 +141,7 @@ export class ChargerBleManager {
       this.stopScan();
       useAppStore.getState().setChargerBleStatus('connecting');
 
+      console.log(`[BleManager] connect requested for ${deviceId}`);
       console.log('ChargerBle connecting to:', deviceId);
       const device = await this.manager.connectToDevice(deviceId);
 
@@ -406,6 +407,59 @@ export class ChargerBleManager {
       ...(tVolt.status === 'fulfilled' && tVolt.value?.value ? { targetVoltageV: decodeCharValue(tVolt.value.value) / 10 } : {}),
       ...(tAmp.status === 'fulfilled' && tAmp.value?.value ? { targetAmpsA: decodeCharValue(tAmp.value.value) / 10 } : {}),
     };
+  }
+
+  /**
+   * Wire up post-connect telemetry subscriptions + seed initial state.
+   *
+   * Encapsulates the boilerplate that both AppNavigator (regular scan-and-
+   * connect) and otaOrchestrator (post-OTA reconnect) need: subscribe to all
+   * notify characteristics so the charger detail screen receives live data,
+   * then seed currently-readable state immediately AND again after 1.5s once
+   * the firmware's Ble::loop has populated fresh values. Idempotent: calling
+   * twice on the same connection is a duplicated subscription, so call it
+   * exactly once per connect() — matching what AppNavigator already does.
+   */
+  wirePostConnectSubscriptions(): void {
+    if (!this.connectedDevice) {
+      console.warn('[BleManager] wirePostConnectSubscriptions: no device');
+      return;
+    }
+
+    this.subscribeToAll(partial => {
+      const current = useAppStore.getState().chargerData;
+      useAppStore.getState().setChargerData(
+        {...({} as any), ...current, ...partial} as ChargerDirectData,
+      );
+    });
+
+    // Seed readable state immediately without waiting for the first notify.
+    this.readInitialState()
+      .then(initial => {
+        if (Object.keys(initial).length > 0) {
+          const current = useAppStore.getState().chargerData;
+          useAppStore.getState().setChargerData(
+            {...({} as any), ...current, ...initial} as ChargerDirectData,
+          );
+        }
+      })
+      .catch(() => {}); // non-fatal
+
+    // Re-read after 1.5s — firmware Ble::loop() fires ~1s post-connect and
+    // populates chargeState/soc/error which start at VALUE=0 in GATT.
+    setTimeout(() => {
+      if (!this.isConnected()) return;
+      this.readInitialState()
+        .then(refreshed => {
+          if (Object.keys(refreshed).length > 0) {
+            const current = useAppStore.getState().chargerData;
+            useAppStore.getState().setChargerData(
+              {...({} as any), ...current, ...refreshed} as ChargerDirectData,
+            );
+          }
+        })
+        .catch(() => {});
+    }, 1500);
   }
 
   /**
