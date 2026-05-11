@@ -56,10 +56,16 @@ export const OTA_STATUS = {
 } as const;
 
 const WINDOW_SIZE = 16; // chunks per ACK cycle
-const WINDOW_TIMEOUT_MS = 15_000; // generous — slow phones can take a while
+const WINDOW_TIMEOUT_MS = 30_000; // generous — ESP32 may be busy with NimBLE notify queue + CAN bus traffic
 const READY_TIMEOUT_MS = 10_000; // OTA_BEGIN → READY
 const REBOOT_TIMEOUT_MS = 10_000; // OTA_END → REBOOTING
 const ABORT_TIMEOUT_MS = 3_000; // OTA_ABORT → ABORTED
+
+// Cap below NimBLE's 512-byte default characteristic max-len and below
+// Android's ~244-byte practical WRITE_NR ceiling. mtu - 3 is the ATT
+// payload size, but actual on-air WRITE_NR is constrained by LL data
+// length which most Android stacks cap at ~247 regardless of MTU.
+const MAX_CHUNK_SIZE = 244;
 
 export type TransferPhase =
   | 'requesting_mtu'
@@ -89,6 +95,28 @@ export class OtaProtocolError extends Error {
     this.name = 'OtaProtocolError';
   }
 }
+
+/**
+ * Thrown when the negotiated BLE MTU is too small to carry the OTA_BEGIN
+ * payload (1 cmd byte + 4 size bytes + 32 sha256 bytes = 37 bytes, plus 3
+ * bytes ATT header = 40 minimum). We require ≥42 with a small margin to
+ * cover stack quirks. Default Android MTU is 23 → guaranteed rejection.
+ */
+export class OtaMtuTooSmallError extends Error {
+  constructor(
+    public readonly negotiatedMtu: number,
+    public readonly requiredMtu: number,
+  ) {
+    super(
+      `Couldn't negotiate a large enough BLE MTU (got ${negotiatedMtu}, need at least ${requiredMtu}). The charger may need to be reconnected.`,
+    );
+    this.name = 'OtaMtuTooSmallError';
+  }
+}
+
+// OTA_BEGIN wire size: 1 (cmd) + 4 (u32 size) + 32 (sha256) = 37 bytes.
+// Add 3-byte ATT header + 2-byte safety margin → 42-byte MTU minimum.
+const MIN_MTU_FOR_OTA_BEGIN = 42;
 
 /**
  * Map a status code into a user-facing message. Used by orchestrator + UI.
@@ -310,8 +338,18 @@ export async function transferFirmware(
     // ── 1. MTU ──────────────────────────────────────────────────────────────
     onPhase?.('requesting_mtu');
     const mtu = await chargerBleManager.requestOtaMtu();
-    const chunkSize = Math.max(20, mtu - 3);
+    const chunkSize = Math.max(20, Math.min(MAX_CHUNK_SIZE, mtu - 3));
     console.log(`[OTA] starting transfer: total=${total}B chunkSize=${chunkSize}B mtu=${mtu}`);
+
+    // Fail-fast: if the negotiated MTU is below what the OTA_BEGIN payload
+    // needs, the OS will reject the very first write with "Operation was
+    // rejected" — and the user gets a confusing dead-end. Surface a clear,
+    // actionable error instead. The charger may need to be power-cycled or
+    // reconnected so MTU re-negotiation has another chance to land on 247+.
+    if (mtu < MIN_MTU_FOR_OTA_BEGIN) {
+      console.log('[ota] MTU too small for OTA_BEGIN payload — failing fast');
+      throw new OtaMtuTooSmallError(mtu, MIN_MTU_FOR_OTA_BEGIN);
+    }
 
     // ── 2. Subscribe to status pipe ─────────────────────────────────────────
     pipe.start();
@@ -361,12 +399,11 @@ export async function transferFirmware(
       offset = end;
       chunksInWindow++;
 
-      // Yield to the RN bridge so the JS thread doesn't starve the bridge
-      // thread that's actually pushing the bytes to the native side.
-      // setTimeout(0) is the cheapest way to drain microtasks.
-      if (chunksInWindow % 4 === 0) {
-        await new Promise<void>(r => setTimeout(() => r(), 0));
-      }
+      // Pace WRITE_NR ops to prevent Android BLE queue congestion. 5ms is the
+      // sweet spot — slow enough for the OS to drain, fast enough that the full
+      // transfer completes in seconds. Some Android phones will stall under
+      // back-to-back WRITE_NR even with explicit MTU; this delay is mandatory.
+      await new Promise<void>(r => setTimeout(r, 5));
 
       const isLastChunk = offset >= total;
 
@@ -377,6 +414,7 @@ export async function transferFirmware(
         // Some firmware revisions may emit ACK *before* the chunk's been fully
         // processed — clamp to total in case.
         const reported = Math.min(ev.bytesReceived, total);
+        console.log(`[OTA] window ack: bytes=${reported}/${total} (${Math.round(100*reported/total)}%)`);
         onProgress?.(reported, total);
         chunksInWindow = 0;
         windowRetries = 0;

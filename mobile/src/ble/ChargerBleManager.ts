@@ -481,14 +481,21 @@ export class ChargerBleManager {
       throw new Error('ChargerBle: Not connected');
     }
     try {
+      console.log('[ota] requesting MTU 517 on device', this.connectedDevice.id);
       const updated = await this.connectedDevice.requestMTU(517);
       // The Device proxy exposes the negotiated MTU on the returned object.
       // If unavailable, default to 23 — the BLE spec minimum.
-      const mtu = (updated as any)?.mtu ?? 23;
+      // Extra diagnostics: log the raw object shape so we can spot platform
+      // quirks where `.mtu` lands on a different field (iOS in particular
+      // historically returned 0/undefined when negotiation was a no-op).
+      const rawMtu = (updated as any)?.mtu;
+      const mtu = rawMtu ?? 23;
+      console.log('[ota] negotiated MTU:', mtu, '(raw=', rawMtu, ')');
       console.log(`[OTA] negotiated MTU=${mtu} (chunkSize=${Math.max(20, mtu - 3)})`);
       return mtu;
     } catch (e) {
       console.warn('[OTA] requestMTU failed, falling back to 23:', e);
+      console.log('[ota] requestMTU error detail:', JSON.stringify(e, Object.getOwnPropertyNames(e as object)));
       return 23;
     }
   }
@@ -541,6 +548,13 @@ export class ChargerBleManager {
    * an optional payload. Format on the wire: [cmd: u8, ...payload]. Uses
    * write-with-response for reliability (the charger ACKs the write before
    * we proceed to the next state).
+   *
+   * "Operation was rejected" from the native BLE stack on this write almost
+   * always means the payload is larger than the negotiated ATT_MTU permits
+   * (default Android MTU is 23 → max payload ~18 bytes; cmd=10 payload is
+   * 37 bytes). The OTA flow's transfer step calls requestOtaMtu(517) before
+   * any cmd write — if that fail-fast guard didn't catch the small MTU
+   * first, the diagnostic log here will surface the native error code.
    */
   async writeOtaCommand(cmd: number, payload?: Uint8Array): Promise<void> {
     if (!this.connectedDevice) {
@@ -552,11 +566,39 @@ export class ChargerBleManager {
     if (payload) {
       buf.set(payload, 1);
     }
-    await this.connectedDevice.writeCharacteristicWithResponseForService(
-      CHARGER_SERVICE_UUID,
-      CHAR_CONFIG_CMD,
-      buf.toString('base64'),
-    );
+    // Diagnostic: log the exact byte length we're about to write. This is the
+    // single most useful number when "Operation was rejected" surfaces — it
+    // lets us correlate against negotiated MTU.
+    if (cmd === 10) {
+      console.log('[ota] writing OTA_BEGIN, bytes:', buf.length);
+    } else {
+      console.log(`[ota] writing OTA cmd=${cmd}, bytes:`, buf.length);
+    }
+    try {
+      await this.connectedDevice.writeCharacteristicWithResponseForService(
+        CHARGER_SERVICE_UUID,
+        CHAR_CONFIG_CMD,
+        buf.toString('base64'),
+      );
+    } catch (err: any) {
+      // Surface every native error field we know about. react-native-ble-plx
+      // wraps both Android (status codes) and iOS (CBATTError codes) under
+      // these property names.
+      const detail = {
+        message: err?.message,
+        errorCode: err?.errorCode,
+        attErrorCode: err?.attErrorCode,
+        androidErrorCode: err?.androidErrorCode,
+        iosErrorCode: err?.iosErrorCode,
+        reason: err?.reason,
+      };
+      if (cmd === 10) {
+        console.log('[ota] OTA_BEGIN write failed:', JSON.stringify(detail));
+      } else {
+        console.log(`[ota] OTA cmd=${cmd} write failed:`, JSON.stringify(detail));
+      }
+      throw err;
+    }
   }
 
   /**
