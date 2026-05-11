@@ -506,10 +506,14 @@ export const useAppStore = create<AppState>()(
         latestReleaseNotes: state.latestReleaseNotes,
         latestReleaseCheckedAt: state.latestReleaseCheckedAt,
         latestReleaseEtag: state.latestReleaseEtag,
-        // App's own version — persisted to avoid an em-dash flash on cold
-        // start. Overwritten by initAppVersion() at every boot.
-        appVersion: state.appVersion,
-        appBuildNumber: state.appBuildNumber,
+        // App's own version (appVersion / appBuildNumber) is intentionally
+        // NOT persisted. Persisting it created a rehydration race after an
+        // OTA self-update: the App.tsx init effect would set the new running
+        // version synchronously at boot, then AsyncStorage rehydration would
+        // overwrite it with the stale previous-launch value. DeviceInfo
+        // getVersion() is synchronous on Android, so the "em-dash flash" we
+        // were avoiding is effectively a single frame at worst — not worth
+        // the bug. These now live as ephemeral fields read fresh every boot.
         // Mobile self-update — Phase 3 persisted fields. appUpdateState /
         // appUpdateError NOT included (deliberate — they should reset to
         // 'idle'/null on every launch, same pattern as the charger's
