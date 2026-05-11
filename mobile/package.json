@@ -24,7 +24,6 @@
     "react-native-ble-plx": "^3.5.1",
     "react-native-device-info": "^15.0.2",
     "react-native-gesture-handler": "^2.30.0",
-    "react-native-keep-awake": "^4.0.0",
     "react-native-orientation-locker": "^1.7.0",
     "react-native-pager-view": "^8.0.0",
     "react-native-paper": "^5.14.0",

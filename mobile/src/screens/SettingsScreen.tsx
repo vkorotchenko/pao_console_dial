@@ -22,7 +22,6 @@ import {
 } from '../services/otaController';
 import {checkForMobileUpdate} from '../services/mobileUpdateController';
 import {flashChargerFirmware} from '../services/otaOrchestrator';
-import {activateKeepAwake, deactivateKeepAwake} from '../utils/keepAwake';
 import {compare, formatVersion, parse} from '../services/semver';
 import _ScreenBrightness from 'react-native-screen-brightness';
 import {PageHeader} from '../components/PageHeader';
@@ -137,8 +136,10 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
   // ── OTA flash flow state (consolidated into Settings — Phase 5 polish) ──
   // AbortController for the live flash run. We mirror the lifecycle that used
   // to live in UpdateScreen: own the controller in a ref so the user can
-  // cancel a transferring flash, recreate on each fresh attempt, release the
-  // wake-lock on settle, and abort on unmount.
+  // cancel a transferring flash, recreate on each fresh attempt, and abort on
+  // unmount. No wake-lock: `react-native-keep-awake` was removed (abandoned,
+  // jcenter() reference broke Gradle 9 CI builds) and RN 0.84 has no zero-dep
+  // replacement. See the comment block in the ScrollView return for context.
   const flashAbortRef = useRef<AbortController | null>(null);
   const [hasWriteSettings, setHasWriteSettings] = useState<boolean | null>(null);
   // Tick once a minute so the "Last checked" relative time updates without
@@ -293,10 +294,10 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
   // ── OTA flash flow handlers (Phase 5 polish — consolidated into Settings) ─
   // The contextual Firmware button delegates here when an update is available.
   // We mirror the lifecycle that used to live in UpdateScreen:
-  //   1. tap → activate wake-lock, kick off prepareOtaPayload (downloads +
-  //      verifies). The orchestrator runs the moment otaState flips to
-  //      'ready' (handled in the watcher effect below — keeps the button a
-  //      single "Update to vX.Y.Z" tap instead of two).
+  //   1. tap → kick off prepareOtaPayload (downloads + verifies). The
+  //      orchestrator runs the moment otaState flips to 'ready' (handled in
+  //      the watcher effect below — keeps the button a single
+  //      "Update to vX.Y.Z" tap instead of two).
   //   2. cancel during transfer → abort the controller; orchestrator catches
   //      it and lands in 'idle' / 'error'.
 
@@ -304,14 +305,6 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
     // Reset any prior abort controller defensively.
     flashAbortRef.current?.abort();
     flashAbortRef.current = new AbortController();
-    // KeepAwake is wrapped already in utils/keepAwake but some Android versions
-    // can still throw under odd activation orderings (e.g. activate-deactivate
-    // races during rapid OTA re-attempts). Extra belt-and-suspenders try/catch.
-    try {
-      activateKeepAwake();
-    } catch (e) {
-      console.warn('[OTA] activateKeepAwake failed:', e);
-    }
     // Start the download/verify. Errors land in the store via the controller,
     // not via throw — no .catch needed here.
     prepareOtaPayload();
@@ -326,22 +319,9 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
       return;
     }
     const controller = flashAbortRef.current;
-    // releaseWakeLock fires on BOTH success and failure of flashChargerFirmware,
-    // and can fire after this component unmounts (the orchestrator's tail
-    // runs independently of the UI lifecycle). Guard the deactivate call —
-    // KeepAwake itself is forgiving but RN/Android can throw on duplicate
-    // deactivates or post-unmount calls in rare cases.
-    const releaseWakeLock = () => {
-      try {
-        deactivateKeepAwake();
-      } catch (e) {
-        console.warn('[OTA] deactivateKeepAwake (post-flash) failed:', e);
-      }
-    };
-    flashChargerFirmware({signal: controller.signal}).then(
-      releaseWakeLock,
-      releaseWakeLock,
-    );
+    // Fire and forget — the orchestrator surfaces errors via the store, not
+    // via throw, so no .catch is needed. otaState transitions drive the UI.
+    flashChargerFirmware({signal: controller.signal});
     // We intentionally don't clear flashAbortRef here; controller.signal must
     // stay valid for any late callbacks from the orchestrator. It's overwritten
     // by the next attempt.
@@ -390,29 +370,20 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
         }
       };
     }
-    if (otaState === 'idle' || otaState === 'error') {
-      try {
-        deactivateKeepAwake();
-      } catch (e) {
-        console.warn('[OTA] deactivateKeepAwake on idle/error failed:', e);
-      }
-    }
+    // No wake-lock handling needed for idle/error — the library was removed
+    // and there's no replacement in RN 0.84.
     return undefined;
   }, [otaState]);
 
-  // Drop wake-lock + abort on unmount. Also flips mountedRef so the auto-revert
-  // timer (if still pending) becomes a no-op when it eventually fires.
+  // Abort any in-flight flash on unmount. Also flips mountedRef so the
+  // auto-revert timer (if still pending) becomes a no-op when it eventually
+  // fires. No wake-lock cleanup needed — the library has been removed.
   useEffect(() => {
     return () => {
       mountedRef.current = false;
       if (autoRevertTimerRef.current) {
         clearTimeout(autoRevertTimerRef.current);
         autoRevertTimerRef.current = null;
-      }
-      try {
-        deactivateKeepAwake();
-      } catch (e) {
-        console.warn('[OTA] deactivateKeepAwake on unmount failed:', e);
       }
       flashAbortRef.current?.abort();
     };
@@ -618,6 +589,18 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
     <ScrollView
       style={styles.scrollView}
       contentContainerStyle={styles.container}>
+      {/* Wake-lock note: the previous implementation used `react-native-keep-awake`
+          to keep the screen on during OTA. That library was abandoned and
+          referenced the removed `jcenter()` Gradle repo, breaking the CI build
+          on Gradle 9. It has been removed.
+
+          React Native 0.84 does NOT expose a `keepScreenOn` View prop (verified:
+          not in ViewPropTypes, not in BaseViewManager), so there is no zero-dep
+          declarative replacement available. For now the OTA flow relies on the
+          user's normal screen timeout; touching the screen during the longer
+          transfer/reconnect phases is sufficient. A small custom NativeModule
+          calling `getWindow().addFlags(FLAG_KEEP_SCREEN_ON)` would be the right
+          path back to "no-touch OTA" but is out of scope for this CI fix. */}
       <PageHeader title="Settings" bleSource="peripheral" showBleIndicator={false} style={{paddingHorizontal: 0}} />
 
       {/* Bluetooth Section */}
