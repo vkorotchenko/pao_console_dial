@@ -11,6 +11,7 @@ import {
   getCachedAppBuildNumber,
 } from './src/services/appVersion';
 import {checkForMobileUpdate} from './src/services/mobileUpdateController';
+import {cleanupOldApks} from './src/services/mobileAppDownload';
 
 LogBox.ignoreLogs(['Cannot start scanning operation']);
 
@@ -34,6 +35,16 @@ function App(): React.JSX.Element {
   // service prevents thrashing on rapid app relaunches.
   useEffect(() => {
     checkForMobileUpdate().catch(() => {});
+  }, []);
+
+  // Phase 4 housekeeping: at next launch, sweep CacheDir for any stale
+  // `pao-console-mobile-*.apk` files left over from prior update attempts.
+  // We can't reliably know when an Android install completes (the app gets
+  // killed), so cleanup runs opportunistically next time we boot. Passing
+  // null keeps no file — the new version is now installed so nothing in
+  // cache is still useful. Fire-and-forget; errors just log.
+  useEffect(() => {
+    cleanupOldApks(null).catch(() => {});
   }, []);
 
   return (

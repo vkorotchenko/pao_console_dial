@@ -20,7 +20,17 @@ import {
   prepareOtaPayload,
   cancelOtaPreparation,
 } from '../services/otaController';
-import {checkForMobileUpdate} from '../services/mobileUpdateController';
+import {
+  checkForMobileUpdate,
+  prepareAppPayload,
+  cancelAppUpdatePreparation,
+  getReadyAppApkPath,
+} from '../services/mobileUpdateController';
+import {
+  installApk,
+  canRequestInstalls,
+  openInstallPermissionSettings,
+} from '../services/apkInstaller';
 import {flashChargerFirmware} from '../services/otaOrchestrator';
 import {compare, formatVersion, parse} from '../services/semver';
 import _ScreenBrightness from 'react-native-screen-brightness';
@@ -133,6 +143,12 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
     state => state.latestAppReleaseCheckedAt,
   );
   const appUpdateState = useAppStore(state => state.appUpdateState);
+  const appUpdateError = useAppStore(state => state.appUpdateError);
+  const appUpdateProgress = useAppStore(state => state.appUpdateProgress);
+  const appUpdateBytesReceived = useAppStore(
+    state => state.appUpdateBytesReceived,
+  );
+  const appUpdateBytesTotal = useAppStore(state => state.appUpdateBytesTotal);
 
   // ── OTA flash flow state (consolidated into Settings — Phase 5 polish) ──
   // AbortController for the live flash run. We mirror the lifecycle that used
@@ -466,22 +482,131 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
     );
   };
 
-  // Phase 3 stops here — no download, no install. The "Update to vX.Y.Z"
-  // button is wired for visual parity but does NOT start an install. Tapping
-  // it surfaces a benign "coming soon" notice so users know it's intentional.
-  // Phase 4 (download + verify) and Phase 5 (PackageManager handoff) will
-  // replace this with the real flow.
-  const onAppUpdateRequest = () => {
-    Alert.alert(
-      'Update coming soon',
-      latestAppReleaseVersion
-        ? `In-app install for v${latestAppReleaseVersion} ships in the next release. For now, grab the APK from the GitHub release page.`
-        : 'In-app install ships in the next release.',
-    );
+  // Phase 4 + 5 — real install flow. On tap:
+  //   1. Check Android per-source install consent. If missing, prompt + deep
+  //      link the user to Settings; abort this attempt (they retry after).
+  //   2. Keep the screen awake for the whole download/verify (~30–60s on LTE).
+  //   3. prepareAppPayload() downloads the APK to cache + streams SHA256.
+  //      Errors land in the store (appUpdateState='error') — no throw.
+  //   4. A useEffect below watches appUpdateState === 'ready' and dispatches
+  //      installApk() with the local path. The system installer takes over
+  //      and ultimately replaces this app process.
+  const onAppUpdateRequest = async () => {
+    try {
+      const can = await canRequestInstalls();
+      if (!can) {
+        Alert.alert(
+          'Permission required',
+          'Allow PAO Console to install updates? You\'ll be taken to Settings to grant "Install unknown apps" for this app, then return here and tap Update again.',
+          [
+            {text: 'Cancel', style: 'cancel'},
+            {
+              text: 'Open Settings',
+              onPress: () => {
+                openInstallPermissionSettings().catch(() => {});
+              },
+            },
+          ],
+        );
+        return;
+      }
+    } catch (err) {
+      console.warn('[AppUpdate] canRequestInstalls check failed:', err);
+      // Fall through — if the check itself fails, let the install intent try
+      // and surface its own error.
+    }
+
+    activateKeepAwake();
+    // Errors land in the store; no .catch needed.
+    prepareAppPayload();
   };
 
+  // Watcher: when prepareAppPayload finishes (appUpdateState flips to 'ready')
+  // AND the user actually started a flow (we know because the wake-lock is
+  // active — we don't have a "did the user tap?" flag, but `ready` only
+  // happens after a successful download + verify which only runs after a tap),
+  // dispatch the install intent.
+  //
+  // We don't try to detect "install succeeded" — Android kills our process
+  // before that happens. Instead we transition into 'installing' and trust
+  // the system installer to finish or fail. If the user backs out of the
+  // installer, the state stays at 'installing' until next launch (when the
+  // store resets it to 'idle' because appUpdateState isn't persisted).
+  useEffect(() => {
+    if (appUpdateState !== 'ready') return;
+    const path = getReadyAppApkPath();
+    if (!path) {
+      console.warn('[AppUpdate] state=ready but no APK path available');
+      return;
+    }
+    useAppStore.getState().setAppUpdateState('installing');
+    installApk(path).catch((err: any) => {
+      // Most failures are permission-related (user revoked between check and
+      // install) or "intent has no handler" on misconfigured devices.
+      console.warn('[AppUpdate] installApk failed:', err);
+      const s = useAppStore.getState();
+      s.setAppUpdateState('error');
+      s.setAppUpdateError(
+        err?.message ?? 'Install failed — open the APK from Files manually.',
+      );
+      deactivateKeepAwake();
+    });
+  }, [appUpdateState]);
+
+  // Wake-lock release on terminal app-update states. Mirrors the charger
+  // pattern. 'installing' deliberately keeps the lock active so the system
+  // installer dialog doesn't dim out from under the user.
+  useEffect(() => {
+    if (appUpdateState === 'idle' || appUpdateState === 'error') {
+      deactivateKeepAwake();
+    }
+  }, [appUpdateState]);
+
+  const onAppUpdateCancel = () => {
+    cancelAppUpdatePreparation();
+  };
+
+  const isAppUpdateInFlight =
+    appUpdateState === 'checking' ||
+    appUpdateState === 'downloading' ||
+    appUpdateState === 'verifying' ||
+    appUpdateState === 'installing';
+
+  const appPhaseLabel = (() => {
+    switch (appUpdateState) {
+      case 'checking':
+        return 'Checking…';
+      case 'downloading':
+        return 'Downloading…';
+      case 'verifying':
+        return 'Verifying…';
+      case 'installing':
+        return 'Waiting for installer…';
+      default:
+        return '';
+    }
+  })();
+
+  const appProgressPctRaw = Number.isFinite(appUpdateProgress)
+    ? Math.max(0, Math.min(1, appUpdateProgress as number)) * 100
+    : 0;
+  const appProgressPct = Math.round(appProgressPctRaw);
+
+  const appBytesPresent =
+    typeof appUpdateBytesReceived === 'number' &&
+    Number.isFinite(appUpdateBytesReceived) &&
+    appUpdateBytesReceived >= 0 &&
+    typeof appUpdateBytesTotal === 'number' &&
+    Number.isFinite(appUpdateBytesTotal) &&
+    appUpdateBytesTotal > 0;
+  const showAppBytesLine =
+    appUpdateState === 'downloading' && appBytesPresent;
+
   const appButtonLabel = (() => {
-    if (isAppCheckInFlight) return 'Checking…';
+    if (isAppUpdateInFlight) {
+      return appUpdateState === 'downloading' ? 'Cancel' : '…';
+    }
+    if (appUpdateState === 'error') return 'Try again';
     if (hasAppUpdateAvailable && latestAppReleaseVersion) {
       return `Update to ${formatVersion(latestAppReleaseVersion)}`;
     }
@@ -489,7 +614,16 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
   })();
 
   const onAppButtonPress = () => {
-    if (isAppCheckInFlight) return;
+    if (isAppUpdateInFlight) {
+      // Only "downloading" exposes a real cancel; the other in-flight states
+      // are short enough to ride out, but being permissive doesn't hurt.
+      onAppUpdateCancel();
+      return;
+    }
+    if (appUpdateState === 'error' && hasAppUpdateAvailable) {
+      onAppUpdateRequest();
+      return;
+    }
     if (hasAppUpdateAvailable) {
       onAppUpdateRequest();
       return;
@@ -964,20 +1098,70 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo}: Sett
 
         <View style={styles.divider} />
 
-        <View style={styles.fwBody}>
-          <View style={styles.fwButtonRow}>
-            <Button
-              mode="contained"
-              onPress={onAppButtonPress}
-              disabled={isAppCheckInFlight}
-              style={styles.fwFullWidthButton}>
-              {appButtonLabel}
-            </Button>
+        {/* In-flight: same visual language as the Firmware section's flash
+            progress — phase label + bar + optional bytes line + Cancel.
+            'installing' shows just the phase + bar (no cancel) because once
+            the system installer dialog is up, we can't interrupt it. No
+            spinner anywhere in this block — the progress bar carries the
+            visual feedback during download, and once the install intent
+            fires the Android system installer dialog takes over. */}
+        {isAppUpdateInFlight ? (
+          <View style={styles.fwBody}>
+            <Text style={styles.fwPhase}>{appPhaseLabel}</Text>
+            <View style={styles.progressBarTrack}>
+              <View
+                style={[
+                  styles.progressBarFill,
+                  {width: `${appProgressPct}%`},
+                ]}
+              />
+            </View>
+            {showAppBytesLine ? (
+              <Text style={styles.fwBytes}>
+                {formatBytesShort(appUpdateBytesReceived)} /{' '}
+                {formatBytesShort(appUpdateBytesTotal)}
+                {` (${appProgressPct}%)`}
+              </Text>
+            ) : null}
+            {appUpdateState === 'downloading' ? (
+              <View style={styles.fwButtonRow}>
+                <Button
+                  mode="outlined"
+                  onPress={onAppUpdateCancel}
+                  style={styles.fwFullWidthButton}>
+                  Cancel
+                </Button>
+              </View>
+            ) : null}
           </View>
-          <Text style={styles.fwHint}>
-            Last checked: {formatRelative(now, latestAppReleaseCheckedAt)}
-          </Text>
-        </View>
+        ) : appUpdateState === 'error' && appUpdateError ? (
+          <View style={styles.fwBody}>
+            <Text style={styles.errorText}>⚠ {appUpdateError}</Text>
+            <View style={styles.fwButtonRow}>
+              <Button
+                mode="contained"
+                onPress={onAppButtonPress}
+                style={styles.fwFullWidthButton}>
+                {appButtonLabel}
+              </Button>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.fwBody}>
+            <View style={styles.fwButtonRow}>
+              <Button
+                mode="contained"
+                onPress={onAppButtonPress}
+                disabled={isAppCheckInFlight}
+                style={styles.fwFullWidthButton}>
+                {appButtonLabel}
+              </Button>
+            </View>
+            <Text style={styles.fwHint}>
+              Last checked: {formatRelative(now, latestAppReleaseCheckedAt)}
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Navigation Section */}

@@ -118,6 +118,13 @@ interface AppState {
     | 'installing'
     | 'error';
   appUpdateError: string | null;
+  // Phase 4 ephemeral progress (mirrors the charger pattern, but kept in its
+  // own fields so the two state machines can run independently without one
+  // accidentally clearing the other's display). Reset at every phase boundary
+  // that isn't actively downloading. NOT persisted.
+  appUpdateProgress: number; // 0..1
+  appUpdateBytesReceived: number | null;
+  appUpdateBytesTotal: number | null;
 
   // Persisted settings
   showGearTab: boolean;
@@ -220,6 +227,13 @@ interface AppState {
       | 'error',
   ) => void;
   setAppUpdateError: (e: string | null) => void;
+  // Phase 4 — explicit progress setters mirroring setOtaProgress / reset.
+  setAppUpdateProgress: (
+    frac: number,
+    received?: number | null,
+    total?: number | null,
+  ) => void;
+  resetAppUpdateProgress: () => void;
   // Used after a 304 response so the "Last checked" timestamp updates without
   // disturbing the cached fields. Mirrors the charger's touch fn.
   touchLatestAppReleaseCheckedAt: (checkedAt: number) => void;
@@ -292,6 +306,9 @@ export const useAppStore = create<AppState>()(
       latestAppReleaseEtag: null,
       appUpdateState: 'idle',
       appUpdateError: null,
+      appUpdateProgress: 0,
+      appUpdateBytesReceived: null,
+      appUpdateBytesTotal: null,
 
       // Initial state — settings
       showGearTab: false,
@@ -396,6 +413,18 @@ export const useAppStore = create<AppState>()(
         ),
       setAppUpdateState: s => set({appUpdateState: s}),
       setAppUpdateError: e => set({appUpdateError: e}),
+      setAppUpdateProgress: (frac, received = null, total = null) =>
+        set({
+          appUpdateProgress: Math.max(0, Math.min(1, frac)),
+          appUpdateBytesReceived: received,
+          appUpdateBytesTotal: total,
+        }),
+      resetAppUpdateProgress: () =>
+        set({
+          appUpdateProgress: 0,
+          appUpdateBytesReceived: null,
+          appUpdateBytesTotal: null,
+        }),
       touchLatestAppReleaseCheckedAt: checkedAt =>
         set({latestAppReleaseCheckedAt: checkedAt}),
 
@@ -446,6 +475,9 @@ export const useAppStore = create<AppState>()(
           latestAppReleaseEtag: null,
           appUpdateState: 'idle',
           appUpdateError: null,
+          appUpdateProgress: 0,
+          appUpdateBytesReceived: null,
+          appUpdateBytesTotal: null,
         }),
     }),
     {

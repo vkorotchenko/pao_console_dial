@@ -17,6 +17,7 @@ class MainApplication : Application(), ReactApplication {
         PackageList(this).packages.apply {
           add(MediaControlPackage())
           add(KeepAwakePackage())
+          add(ApkInstallerPackage())
         },
     )
   }

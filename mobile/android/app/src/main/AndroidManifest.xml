@@ -8,6 +8,12 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- Required so the in-app updater can dispatch ACTION_VIEW for an APK
+         (Android 8+). The system installer takes over from there; the user
+         must additionally grant per-source install consent via Settings →
+         Special access → Install unknown apps. `ApkInstaller.canRequestInstalls()`
+         checks that flag and `openInstallPermissionSettings()` deeplinks to it. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
       android:name=".MainApplication"
@@ -28,5 +34,21 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+
+      <!-- FileProvider for handing a downloaded APK to the system installer.
+           Authority MUST match `${applicationId}.fileprovider` — Kotlin builds
+           it as `reactApplicationContext.packageName + ".fileprovider"`.
+           Paths cover both the cache dir (where react-native-blob-util writes
+           by default — DocumentDir/cache or DownloadDir) and the files dir,
+           belt-and-suspenders. -->
+      <provider
+        android:name="androidx.core.content.FileProvider"
+        android:authorities="${applicationId}.fileprovider"
+        android:exported="false"
+        android:grantUriPermissions="true">
+        <meta-data
+          android:name="android.support.FILE_PROVIDER_PATHS"
+          android:resource="@xml/file_provider_paths" />
+      </provider>
     </application>
 </manifest>

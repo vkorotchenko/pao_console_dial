@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider path config for the in-app APK installer.
+
+  - cache-path  covers getCacheDir() (default for react-native-blob-util when
+                using `DocumentDir/cache` style paths and the platform's
+                internal cache).
+  - files-path  covers getFilesDir() in case the fs lib writes there instead.
+
+  Both share the same root semantics ("."), so any file written under either
+  directory is exposable to ACTION_VIEW.  External-cache and external-files
+  are deliberately omitted — we have no need to surface anything outside the
+  app sandbox.
+-->
+<paths>
+    <cache-path name="apk_cache" path="."/>
+    <files-path name="apk_files" path="."/>
+</paths>
