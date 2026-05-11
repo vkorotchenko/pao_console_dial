@@ -197,13 +197,17 @@ mobile-android-fresh: ## Full USB Android workflow: adb reverse + Metro in backg
 mobile-android-release: ## Build release APK for sideloading (output: mobile/android/app/build/outputs/apk/release/)
 	cd mobile/android && JAVA_HOME=$(JAVA_HOME_17) PATH="$(NODE_DIR):$$PATH" ./gradlew assembleRelease
 	@echo ""
-	@echo "✅ Release APK: mobile/android/app/build/outputs/apk/release/PaoConsole-1.0.apk"
+	@apk=$$(find mobile/android/app/build/outputs/apk/release -name 'PaoConsole-*.apk' | head -1); \
+	if [ -z "$$apk" ]; then echo "❌ No APK found"; exit 1; fi; \
+	echo "✅ Release APK: $$apk"
 
 mobile-android-release-install: ## Build release APK for sideloading (output: mobile/android/app/build/outputs/apk/release/)
 	cd mobile/android && JAVA_HOME=$(JAVA_HOME_17) PATH="$(NODE_DIR):$$PATH" ./gradlew assembleRelease
 	@echo ""
-	@echo "✅ Release APK: mobile/android/app/build/outputs/apk/release/PaoConsole-1.0.apk"
-	cd mobile/android/app/build/outputs/apk/release && adb install PaoConsole-1.0.apk
+	@apk=$$(find mobile/android/app/build/outputs/apk/release -name 'PaoConsole-*.apk' | head -1); \
+	if [ -z "$$apk" ]; then echo "❌ No APK found"; exit 1; fi; \
+	echo "✅ Release APK: $$apk"; \
+	adb install -r "$$apk"
 
 mobile-android-bundle: ## Build release AAB for Play Store (output: mobile/android/app/build/outputs/bundle/release/)
 	cd mobile/android && JAVA_HOME=$(JAVA_HOME_17) PATH="$(NODE_DIR):$$PATH" ./gradlew bundleRelease
