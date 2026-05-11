@@ -57,12 +57,10 @@ function formatRelative(now: number, then: number | null): string {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
-const NOTES_PREVIEW_CHARS = 600;
-
 /**
  * Read-only supplementary info for charger firmware. The primary OTA UI lives
  * in Settings; this screen is reached via the ⓘ icon in the Firmware row.
- * No actions — just data display + an "Open release page" link.
+ * No actions — just data display + a "View changelog" link.
  */
 export default function FirmwareInfoScreen({onClose}: FirmwareInfoScreenProps) {
   const chargerFirmwareVersion = useAppStore(s => s.chargerFirmwareVersion);
@@ -70,7 +68,6 @@ export default function FirmwareInfoScreen({onClose}: FirmwareInfoScreenProps) {
   const latestReleaseVersion = useAppStore(s => s.latestReleaseVersion);
   const latestReleaseUrl = useAppStore(s => s.latestReleaseUrl);
   const latestReleaseSize = useAppStore(s => s.latestReleaseSize);
-  const latestReleaseNotes = useAppStore(s => s.latestReleaseNotes);
   const latestReleaseCheckedAt = useAppStore(s => s.latestReleaseCheckedAt);
 
   // Tick once a minute so "Last checked" relative time stays current while
@@ -86,16 +83,6 @@ export default function FirmwareInfoScreen({onClose}: FirmwareInfoScreenProps) {
   // ready in memory yet.
   const sha = getReadyOtaSha256();
   const shaAbbrev = sha ? `${sha.slice(0, 6)}…${sha.slice(-4)}` : '—';
-
-  const notesPreview = (() => {
-    if (!latestReleaseNotes) {
-      return '';
-    }
-    if (latestReleaseNotes.length <= NOTES_PREVIEW_CHARS) {
-      return latestReleaseNotes;
-    }
-    return latestReleaseNotes.slice(0, NOTES_PREVIEW_CHARS) + '…';
-  })();
 
   const openInBrowser = () => {
     if (!latestReleaseUrl) {
@@ -171,34 +158,31 @@ export default function FirmwareInfoScreen({onClose}: FirmwareInfoScreenProps) {
             {formatRelative(now, latestReleaseCheckedAt)}
           </Text>
         </View>
-        {latestReleaseUrl ? (
-          <>
-            <View style={styles.divider} />
-            <TouchableOpacity
-              onPress={openInBrowser}
-              style={styles.linkRow}
-              accessibilityRole="link"
-              accessibilityLabel="Open release page">
-              <Icon
-                name="open-in-new"
-                size={16}
-                color="#5BA8C4"
-                style={styles.linkIcon}
-              />
-              <Text style={styles.linkText}>Open release page</Text>
-            </TouchableOpacity>
-          </>
-        ) : null}
       </View>
 
       {/* Release notes */}
       <Text style={styles.sectionHeader}>Release notes</Text>
       <View style={styles.card}>
-        {notesPreview ? (
-          <Text style={styles.notesText}>{notesPreview}</Text>
-        ) : (
-          <Text style={styles.notesEmpty}>No release notes provided.</Text>
-        )}
+        <TouchableOpacity
+          onPress={openInBrowser}
+          disabled={!latestReleaseUrl}
+          style={styles.linkRow}
+          accessibilityRole="link"
+          accessibilityState={{disabled: !latestReleaseUrl}}
+          accessibilityLabel="View changelog">
+          <Text
+            style={[
+              styles.linkText,
+              !latestReleaseUrl && styles.linkTextDisabled,
+            ]}>
+            View changelog
+          </Text>
+          <Icon
+            name="chevron-right"
+            size={20}
+            color={latestReleaseUrl ? '#5BA8C4' : '#444'}
+          />
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );
@@ -290,29 +274,18 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: '#2A2A2A',
   },
-  notesText: {
-    fontSize: 14,
-    color: '#C0C0C0',
-    lineHeight: 20,
-    paddingVertical: 12,
-  },
-  notesEmpty: {
-    fontSize: 14,
-    color: '#666',
-    fontStyle: 'italic',
-    paddingVertical: 12,
-  },
   linkRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingVertical: 12,
-  },
-  linkIcon: {
-    marginRight: 6,
   },
   linkText: {
     color: '#5BA8C4',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '500',
+  },
+  linkTextDisabled: {
+    color: '#444',
   },
 });

@@ -630,11 +630,17 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
             <Text style={styles.label}>Charger firmware</Text>
             <TouchableOpacity
               onPress={() => onOpenFirmwareInfo?.()}
+              disabled={isOtaInFlight}
               accessibilityRole="button"
               accessibilityLabel="Open firmware info"
+              accessibilityState={{disabled: isOtaInFlight}}
               hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
-              style={styles.infoIcon}>
-              <Icon name="information-outline" size={18} color="#5BA8C4" />
+              style={[styles.infoIcon, isOtaInFlight && styles.infoIconDisabled]}>
+              <Icon
+                name="information-outline"
+                size={18}
+                color={isOtaInFlight ? '#666' : '#5BA8C4'}
+              />
             </TouchableOpacity>
             {latestReleaseVersion ? (
               <Text style={styles.fwHint}>
@@ -668,9 +674,7 @@ export default function SettingsScreen({onOpenFirmwareInfo}: SettingsScreenProps
           <View style={styles.fwBody}>
             <Text style={styles.fwPhase}>
               {phaseLabel}
-              {otaState === 'rebooting' ||
-              otaState === 'reconnecting' ||
-              otaState === 'finalizing' ? (
+              {otaState === 'rebooting' || otaState === 'finalizing' ? (
                 <ActivityIndicator
                   size="small"
                   color="#5BA8C4"
@@ -1035,6 +1039,9 @@ const styles = StyleSheet.create({
   infoIcon: {
     marginLeft: 6,
     padding: 2,
+  },
+  infoIconDisabled: {
+    opacity: 0.5,
   },
   fwHint: {
     fontSize: 12,
