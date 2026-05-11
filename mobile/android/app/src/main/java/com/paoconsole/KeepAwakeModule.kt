@@ -10,7 +10,7 @@ class KeepAwakeModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun activate() {
-        val activity = currentActivity ?: return
+        val activity = reactApplicationContext.currentActivity ?: return
         activity.runOnUiThread {
             activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
@@ -18,7 +18,7 @@ class KeepAwakeModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
 
     @ReactMethod
     fun deactivate() {
-        val activity = currentActivity ?: return
+        val activity = reactApplicationContext.currentActivity ?: return
         activity.runOnUiThread {
             activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
