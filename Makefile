@@ -172,7 +172,7 @@ clean: clean-peripheral clean-controller clean-charger ## Clean all firmware pro
 JAVA_HOME_17 := /Library/Java/JavaVirtualMachines/jdk-17.jdk/Contents/Home
 NODE_DIR     := $(shell dirname $(shell which node))
 
-.PHONY: mobile-install mobile-android mobile-android-fresh mobile-android-release mobile-android-bundle mobile-ios mobile-start mobile-metro reset-android-cache
+.PHONY: mobile-install mobile-android mobile-android-fresh mobile-android-release mobile-android-bundle mobile-ios mobile-start mobile-metro reset-android-cache release-mobile-patch release-mobile-minor release-mobile-major
 
 mobile-install: ## Install mobile app dependencies (npm install)
 	cd mobile && npm install
@@ -215,6 +215,93 @@ mobile-ios: ## Build and run mobile app on iOS
 
 reset-android-cache: ## Reset Android build cache
 	cd mobile && cd android && JAVA_HOME=$(JAVA_HOME_17) ./gradlew clean
+
+release-mobile-patch: ## Bump mobile patch version, tag, and push (auto-detects next version from mobile-v* tags)
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+		exit 1; \
+	fi
+	@git fetch origin >/dev/null 2>&1 || true
+	@if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
+		echo "❌ HEAD is ahead of origin/main. Push your commits first."; \
+		exit 1; \
+	fi
+	@latest=$$(git tag -l 'mobile-v*' | sort -V | tail -n 1); \
+	if [ -z "$$latest" ]; then \
+		next="0.0.1"; \
+	else \
+		ver=$${latest#mobile-v}; \
+		major=$$(echo $$ver | awk -F. '{print $$1}'); \
+		minor=$$(echo $$ver | awk -F. '{print $$2}'); \
+		patch=$$(echo $$ver | awk -F. '{print $$3}'); \
+		next="$$major.$$minor.$$((patch + 1))"; \
+	fi; \
+	tag="mobile-v$$next"; \
+	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists. Aborting."; \
+		exit 1; \
+	fi; \
+	echo "Releasing mobile v$$next..."; \
+	git tag -a "$$tag" -m "Mobile release v$$next" && \
+	git push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag"
+
+release-mobile-minor: ## Bump mobile minor version, tag, and push (auto-detects next version from mobile-v* tags)
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+		exit 1; \
+	fi
+	@git fetch origin >/dev/null 2>&1 || true
+	@if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
+		echo "❌ HEAD is ahead of origin/main. Push your commits first."; \
+		exit 1; \
+	fi
+	@latest=$$(git tag -l 'mobile-v*' | sort -V | tail -n 1); \
+	if [ -z "$$latest" ]; then \
+		next="0.1.0"; \
+	else \
+		ver=$${latest#mobile-v}; \
+		major=$$(echo $$ver | awk -F. '{print $$1}'); \
+		minor=$$(echo $$ver | awk -F. '{print $$2}'); \
+		next="$$major.$$((minor + 1)).0"; \
+	fi; \
+	tag="mobile-v$$next"; \
+	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists. Aborting."; \
+		exit 1; \
+	fi; \
+	echo "Releasing mobile v$$next..."; \
+	git tag -a "$$tag" -m "Mobile release v$$next" && \
+	git push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag"
+
+release-mobile-major: ## Bump mobile major version, tag, and push (auto-detects next version from mobile-v* tags)
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+		exit 1; \
+	fi
+	@git fetch origin >/dev/null 2>&1 || true
+	@if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
+		echo "❌ HEAD is ahead of origin/main. Push your commits first."; \
+		exit 1; \
+	fi
+	@latest=$$(git tag -l 'mobile-v*' | sort -V | tail -n 1); \
+	if [ -z "$$latest" ]; then \
+		next="1.0.0"; \
+	else \
+		ver=$${latest#mobile-v}; \
+		major=$$(echo $$ver | awk -F. '{print $$1}'); \
+		next="$$((major + 1)).0.0"; \
+	fi; \
+	tag="mobile-v$$next"; \
+	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists. Aborting."; \
+		exit 1; \
+	fi; \
+	echo "Releasing mobile v$$next..."; \
+	git tag -a "$$tag" -m "Mobile release v$$next" && \
+	git push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag"
 
 # ─────────────────────────────────────────────────────────────────────────
 # Utility
