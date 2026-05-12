@@ -899,9 +899,12 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
             )}
           </View>
         </View>
+      </View>
 
-        <View style={styles.divider} />
-
+      {/* Debug Section — isolated from the primary BT connection controls
+          so the diagnostic toggle reads as a separate concern. */}
+      <Text style={styles.sectionHeader}>Debug</Text>
+      <View style={styles.card}>
         <View style={styles.row}>
           <View style={styles.rowText}>
             <Text style={styles.label}>Debug BT</Text>
@@ -1032,21 +1035,14 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
             - Divider
             - Button: "Check for updates" OR "Update to v0.3.4" when newer
             - Last-checked timestamp underneath */}
-      <Text style={styles.sectionHeader}>App</Text>
       <View style={styles.card}>
         <View style={styles.row}>
           <View style={styles.fwTitleRow}>
-            {/* Small phone icon distinguishes the mobile-app row from the
-                charger row above now that the redundant "PAO Console" /
-                "Mobile App" left-column label has been removed (we're
-                already inside the Firmware tab). */}
-            <Icon
-              name="cellphone"
-              size={18}
-              color="#9E9E9E"
-              style={styles.fwRowIcon}
-              accessibilityLabel="Mobile App"
-            />
+            {/* Inline row title replacing the prior external "APP" section
+                header + leading cellphone icon. Carries the same visual
+                weight as the section header used to, but lives inside the
+                card row alongside the info icon and version on the right. */}
+            <Text style={styles.fwRowTitle}>Mobile App</Text>
             <TouchableOpacity
               onPress={() => onOpenAppInfo?.()}
               accessibilityRole="button"
@@ -1146,21 +1142,13 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
         )}
       </View>
 
-      <Text style={styles.sectionHeader}>Charger Firmware</Text>
       <View style={styles.card}>
         <View style={styles.row}>
           <View style={styles.fwTitleRow}>
-            {/* Small chip icon distinguishes the charger-firmware row from
-                the app row below now that the redundant "Charger firmware"
-                left-column label has been removed (we're already inside the
-                Firmware tab — the label was duplicating the tab name). */}
-            <Icon
-              name="chip"
-              size={18}
-              color="#9E9E9E"
-              style={styles.fwRowIcon}
-              accessibilityLabel="Charger firmware"
-            />
+            {/* Inline row title replacing the prior external
+                "CHARGER FIRMWARE" section header + leading chip icon.
+                Visual weight matches the Mobile App row above for parity. */}
+            <Text style={styles.fwRowTitle}>Charger</Text>
             <TouchableOpacity
               onPress={() => onOpenFirmwareInfo?.()}
               disabled={isOtaInFlight}
@@ -1601,12 +1589,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 12,
   },
-  // Small leading icon used in place of the (removed) redundant left-column
-  // label on the Firmware-tab rows. Chip for the charger firmware row,
-  // cellphone for the mobile-app row — gives a glanceable distinction without
-  // re-introducing a full label.
-  fwRowIcon: {
-    marginRight: 2,
+  // Inline row title for Firmware-tab cards. Replaces the prior external
+  // section headers ("APP", "CHARGER FIRMWARE") and the small leading
+  // chip/cellphone icons. Mirrors the standard in-row `label` weight/size
+  // so the title visually anchors the row without needing an outer header.
+  fwRowTitle: {
+    fontSize: 15,
+    color: '#E0E0E0',
+    fontWeight: '600',
   },
   infoIcon: {
     marginLeft: 6,
