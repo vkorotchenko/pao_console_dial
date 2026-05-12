@@ -80,7 +80,7 @@ void Carousel<ITEM_COUNT>::drawCenterPanel(TFT_eSprite* sprite, int index) {
 }
 
 template<int ITEM_COUNT>
-void Carousel<ITEM_COUNT>::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
+void Carousel<ITEM_COUNT>::display(TFT_eSprite *sprite, Arduino_RGB_Display *gfx) {
     // Update animation progress based on elapsed time
     if (isAnimating) {
         unsigned long elapsed = millis() - animationStartTime;
@@ -187,7 +187,7 @@ void Carousel<ITEM_COUNT>::onScroll(int x, TFT_eSprite *sprite) {
 }
 
 template<int ITEM_COUNT>
-void Carousel<ITEM_COUNT>::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
+void Carousel<ITEM_COUNT>::onLoad(TFT_eSprite *sprite, Arduino_RGB_Display *gfx) {
     sprite->fillSprite(TFT_BLACK);
     gfx->fillScreen(TFT_BLACK);
 

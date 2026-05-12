@@ -11,6 +11,7 @@
 #include "global_state.h"
 #include "i2c_handler.h"
 #include "pao_ble.h"
+#include "ota.h"
 
 GlobalState &state = GlobalState::getInstance();
 I2CHandler i2cHandler;
@@ -65,24 +66,38 @@ TFT_eSprite sprite = TFT_eSprite(&tft);
 
 ESP32Time rtc(0);
 
-Arduino_ESP32RGBPanel *bus = new Arduino_ESP32RGBPanel(
-    1 /* CS */, 46 /* SCK */, 0 /* SDA */,
+// Migrated to Arduino_GFX v1.6.5 (arduino-esp32 3.x compatible).
+// Old API: single `Arduino_ESP32RGBPanel(cs, sck, sda, de, vsync, hsync, pclk, ...)`
+//          paired with `Arduino_ST7701_RGBPanel(bus, ...)` that combined init-bus + RGB-panel.
+// New API: separate `Arduino_SWSPI` databus for ST7701 init commands, an
+//          `Arduino_ESP32RGBPanel` that owns the parallel RGB pins + porches + polarities,
+//          and a generic `Arduino_RGB_Display` that ties them together with the init
+//          operations. Polarities match the values the old vendored `Arduino_ST7701_RGBPanel`
+//          hard-coded internally (`hsync_polarity=1, vsync_polarity=1`).
+//          The BGR flag in the old API was redundant: the ST7701 type5 init sequence
+//          already sets MADCTL for BGR.
+Arduino_DataBus *st7701_bus = new Arduino_SWSPI(
+    GFX_NOT_DEFINED /* DC */, 1 /* CS */,
+    46 /* SCK */, 0 /* MOSI / SDA */, GFX_NOT_DEFINED /* MISO */);
+
+Arduino_ESP32RGBPanel *rgbpanel = new Arduino_ESP32RGBPanel(
     2 /* DE */, 42 /* VSYNC */, 3 /* HSYNC */, 45 /* PCLK */,
     11 /* R0 */, 15 /* R1 */, 12 /* R2 */, 16 /* R3 */, 21 /* R4 */,
     39 /* G0/P22 */, 7 /* G1/P23 */, 47 /* G2/P24 */, 8 /* G3/P25 */, 48 /* G4/P26 */, 9 /* G5 */,
-    4 /* B0 */, 41 /* B1 */, 5 /* B2 */, 40 /* B3 */, 6 /* B4 */
-);
+    4 /* B0 */, 41 /* B1 */, 5 /* B2 */, 40 /* B3 */, 6 /* B4 */,
+    1 /* hsync_polarity */, 10 /* hsync_front_porch */, 8 /* hsync_pulse_width */, 50 /* hsync_back_porch */,
+    1 /* vsync_polarity */, 10 /* vsync_front_porch */, 8 /* vsync_pulse_width */, 20 /* vsync_back_porch */);
 
-// Uncomment for 2.1" round display
-Arduino_ST7701_RGBPanel *gfx = new Arduino_ST7701_RGBPanel(
-    bus, GFX_NOT_DEFINED /* RST */, 0 /* rotation */,
-    false /* IPS */, 540 /* width */, 540 /* height */,
-    st7701_type5_init_operations, sizeof(st7701_type5_init_operations),
-    true /* BGR */,
-    10 /* hsync_front_porch */, 8 /* hsync_pulse_width */, 50 /* hsync_back_porch */,
-    10 /* vsync_front_porch */, 8 /* vsync_pulse_width */, 20 /* vsync_back_porch */);
+// 2.1" round 540x540 ST7701 panel
+Arduino_RGB_Display *gfx = new Arduino_RGB_Display(
+    540 /* width */, 540 /* height */, rgbpanel, 0 /* rotation */, true /* auto_flush */,
+    st7701_bus, GFX_NOT_DEFINED /* RST */,
+    st7701_type5_init_operations, sizeof(st7701_type5_init_operations));
 
-#define PWM_CHANNEL 1
+// arduino-esp32 3.x unified LEDC API: ledcAttach(pin, freq, resolution) replaces
+// ledcSetup(channel, freq, resolution) + ledcAttachPin(pin, channel). Channel
+// allocation is now internal — ledcWrite() takes the pin instead of a channel
+// number. PWM_CHANNEL was removed for that reason.
 #define PWM_FREQ 5000 // Hz
 #define pwm_resolution_bits 10
 #define IO_PWM_PIN 38
@@ -118,10 +133,17 @@ void readEncoder()
 
 void setup()
 {
+  // OTA recovery FIRST — before any subsystem (display init, I²C, BLE) so a
+  // bricked pending image triggers a partition swap BEFORE the panic-prone
+  // code paths run. checkBootRecovery() is idempotent and a no-op when there's
+  // no pending OTA. Mirrors charger Decision #52.
+  Serial.begin(115200);
+  ota::checkBootRecovery();
+
   pinMode(IO_PWM_PIN, OUTPUT);
   pinMode(BUTTON, INPUT_PULLUP);
-  ledcSetup(PWM_CHANNEL, PWM_FREQ, pwm_resolution_bits);
-  ledcAttachPin(IO_PWM_PIN, PWM_CHANNEL);
+  // arduino-esp32 3.x: single-call PWM setup (was ledcSetup + ledcAttachPin in 2.x).
+  ledcAttach(IO_PWM_PIN, PWM_FREQ, pwm_resolution_bits);
 
   rtc.setTime(0, 47, 13, 10, 23, 2023, 0);
 
@@ -135,10 +157,27 @@ void setup()
 
   // Initialize BLE with PAO service
   paoService.begin();
+
+  // Diagnostic — logs whether this boot is a pending OTA image awaiting
+  // verify() from mobile (informational only; recovery is handled above and
+  // commit/rollback is mobile-driven via cmd=13).
+  ota::logBootStatus();
 }
 
 void loop()
 {
+  // Phase 5 safety gate: while OTA is flashing, pause the heavy main-loop
+  // work (encoder/button/touch input, I²C polling, telemetry notifies,
+  // display redraw). Flash erase can stall hundreds of ms on ESP32-S3 and
+  // these subsystems would otherwise starve. The display freezes for the
+  // OTA duration (~30–60 s); mobile renders progress. Watchdog feed inside
+  // ota::writeChunk() handles the BLE-callback-task side. ota::tickWatchdog()
+  // still runs so a stalled OTA session can abort itself.
+  if (ota::isInFlight()) {
+    ota::tickWatchdog();
+    delay(10);  // yield to BLE / IDLE so the OTA stack actually runs
+    return;
+  }
 
   readEncoder();
 
@@ -176,8 +215,12 @@ void loop()
     paoService.notifyChargerIfChanged();
   }
 
-  // Apply display brightness setting (0-100% → 10-bit PWM 0-1023)
-  ledcWrite(PWM_CHANNEL, (state.getDisplayBrightness() * 1023) / 100);
+  // OTA stale-transfer watchdog. Cheap no-op outside RECEIVING.
+  ota::tickWatchdog();
+
+  // Apply display brightness setting (0-100% → 10-bit PWM 0-1023).
+  // arduino-esp32 3.x: ledcWrite takes the pin, not a channel number.
+  ledcWrite(IO_PWM_PIN, (state.getDisplayBrightness() * 1023) / 100);
 
   state.getCurrentScreen()->display(&sprite, gfx);
   gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)sprite.getPointer(), 540, 540);

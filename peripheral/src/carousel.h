@@ -73,9 +73,9 @@ protected:
 
 public:
     // Implemented in base class (common behavior)
-    void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) override;
+    void display(TFT_eSprite *sprite, Arduino_RGB_Display *gfx) override;
     void onScroll(int x, TFT_eSprite *sprite) override;
-    void onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) override;
+    void onLoad(TFT_eSprite *sprite, Arduino_RGB_Display *gfx) override;
 };
 
 #endif // CAROUSEL_H

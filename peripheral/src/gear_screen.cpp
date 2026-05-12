@@ -81,7 +81,7 @@ void GearScreen::drawCenterExtra(TFT_eSprite* sprite, int index) {
     // No circle - selection is shown by orange text color
 }
 
-void GearScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
+void GearScreen::onLoad(TFT_eSprite *sprite, Arduino_RGB_Display *gfx)
 {
     // Call base class onLoad first
     Carousel<4>::onLoad(sprite, gfx);

@@ -66,7 +66,7 @@ void ChargeScreen::drawProgressBar(TFT_eSprite* sprite) {
 }
 
 // ── display() override ────────────────────────────────────────────────────────
-void ChargeScreen::display(TFT_eSprite* sprite, Arduino_ST7701_RGBPanel* gfx) {
+void ChargeScreen::display(TFT_eSprite* sprite, Arduino_RGB_Display* gfx) {
     // Auto-clear pending indicator once charger confirms (GlobalState.pendingChargeCmd cleared)
     if (pendingConfirmIndex >= 0 && GlobalState::getInstance().getPendingChargeCmd() == 0) {
         pendingConfirmIndex = -1;

@@ -51,7 +51,7 @@ clean-controller: ## Clean controller build artifacts
 # Charger (SAMD21 Feather M0)
 # ─────────────────────────────────────────────────────────────────────────
 
-.PHONY: build-charger upload-charger monitor-charger clean-charger release-charger-patch release-charger-minor release-charger-major
+.PHONY: build-charger upload-charger monitor-charger clean-charger release-charger-patch release-charger-minor release-charger-major release-dial-patch release-dial-minor release-dial-major release-controller-patch release-controller-minor release-controller-major
 
 build-charger: ## Build charger firmware (ESP32 V2)
 	cd charger && pio run
@@ -154,6 +154,192 @@ release-charger-major: ## Bump charger major version, tag, and push (auto-detect
 	git -C charger tag -a "$$tag" -m "Charger release v$$next" && \
 	git -C charger push origin "$$tag" && \
 	echo "✅ Tagged and pushed $$tag (in charger submodule)"
+
+# ─────────────────────────────────────────────────────────────────────────
+# Dial (Peripheral — ESP32-S3)
+# ─────────────────────────────────────────────────────────────────────────
+
+.PHONY: release-dial-patch release-dial-minor release-dial-major
+
+release-dial-patch: ## Bump dial patch version, tag, and push (auto-detects next version from dial-v* tags)
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+		exit 1; \
+	fi
+	@git fetch origin >/dev/null 2>&1 || true
+	@if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
+		echo "❌ HEAD is ahead of origin/main. Push your commits first."; \
+		exit 1; \
+	fi
+	@latest=$$(git tag -l 'dial-v*' | sort -V | tail -n 1); \
+	if [ -z "$$latest" ]; then \
+		next="0.0.1"; \
+	else \
+		ver=$${latest#dial-v}; \
+		major=$$(echo $$ver | awk -F. '{print $$1}'); \
+		minor=$$(echo $$ver | awk -F. '{print $$2}'); \
+		patch=$$(echo $$ver | awk -F. '{print $$3}'); \
+		next="$$major.$$minor.$$((patch + 1))"; \
+	fi; \
+	tag="dial-v$$next"; \
+	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists. Aborting."; \
+		exit 1; \
+	fi; \
+	echo "Releasing dial v$$next..."; \
+	git tag -a "$$tag" -m "Dial release v$$next" && \
+	git push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag"
+
+release-dial-minor: ## Bump dial minor version, tag, and push (auto-detects next version from dial-v* tags)
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+		exit 1; \
+	fi
+	@git fetch origin >/dev/null 2>&1 || true
+	@if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
+		echo "❌ HEAD is ahead of origin/main. Push your commits first."; \
+		exit 1; \
+	fi
+	@latest=$$(git tag -l 'dial-v*' | sort -V | tail -n 1); \
+	if [ -z "$$latest" ]; then \
+		next="0.1.0"; \
+	else \
+		ver=$${latest#dial-v}; \
+		major=$$(echo $$ver | awk -F. '{print $$1}'); \
+		minor=$$(echo $$ver | awk -F. '{print $$2}'); \
+		next="$$major.$$((minor + 1)).0"; \
+	fi; \
+	tag="dial-v$$next"; \
+	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists. Aborting."; \
+		exit 1; \
+	fi; \
+	echo "Releasing dial v$$next..."; \
+	git tag -a "$$tag" -m "Dial release v$$next" && \
+	git push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag"
+
+release-dial-major: ## Bump dial major version, tag, and push (auto-detects next version from dial-v* tags)
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+		exit 1; \
+	fi
+	@git fetch origin >/dev/null 2>&1 || true
+	@if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
+		echo "❌ HEAD is ahead of origin/main. Push your commits first."; \
+		exit 1; \
+	fi
+	@latest=$$(git tag -l 'dial-v*' | sort -V | tail -n 1); \
+	if [ -z "$$latest" ]; then \
+		next="1.0.0"; \
+	else \
+		ver=$${latest#dial-v}; \
+		major=$$(echo $$ver | awk -F. '{print $$1}'); \
+		next="$$((major + 1)).0.0"; \
+	fi; \
+	tag="dial-v$$next"; \
+	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists. Aborting."; \
+		exit 1; \
+	fi; \
+	echo "Releasing dial v$$next..."; \
+	git tag -a "$$tag" -m "Dial release v$$next" && \
+	git push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag"
+
+# ─────────────────────────────────────────────────────────────────────────
+# Controller (SAMD21)
+# ─────────────────────────────────────────────────────────────────────────
+
+.PHONY: release-controller-patch release-controller-minor release-controller-major
+
+release-controller-patch: ## Bump controller patch version, tag, and push (auto-detects next version from controller-v* tags)
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+		exit 1; \
+	fi
+	@git fetch origin >/dev/null 2>&1 || true
+	@if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
+		echo "❌ HEAD is ahead of origin/main. Push your commits first."; \
+		exit 1; \
+	fi
+	@latest=$$(git tag -l 'controller-v*' | sort -V | tail -n 1); \
+	if [ -z "$$latest" ]; then \
+		next="0.0.1"; \
+	else \
+		ver=$${latest#controller-v}; \
+		major=$$(echo $$ver | awk -F. '{print $$1}'); \
+		minor=$$(echo $$ver | awk -F. '{print $$2}'); \
+		patch=$$(echo $$ver | awk -F. '{print $$3}'); \
+		next="$$major.$$minor.$$((patch + 1))"; \
+	fi; \
+	tag="controller-v$$next"; \
+	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists. Aborting."; \
+		exit 1; \
+	fi; \
+	echo "Releasing controller v$$next..."; \
+	git tag -a "$$tag" -m "Controller release v$$next" && \
+	git push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag"
+
+release-controller-minor: ## Bump controller minor version, tag, and push (auto-detects next version from controller-v* tags)
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+		exit 1; \
+	fi
+	@git fetch origin >/dev/null 2>&1 || true
+	@if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
+		echo "❌ HEAD is ahead of origin/main. Push your commits first."; \
+		exit 1; \
+	fi
+	@latest=$$(git tag -l 'controller-v*' | sort -V | tail -n 1); \
+	if [ -z "$$latest" ]; then \
+		next="0.1.0"; \
+	else \
+		ver=$${latest#controller-v}; \
+		major=$$(echo $$ver | awk -F. '{print $$1}'); \
+		minor=$$(echo $$ver | awk -F. '{print $$2}'); \
+		next="$$major.$$((minor + 1)).0"; \
+	fi; \
+	tag="controller-v$$next"; \
+	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists. Aborting."; \
+		exit 1; \
+	fi; \
+	echo "Releasing controller v$$next..."; \
+	git tag -a "$$tag" -m "Controller release v$$next" && \
+	git push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag"
+
+release-controller-major: ## Bump controller major version, tag, and push (auto-detects next version from controller-v* tags)
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "❌ Working tree is dirty. Commit or stash changes before tagging a release."; \
+		exit 1; \
+	fi
+	@git fetch origin >/dev/null 2>&1 || true
+	@if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then \
+		echo "❌ HEAD is ahead of origin/main. Push your commits first."; \
+		exit 1; \
+	fi
+	@latest=$$(git tag -l 'controller-v*' | sort -V | tail -n 1); \
+	if [ -z "$$latest" ]; then \
+		next="1.0.0"; \
+	else \
+		ver=$${latest#controller-v}; \
+		major=$$(echo $$ver | awk -F. '{print $$1}'); \
+		next="$$((major + 1)).0.0"; \
+	fi; \
+	tag="controller-v$$next"; \
+	if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+		echo "❌ Tag $$tag already exists. Aborting."; \
+		exit 1; \
+	fi; \
+	echo "Releasing controller v$$next..."; \
+	git tag -a "$$tag" -m "Controller release v$$next" && \
+	git push origin "$$tag" && \
+	echo "✅ Tagged and pushed $$tag"
 
 # ─────────────────────────────────────────────────────────────────────────
 # Aggregate Firmware Targets

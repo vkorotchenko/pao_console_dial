@@ -410,6 +410,114 @@ export async function fetchLatestChargerRelease(
 }
 
 // ---------------------------------------------------------------------------
+// Dial-specific wrapper. Stream 4 (2026-05-12) — Bart's firmware UUIDs are
+// pending; this wrapper plumbs detection so the moment release tags ship,
+// the mobile side is ready.
+//
+// Tag shape:     dial-vMAJOR.MINOR.PATCH[-(rc|beta|alpha).N]
+// Repo:          vkorotchenko/pao_console_dial  (outer repo — peripheral firmware
+//                lives in this tree under peripheral/; no separate submodule
+//                was found, so dial releases share this repo's release stream
+//                with mobile-v* and (eventually) controller-v*)
+// Assets:        dial-firmware-<version>.bin
+//                dial-firmware-<version>.bin.sha256
+//
+// Wrapper returns the legacy `ReleaseInfo` shape so it plugs straight into
+// the shared otaController without translation.
+// ---------------------------------------------------------------------------
+
+const DIAL_TAG_REGEX = /^dial-v(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?$/;
+const DIAL_RELEASES_REPO = 'vkorotchenko/pao_console_dial';
+const DIAL_STORAGE_KEY = 'pao.gh.releases.dial.v1';
+
+const DIAL_CONFIG: ReleaseFetchConfig = {
+  repo: DIAL_RELEASES_REPO,
+  tagRegex: DIAL_TAG_REGEX,
+  tagPrefix: 'dial-v',
+  assetPattern: {
+    primarySuffix: '.bin',
+    secondarySuffix: '.bin.sha256',
+  },
+  storageKey: DIAL_STORAGE_KEY,
+};
+
+/**
+ * Fetch the newest non-prerelease `dial-v*` release. Returns the legacy
+ * `ReleaseInfo` shape (binAssetUrl / sha256AssetUrl).
+ */
+export async function fetchLatestDialRelease(
+  opts: {force?: boolean} = {},
+): Promise<ReleaseInfo | null> {
+  const r = await fetchLatestRelease(DIAL_CONFIG, opts);
+  if (!r) {
+    return null;
+  }
+  return {
+    tag: r.tag,
+    version: r.version,
+    htmlUrl: r.htmlUrl,
+    binAssetUrl: r.primaryAssetUrl,
+    binAssetSize: r.primaryAssetSize,
+    sha256AssetUrl: r.secondaryAssetUrl,
+    releaseNotes: r.releaseNotes,
+    publishedAt: r.publishedAt,
+    etag: r.etag,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Controller-specific wrapper. Stream 4 (2026-05-12) — OTA hasn't landed in
+// the controller firmware yet; this wrapper plumbs detection ahead of that
+// work so adding the BLE half is mechanical when Bart's controller OTA
+// characteristics ship.
+//
+// Tag shape:     controller-vMAJOR.MINOR.PATCH[-(rc|beta|alpha).N]
+// Repo:          vkorotchenko/pao_console_dial  (controller/ lives in-tree)
+// Assets:        controller-firmware-<version>.bin
+//                controller-firmware-<version>.bin.sha256
+// ---------------------------------------------------------------------------
+
+const CONTROLLER_TAG_REGEX =
+  /^controller-v(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?$/;
+const CONTROLLER_RELEASES_REPO = 'vkorotchenko/pao_console_dial';
+const CONTROLLER_STORAGE_KEY = 'pao.gh.releases.controller.v1';
+
+const CONTROLLER_CONFIG: ReleaseFetchConfig = {
+  repo: CONTROLLER_RELEASES_REPO,
+  tagRegex: CONTROLLER_TAG_REGEX,
+  tagPrefix: 'controller-v',
+  assetPattern: {
+    primarySuffix: '.bin',
+    secondarySuffix: '.bin.sha256',
+  },
+  storageKey: CONTROLLER_STORAGE_KEY,
+};
+
+/**
+ * Fetch the newest non-prerelease `controller-v*` release. Returns the
+ * legacy `ReleaseInfo` shape (binAssetUrl / sha256AssetUrl).
+ */
+export async function fetchLatestControllerRelease(
+  opts: {force?: boolean} = {},
+): Promise<ReleaseInfo | null> {
+  const r = await fetchLatestRelease(CONTROLLER_CONFIG, opts);
+  if (!r) {
+    return null;
+  }
+  return {
+    tag: r.tag,
+    version: r.version,
+    htmlUrl: r.htmlUrl,
+    binAssetUrl: r.primaryAssetUrl,
+    binAssetSize: r.primaryAssetSize,
+    sha256AssetUrl: r.secondaryAssetUrl,
+    releaseNotes: r.releaseNotes,
+    publishedAt: r.publishedAt,
+    etag: r.etag,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Mobile-specific wrapper. Detects when a newer `mobile-v*` release exists.
 // Download + verify lives in mobileAppDownload; install lives in apkInstaller.
 // ---------------------------------------------------------------------------
@@ -488,6 +596,8 @@ export async function _clearReleasesCache(): Promise<void> {
   memCache.clear();
   try {
     await AsyncStorage.removeItem(CHARGER_STORAGE_KEY);
+    await AsyncStorage.removeItem(DIAL_STORAGE_KEY);
+    await AsyncStorage.removeItem(CONTROLLER_STORAGE_KEY);
     await AsyncStorage.removeItem(MOBILE_STORAGE_KEY);
   } catch {}
 }

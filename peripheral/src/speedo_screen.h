@@ -10,8 +10,8 @@ public:
     SpeedometerScreen() {};
     bool onClick(TFT_eSprite *sprite);
     void onTouch(int x, int y, TFT_eSprite *sprite);
-    void display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
-    void onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx);
+    void display(TFT_eSprite *sprite, Arduino_RGB_Display *gfx);
+    void onLoad(TFT_eSprite *sprite, Arduino_RGB_Display *gfx);
     void onScroll(int x, TFT_eSprite *sprite);
 
 private:

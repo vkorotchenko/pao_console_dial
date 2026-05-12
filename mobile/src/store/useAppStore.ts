@@ -1,7 +1,116 @@
 import {create} from 'zustand';
 import {persist, createJSONStorage} from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {Device} from 'react-native-ble-plx';
 import {BleStatus, Telemetry, ChargerConfig, ChargerDirectData} from '../types';
+
+// ---------------------------------------------------------------------------
+// Multi-target OTA store shape (Stream 4 refactor, 2026-05-12)
+//
+// Three firmware/app targets share the same per-target lifecycle:
+//   - 'charger'     — Adafruit Feather ESP32 V2 charger (active)
+//   - 'dial'        — ESP32-S3 PAO Console peripheral (UUIDs pending Bart)
+//   - 'controller'  — ESP32 V2 controller (OTA pending)
+//
+// Each target gets its own `OtaSlice`. Top-level helpers that used to be
+// charger-specific (`setLatestRelease`, `setOtaState`, …) now take `target`
+// as their first argument so the same machinery drives all three. Existing
+// charger callers pass `'charger'` explicitly — behaviour is byte-identical.
+// ---------------------------------------------------------------------------
+
+export type OtaTarget = 'charger' | 'dial' | 'controller';
+
+/**
+ * OTA state machine, shared across targets. The names come from the
+ * charger pipeline (the most complex of the three); dial / controller may
+ * never visit some of the post-`transferring` phases, but the same union is
+ * fine — unused values are simply never set for those targets.
+ */
+export type OtaState =
+  | 'idle'
+  | 'checking'
+  | 'downloading'
+  | 'verifying'
+  | 'ready'
+  | 'transferring'
+  | 'rebooting'
+  | 'reconnecting'
+  | 'finalizing'
+  | 'done'
+  | 'error';
+
+/**
+ * The release-metadata block populated by `services/githubReleases.ts` when
+ * a fresh `<target>-v*` release is found. Asset URLs are NEUTRAL across
+ * targets (charger uses .bin, controller will use .bin, dial uses .bin) so
+ * we use `binAssetUrl` for the primary payload everywhere. The sha256
+ * sidecar URL stays in `sha256AssetUrl`.
+ *
+ * Mobile (the app self-update) keeps its own parallel store fields and is
+ * NOT part of this slice — its asset is an .apk, not a firmware binary,
+ * and the install path is system-level (Android installer) rather than a
+ * BLE OTA transfer.
+ */
+export interface LatestRelease {
+  tag: string | null;        // e.g. "charger-v0.1.0"
+  version: string | null;    // bare version, e.g. "0.1.0"
+  htmlUrl: string | null;    // GitHub HTML URL
+  binAssetUrl: string | null; // browser_download_url for primary firmware
+  binAssetSize: number | null; // bytes
+  sha256AssetUrl: string | null; // browser_download_url for .sha256 sidecar
+  releaseNotes: string | null; // markdown body, may be empty
+  etag: string | null;       // last ETag for conditional GET
+}
+
+/**
+ * Ephemeral progress fields. Set during `'downloading'` (network) and
+ * `'transferring'` (BLE) from each phase's progress callback. Reset to
+ * baseline at every state boundary that isn't actively progressing.
+ * NOT persisted — these describe an in-flight transfer and are
+ * meaningless across launches.
+ */
+export interface OtaProgress {
+  frac: number; // 0..1, set explicitly at state boundaries
+  received: number | null;
+  total: number | null;
+}
+
+/**
+ * Full per-target OTA slice. One instance per target lives in `store.ota`.
+ */
+export interface OtaSlice {
+  latestRelease: LatestRelease;
+  latestReleaseCheckedAt: number | null; // Date.now() of last check (success OR 304)
+  state: OtaState;
+  progress: OtaProgress;
+  error: string | null;
+}
+
+/** Empty defaults used to initialise every target's slice. */
+const EMPTY_RELEASE: LatestRelease = {
+  tag: null,
+  version: null,
+  htmlUrl: null,
+  binAssetUrl: null,
+  binAssetSize: null,
+  sha256AssetUrl: null,
+  releaseNotes: null,
+  etag: null,
+};
+
+const EMPTY_PROGRESS: OtaProgress = {
+  frac: 0,
+  received: null,
+  total: null,
+};
+
+const EMPTY_SLICE: OtaSlice = {
+  latestRelease: EMPTY_RELEASE,
+  latestReleaseCheckedAt: null,
+  state: 'idle',
+  progress: EMPTY_PROGRESS,
+  error: null,
+};
 
 interface AppState {
   // BLE connection state (peripheral)
@@ -27,52 +136,56 @@ interface AppState {
   // Cleared explicitly only by store.reset().
   chargerFirmwareVersion: string | null;
 
-  // ── OTA: latest GitHub release (read-only detection) ────────────────────
-  // All `latestRelease*` fields are populated by services/githubReleases.ts
-  // when a fresh `charger-v*` release is found. They're persisted via
-  // partialize so the banner can render immediately at next launch — only
-  // overwritten when a fresh fetch returns a different shape, never reset
-  // on launch. Cleared explicitly only by store.reset().
-  latestReleaseTag: string | null; // e.g. "charger-v0.1.0"
-  latestReleaseVersion: string | null; // e.g. "0.1.0"
-  latestReleaseUrl: string | null; // GitHub HTML URL
-  latestReleaseBinUrl: string | null; // browser_download_url for .bin
-  latestReleaseSha256Url: string | null; // browser_download_url for .bin.sha256
-  latestReleaseSize: number | null; // bytes
-  latestReleaseNotes: string | null; // markdown body
-  latestReleaseCheckedAt: number | null; // Date.now() of last check (success OR 304)
-  latestReleaseEtag: string | null; // last ETag for conditional GET
+  // Dial (peripheral, ESP32-S3) firmware version. Same shape and contract as
+  // `chargerFirmwareVersion` — top-level for parity with the existing charger
+  // pattern (Decision #44) rather than nested under `ota.dial`. Both targets
+  // surface their CURRENTLY-RUNNING firmware version separately from the
+  // GitHub-known LATEST release (which lives in `ota[target].latestRelease`).
+  //
+  // Persisted so the Settings "Dial" row doesn't flicker to "—" on transient
+  // disconnects. Updated only when a fresh read or notification returns a
+  // valid decoded value (mirrors the charger pattern — see disconnect handler
+  // in PaoBleManager / ChargerBleManager: deliberately NOT cleared on
+  // transient drops). Cleared explicitly only by store.reset().
+  //
+  // Note: a future consolidation pass could move both `chargerFirmwareVersion`
+  // and `dialFirmwareVersion` under `ota[target].currentFirmwareVersion` for
+  // a single uniform shape. Doing it now would touch the entire charger
+  // codepath (selectors in SettingsScreen / FirmwareInfoScreen / ChargerBleManager)
+  // for zero behavioural benefit — defer until a third consumer arrives that
+  // forces the refactor, then migrate both together.
+  dialFirmwareVersion: string | null;
 
-  // OTA flow state — NOT persisted (resets on every launch).
-  //   'downloading'   — fetching .bin
-  //   'verifying'     — computing SHA256
-  //   'ready'         — verified, bytes in memory
-  //   'transferring'  — bytes streaming to charger via 0xFF26
-  //   'rebooting'     — charger received OTA_END, restarting
-  //   'reconnecting'  — scanning + reconnecting to the new image
-  //   'finalizing'    — sending CMD_OTA_VERIFY, awaiting VERIFIED notify
-  //   'done'          — success terminal; UI auto-clears to 'idle' after a beat
-  otaState:
-    | 'idle'
-    | 'checking'
-    | 'downloading'
-    | 'verifying'
-    | 'ready'
-    | 'transferring'
-    | 'rebooting'
-    | 'reconnecting'
-    | 'finalizing'
-    | 'done'
-    | 'error';
-  otaError: string | null;
-  // Ephemeral progress fields. Live alongside `otaProgress` (already 0..1).
-  // Set during 'downloading' from the streaming/arrayBuffer progress callback
-  // in `firmwareDownload.ts`. Both reset to null at every state boundary that
-  // isn't actively downloading. NOT persisted — these describe an in-flight
-  // transfer and are meaningless across launches.
-  otaProgress: number; // 0..1, set explicitly at state boundaries
-  otaBytesReceived: number | null;
-  otaBytesTotal: number | null;
+  // ── Controller BLE connection state ─────────────────────────────────────
+  // Controller (ESP32 V2) runs an OTA-only BLE service (0x27B1). Telemetry
+  // still flows via I²C → dial → mobile; BLE is only for OTA + version.
+  // Mirrors the charger's top-level BLE state fields (not chargerData — the
+  // controller has no charger-equivalent data model on BLE).
+  controllerBleStatus: BleStatus;
+  // Device reference — needed by otaOrchestrator for the post-OTA reconnect
+  // flow. Same pattern as the charger's implicit device tracking inside
+  // ChargerBleManager; exposed here so AppNavigator can read it when needed.
+  controllerDevice: Device | null;
+  // Controller firmware version — same shape and persistence contract as
+  // `chargerFirmwareVersion` and `dialFirmwareVersion`. Persisted so the
+  // Settings "Controller" row shows the last-known version immediately on
+  // launch before BLE reconnect. Never cleared on transient disconnects;
+  // only reset by store.reset().
+  controllerFirmwareVersion: string | null;
+  controllerError: string | null;
+
+  // ── OTA: per-target release + flow state ────────────────────────────────
+  // One slice per firmware target. Each slice is populated by
+  // services/githubReleases.ts (release metadata) and services/otaController.ts
+  // (state + progress + error). Mutators take `target` as their first arg
+  // so the same setter drives all three targets.
+  //
+  // Persistence (see partialize below):
+  //   - `latestRelease` and `latestReleaseCheckedAt` PERSIST per target so
+  //     the banner / settings can render immediately at next launch.
+  //   - `state`, `progress`, `error` do NOT persist — they reset to baseline
+  //     on every launch.
+  ota: Record<OtaTarget, OtaSlice>;
 
   // Scan trigger — incrementing forces the unified scan effect to re-run
   // even when bleStatus / chargerBleStatus haven't changed value.
@@ -95,6 +208,11 @@ interface AppState {
   // `latestAppReleaseAssetUrl` / `latestAppReleaseSha256Url` are consumed by
   // `prepareAppPayload` (download + verify) and the verified APK is handed
   // off to `apkInstaller.installApk`.
+  //
+  // Kept as top-level fields (not folded into `ota`) because the mobile
+  // self-update asset is an .apk, not a firmware .bin, and the install path
+  // is system-level rather than BLE OTA — different shape, different
+  // controller, different state machine semantics post-handoff.
   latestAppReleaseTag: string | null; // e.g. "mobile-v0.3.4"
   latestAppReleaseVersion: string | null; // e.g. "0.3.4"
   latestAppReleaseUrl: string | null; // GitHub HTML URL (changelog target)
@@ -147,9 +265,19 @@ interface AppState {
   setChargerError: (e: string | null) => void;
   setChargerData: (d: ChargerDirectData | null) => void;
   setChargerFirmwareVersion: (v: string | null) => void;
+  setDialFirmwareVersion: (v: string | null) => void;
 
-  // Actions (OTA)
+  // Actions (controller BLE)
+  setControllerBleStatus: (s: BleStatus) => void;
+  setControllerDevice: (d: Device | null) => void;
+  setControllerFirmwareVersion: (v: string | null) => void;
+  setControllerError: (e: string | null) => void;
+
+  // ── Actions (per-target OTA) ────────────────────────────────────────────
+  // Every mutator takes `target` first; the rest mirrors the pre-refactor
+  // single-target signatures.
   setLatestRelease: (
+    target: OtaTarget,
     info: {
       tag: string;
       version: string;
@@ -162,33 +290,21 @@ interface AppState {
     } | null,
     checkedAt: number,
   ) => void;
-  setOtaState: (
-    s:
-      | 'idle'
-      | 'checking'
-      | 'downloading'
-      | 'verifying'
-      | 'ready'
-      | 'transferring'
-      | 'rebooting'
-      | 'reconnecting'
-      | 'finalizing'
-      | 'done'
-      | 'error',
-  ) => void;
-  setOtaError: (e: string | null) => void;
+  setOtaState: (target: OtaTarget, s: OtaState) => void;
+  setOtaError: (target: OtaTarget, e: string | null) => void;
   // Explicit progress setters. `setOtaProgress` accepts both the 0..1
   // fraction and the optional received/total byte counts. Pass nulls to
   // clear bytes display (e.g. when entering 'verifying' or 'ready').
   setOtaProgress: (
+    target: OtaTarget,
     frac: number,
     received?: number | null,
     total?: number | null,
   ) => void;
-  resetOtaProgress: () => void;
+  resetOtaProgress: (target: OtaTarget) => void;
   // Bumps `latestReleaseCheckedAt` only — used after a 304 response so the
   // "Last checked" timestamp updates without disturbing the cached fields.
-  touchLatestReleaseCheckedAt: (checkedAt: number) => void;
+  touchLatestReleaseCheckedAt: (target: OtaTarget, checkedAt: number) => void;
 
   // Actions (scan trigger)
   incrementScanTrigger: () => void;
@@ -248,6 +364,27 @@ interface AppState {
   reset: () => void;
 }
 
+/**
+ * Helper: merge a partial slice into the existing target slice without
+ * touching any other target. Centralised here so every setter has the same
+ * shape and we never accidentally clobber sibling targets.
+ */
+function patchTarget(
+  state: AppState,
+  target: OtaTarget,
+  patch: Partial<OtaSlice>,
+): Pick<AppState, 'ota'> {
+  return {
+    ota: {
+      ...state.ota,
+      [target]: {
+        ...state.ota[target],
+        ...patch,
+      },
+    },
+  };
+}
+
 export const useAppStore = create<AppState>()(
   persist(
     set => ({
@@ -264,23 +401,23 @@ export const useAppStore = create<AppState>()(
       chargerError: null,
       chargerData: null,
       chargerFirmwareVersion: null,
+      dialFirmwareVersion: null,
 
-      // Initial state — OTA (release metadata is persisted, but the
-      // initializer here only runs on first launch / after store.reset()).
-      latestReleaseTag: null,
-      latestReleaseVersion: null,
-      latestReleaseUrl: null,
-      latestReleaseBinUrl: null,
-      latestReleaseSha256Url: null,
-      latestReleaseSize: null,
-      latestReleaseNotes: null,
-      latestReleaseCheckedAt: null,
-      latestReleaseEtag: null,
-      otaState: 'idle',
-      otaError: null,
-      otaProgress: 0,
-      otaBytesReceived: null,
-      otaBytesTotal: null,
+      // Initial state — controller BLE
+      controllerBleStatus: 'disconnected',
+      controllerDevice: null,
+      controllerFirmwareVersion: null,
+      controllerError: null,
+
+      // Initial state — OTA (per-target). Persisted slices (latestRelease +
+      // latestReleaseCheckedAt) hydrate via partialize on top of these
+      // defaults; volatile fields (state/progress/error) stay at the
+      // baseline values defined here on every launch.
+      ota: {
+        charger: {...EMPTY_SLICE, latestRelease: {...EMPTY_RELEASE}, progress: {...EMPTY_PROGRESS}},
+        dial: {...EMPTY_SLICE, latestRelease: {...EMPTY_RELEASE}, progress: {...EMPTY_PROGRESS}},
+        controller: {...EMPTY_SLICE, latestRelease: {...EMPTY_RELEASE}, progress: {...EMPTY_PROGRESS}},
+      },
 
       // Initial state — scan trigger
       scanTrigger: 0,
@@ -331,49 +468,58 @@ export const useAppStore = create<AppState>()(
       setChargerError: e => set({chargerError: e}),
       setChargerData: d => set({chargerData: d}),
       setChargerFirmwareVersion: v => set({chargerFirmwareVersion: v}),
+      setDialFirmwareVersion: v => set({dialFirmwareVersion: v}),
 
-      // Actions — OTA
-      // Pass `null` to clear all release fields (e.g. when GitHub returned
+      // Actions — controller BLE
+      setControllerBleStatus: s => set({controllerBleStatus: s}),
+      setControllerDevice: d => set({controllerDevice: d}),
+      setControllerFirmwareVersion: v => set({controllerFirmwareVersion: v}),
+      setControllerError: e => set({controllerError: e}),
+
+      // Actions — per-target OTA
+      // Pass `null` info to clear all release fields (e.g. when GitHub returned
       // an empty list). Pass a populated object to overwrite. `checkedAt` is
       // always updated; the rest only when info is non-null.
-      setLatestRelease: (info, checkedAt) =>
-        set(
-          info
-            ? {
-                latestReleaseTag: info.tag,
-                latestReleaseVersion: info.version,
-                latestReleaseUrl: info.htmlUrl,
-                latestReleaseBinUrl: info.binAssetUrl,
-                latestReleaseSha256Url: info.sha256AssetUrl,
-                latestReleaseSize: info.binAssetSize,
-                latestReleaseNotes: info.releaseNotes,
-                latestReleaseCheckedAt: checkedAt,
-                latestReleaseEtag: info.etag,
-              }
-            : {
-                latestReleaseTag: null,
-                latestReleaseVersion: null,
-                latestReleaseUrl: null,
-                latestReleaseBinUrl: null,
-                latestReleaseSha256Url: null,
-                latestReleaseSize: null,
-                latestReleaseNotes: null,
-                latestReleaseCheckedAt: checkedAt,
-                latestReleaseEtag: null,
-              },
+      setLatestRelease: (target, info, checkedAt) =>
+        set(state =>
+          patchTarget(state, target, {
+            latestRelease: info
+              ? {
+                  tag: info.tag,
+                  version: info.version,
+                  htmlUrl: info.htmlUrl,
+                  binAssetUrl: info.binAssetUrl,
+                  binAssetSize: info.binAssetSize,
+                  sha256AssetUrl: info.sha256AssetUrl,
+                  releaseNotes: info.releaseNotes,
+                  etag: info.etag,
+                }
+              : {...EMPTY_RELEASE},
+            latestReleaseCheckedAt: checkedAt,
+          }),
         ),
-      setOtaState: s => set({otaState: s}),
-      setOtaError: e => set({otaError: e}),
-      setOtaProgress: (frac, received = null, total = null) =>
-        set({
-          otaProgress: Math.max(0, Math.min(1, frac)),
-          otaBytesReceived: received,
-          otaBytesTotal: total,
-        }),
-      resetOtaProgress: () =>
-        set({otaProgress: 0, otaBytesReceived: null, otaBytesTotal: null}),
-      touchLatestReleaseCheckedAt: checkedAt =>
-        set({latestReleaseCheckedAt: checkedAt}),
+      setOtaState: (target, s) =>
+        set(state => patchTarget(state, target, {state: s})),
+      setOtaError: (target, e) =>
+        set(state => patchTarget(state, target, {error: e})),
+      setOtaProgress: (target, frac, received = null, total = null) =>
+        set(state =>
+          patchTarget(state, target, {
+            progress: {
+              frac: Math.max(0, Math.min(1, frac)),
+              received,
+              total,
+            },
+          }),
+        ),
+      resetOtaProgress: target =>
+        set(state =>
+          patchTarget(state, target, {progress: {...EMPTY_PROGRESS}}),
+        ),
+      touchLatestReleaseCheckedAt: (target, checkedAt) =>
+        set(state =>
+          patchTarget(state, target, {latestReleaseCheckedAt: checkedAt}),
+        ),
 
       // Actions — scan trigger
       incrementScanTrigger: () => set(state => ({scanTrigger: state.scanTrigger + 1})),
@@ -447,20 +593,16 @@ export const useAppStore = create<AppState>()(
           chargerError: null,
           chargerData: null,
           chargerFirmwareVersion: null,
-          latestReleaseTag: null,
-          latestReleaseVersion: null,
-          latestReleaseUrl: null,
-          latestReleaseBinUrl: null,
-          latestReleaseSha256Url: null,
-          latestReleaseSize: null,
-          latestReleaseNotes: null,
-          latestReleaseCheckedAt: null,
-          latestReleaseEtag: null,
-          otaState: 'idle',
-          otaError: null,
-          otaProgress: 0,
-          otaBytesReceived: null,
-          otaBytesTotal: null,
+          dialFirmwareVersion: null,
+          controllerBleStatus: 'disconnected',
+          controllerDevice: null,
+          controllerFirmwareVersion: null,
+          controllerError: null,
+          ota: {
+            charger: {...EMPTY_SLICE, latestRelease: {...EMPTY_RELEASE}, progress: {...EMPTY_PROGRESS}},
+            dial: {...EMPTY_SLICE, latestRelease: {...EMPTY_RELEASE}, progress: {...EMPTY_PROGRESS}},
+            controller: {...EMPTY_SLICE, latestRelease: {...EMPTY_RELEASE}, progress: {...EMPTY_PROGRESS}},
+          },
           latestAppReleaseTag: null,
           latestAppReleaseVersion: null,
           latestAppReleaseUrl: null,
@@ -491,17 +633,34 @@ export const useAppStore = create<AppState>()(
         chargeTimeWarnMinutes: state.chargeTimeWarnMinutes,
         socWarnThresholdPct: state.socWarnThresholdPct,
         chargerFirmwareVersion: state.chargerFirmwareVersion,
-        // OTA — persisted release-metadata fields. otaState/otaError NOT
-        // included (deliberate — they should reset to 'idle'/null on every launch).
-        latestReleaseTag: state.latestReleaseTag,
-        latestReleaseVersion: state.latestReleaseVersion,
-        latestReleaseUrl: state.latestReleaseUrl,
-        latestReleaseBinUrl: state.latestReleaseBinUrl,
-        latestReleaseSha256Url: state.latestReleaseSha256Url,
-        latestReleaseSize: state.latestReleaseSize,
-        latestReleaseNotes: state.latestReleaseNotes,
-        latestReleaseCheckedAt: state.latestReleaseCheckedAt,
-        latestReleaseEtag: state.latestReleaseEtag,
+        dialFirmwareVersion: state.dialFirmwareVersion,
+        controllerFirmwareVersion: state.controllerFirmwareVersion,
+        // OTA — persist `latestRelease` and `latestReleaseCheckedAt` for
+        // every target so banners / settings can render without a network
+        // round-trip on cold launch. `state`/`progress`/`error` are
+        // intentionally omitted — they describe an in-flight transfer and
+        // are meaningless across launches (they reset to baseline via the
+        // initialiser above).
+        //
+        // NOTE: persisting the entire `latestRelease` blob (not just etag +
+        // checkedAt) is REQUIRED for the existing charger UX — Phase 3
+        // (decision #50) relies on the banner rendering instantly at next
+        // launch from the cached tag/version/URLs. Keep this behaviour
+        // identical across all targets.
+        ota: {
+          charger: {
+            latestRelease: state.ota.charger.latestRelease,
+            latestReleaseCheckedAt: state.ota.charger.latestReleaseCheckedAt,
+          },
+          dial: {
+            latestRelease: state.ota.dial.latestRelease,
+            latestReleaseCheckedAt: state.ota.dial.latestReleaseCheckedAt,
+          },
+          controller: {
+            latestRelease: state.ota.controller.latestRelease,
+            latestReleaseCheckedAt: state.ota.controller.latestReleaseCheckedAt,
+          },
+        },
         // App's own version (appVersion / appBuildNumber) is intentionally
         // NOT persisted. Persisting it created a rehydration race after an
         // OTA self-update: the App.tsx init effect would set the new running
@@ -523,6 +682,50 @@ export const useAppStore = create<AppState>()(
         latestAppReleaseCheckedAt: state.latestAppReleaseCheckedAt,
         latestAppReleaseEtag: state.latestAppReleaseEtag,
       }),
+      // Zustand-persist deep-merges the partialize result into the in-memory
+      // initial state. For nested objects (like `ota.charger`), only the
+      // explicitly-persisted KEYS overwrite — the volatile fields (state /
+      // progress / error) keep their initial values. We rely on default
+      // merge behavior here; if a future Zustand upgrade swaps to a
+      // shallow-merge default for arbitrary nesting, we'll need a custom
+      // `merge` fn that preserves the slice shape for ota[target].
+      merge: (persisted, current) => {
+        // Defensive: tolerate legacy persisted state where `ota` was missing
+        // or partial (older builds had top-level `latestRelease*` fields).
+        // Fill any missing target slice with current's defaults to avoid
+        // `undefined` deref in selectors.
+        const p = (persisted ?? {}) as Partial<AppState>;
+        const persistedOta = (p.ota ?? {}) as Partial<Record<OtaTarget, Partial<OtaSlice>>>;
+        const merged: AppState = {
+          ...current,
+          ...p,
+          ota: {
+            charger: {
+              ...current.ota.charger,
+              ...(persistedOta.charger ?? {}),
+              // Always restore volatile fields to their baseline.
+              state: current.ota.charger.state,
+              progress: current.ota.charger.progress,
+              error: current.ota.charger.error,
+            },
+            dial: {
+              ...current.ota.dial,
+              ...(persistedOta.dial ?? {}),
+              state: current.ota.dial.state,
+              progress: current.ota.dial.progress,
+              error: current.ota.dial.error,
+            },
+            controller: {
+              ...current.ota.controller,
+              ...(persistedOta.controller ?? {}),
+              state: current.ota.controller.state,
+              progress: current.ota.controller.progress,
+              error: current.ota.controller.error,
+            },
+          },
+        };
+        return merged;
+      },
     },
   ),
 );

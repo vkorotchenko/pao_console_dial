@@ -2,7 +2,7 @@
   "compilerOptions": {
     "target": "esnext",
     "module": "commonjs",
-    "lib": ["es2017"],
+    "lib": ["es2020"],
     "allowJs": true,
     "jsx": "react-native",
     "noEmit": true,
@@ -14,6 +14,7 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "baseUrl": ".",
+    "types": ["jest", "react-native"],
     "paths": {
       "@/*": ["src/*"]
     }

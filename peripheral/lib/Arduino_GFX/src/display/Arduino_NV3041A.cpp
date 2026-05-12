@@ -9,9 +9,13 @@ Arduino_NV3041A::Arduino_NV3041A(
 {
 }
 
-void Arduino_NV3041A::begin(int32_t speed)
+bool Arduino_NV3041A::begin(int32_t speed)
 {
-  Arduino_TFT::begin(speed);
+  if (speed == GFX_NOT_DEFINED)
+  {
+    speed = 32000000UL; // NV3041A Maximum supported speed
+  }
+  return Arduino_TFT::begin(speed);
 }
 
 /**************************************************************************/
@@ -39,8 +43,7 @@ void Arduino_NV3041A::setRotation(uint8_t r)
     break;
   }
   _bus->beginWrite();
-  _bus->writeCommand(NV3041A_MADCTL);
-  _bus->write(r);
+  _bus->writeC8D8(NV3041A_MADCTL, r);
   _bus->endWrite();
 }
 
@@ -67,7 +70,7 @@ void Arduino_NV3041A::writeAddrWindow(int16_t x, int16_t y, uint16_t w, uint16_t
 
 void Arduino_NV3041A::invertDisplay(bool i)
 {
-  _bus->sendCommand(_ips ? (i ? NV3041A_INVOFF : NV3041A_INVON) : (i ? NV3041A_INVON : NV3041A_INVOFF));
+  _bus->sendCommand((_ips ^ i) ? NV3041A_INVON : NV3041A_INVOFF);
 }
 
 void Arduino_NV3041A::displayOn(void)
@@ -105,8 +108,5 @@ void Arduino_NV3041A::tftInit()
 
   _bus->batchOperation(nv3041a_init_operations, sizeof(nv3041a_init_operations));
 
-  if (_ips)
-  {
-    invertDisplay(false);
-  }
+  invertDisplay(false);
 }

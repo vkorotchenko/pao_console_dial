@@ -7,7 +7,8 @@
 #include "mcp2515_can.h"
 #include "global_state.h"
 
-#define SPI_CS_PIN 5
+// MCP2515 chip-select pin.
+#define SPI_CS_PIN 14
 
 class CanHandler
 {

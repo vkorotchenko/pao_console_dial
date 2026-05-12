@@ -1,4 +1,34 @@
 #include "pao_ble.h"
+#include "version.h"
+#include "ota.h"
+
+// File-static handle to the OTA status characteristic, used by the free
+// function notifyOtaStatus(). Set inside PaoBleService::begin() once the
+// characteristic is created. nullptr-safe: calls before begin() are a no-op.
+static NimBLECharacteristic* s_pOtaStatus = nullptr;
+
+void notifyOtaStatus(uint8_t code, uint32_t bytesReceived) {
+    if (!s_pOtaStatus) return;
+    uint8_t buf[5] = {
+        code,
+        (uint8_t)(bytesReceived & 0xFF),
+        (uint8_t)((bytesReceived >> 8) & 0xFF),
+        (uint8_t)((bytesReceived >> 16) & 0xFF),
+        (uint8_t)((bytesReceived >> 24) & 0xFF),
+    };
+    s_pOtaStatus->setValue(buf, sizeof(buf));
+    s_pOtaStatus->notify();
+}
+
+// Compile-time clamp: each FW_VERSION_* field is packed as a single uint8.
+// If we ever cross 255 in a field, take the cap and keep going — Phase 1 of
+// the dial OTA plan never asks for more precision than that. Mirrors the
+// charger Phase 1 contract (Decision #43).
+static inline uint8_t clampU8(int v) {
+    if (v < 0)   return 0;
+    if (v > 255) return 255;
+    return (uint8_t)v;
+}
 
 // Big-endian helpers
 static inline void write_uint16_be(uint8_t* buf, uint16_t val) {
@@ -30,6 +60,14 @@ PaoBleService& PaoBleService::getInstance() {
 
 void PaoBleService::begin() {
     NimBLEDevice::init("PAO Console");
+    // setMTU AFTER init — init() brings up the NimBLE stack and creates the
+    // mutexes setMTU touches. Calling setMTU before init triggers a boot panic
+    // on ESP32 (npl_freertos_mutex_pend with null handle) — mirrors the
+    // ordering proven on the charger (Decision #43 / #52).
+    // 517 is the BLE 5.0 maximum; mobile negotiates down on connect.
+    // Effective per-chunk payload = (negotiated MTU) - 3.
+    NimBLEDevice::setMTU(517);
+
     NimBLEDevice::setSecurityAuth(BLE_SM_PAIR_AUTHREQ_BOND);  // Just Works + bonding
 
     _pServer = NimBLEDevice::createServer();
@@ -74,6 +112,37 @@ void PaoBleService::begin() {
         NIMBLE_PROPERTY::NOTIFY
     );
 
+    // Firmware version (Read + Notify) — 4 bytes little-endian:
+    // [major, minor, patch, build]. Matches charger 0xFF25 contract exactly
+    // (Decision #43) so the mobile decoder is reusable. Phase 1 of dial OTA.
+    _fwVersionChar = paoService->createCharacteristic(
+        PAO_FW_VERSION_CHAR_UUID,
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+    );
+    setFwVersion(/*notify=*/false);  // Seed before start; nobody is subscribed yet
+
+    // OTA — Phase 5 (Decision #52 mirror).
+    // Three characteristics: cmd dispatcher (WRITE), chunk receiver (WRITE_NR),
+    // status notifier (NOTIFY). Wire format identical to charger 0xFF05/26/27
+    // so the mobile decoder is reusable. See ota.{cpp,h} for the protocol.
+    _otaDispatchChar = paoService->createCharacteristic(
+        PAO_OTA_DISPATCH_CHAR_UUID,
+        NIMBLE_PROPERTY::WRITE
+    );
+    _otaDispatchChar->setCallbacks(&_otaDispatchCallbacks);
+
+    _otaDataChar = paoService->createCharacteristic(
+        PAO_OTA_DATA_CHAR_UUID,
+        NIMBLE_PROPERTY::WRITE_NR
+    );
+    _otaDataChar->setCallbacks(&_otaDataCallbacks);
+
+    _otaStatusChar = paoService->createCharacteristic(
+        PAO_OTA_STATUS_CHAR_UUID,
+        NIMBLE_PROPERTY::NOTIFY
+    );
+    s_pOtaStatus = _otaStatusChar;  // expose to ota.cpp via notifyOtaStatus()
+
     paoService->start();
 
     // Start advertising
@@ -82,18 +151,98 @@ void PaoBleService::begin() {
     pAdvertising->setScanResponse(true);
     pAdvertising->start();
 
+    Serial.print("PAO BLE: firmware version ");
+    Serial.print(FW_VERSION_STRING);
+    Serial.print(" (sha=");
+    Serial.print(FW_VERSION_GIT_SHA);
+    Serial.println(")");
     Serial.println("PAO BLE: Service started, advertising as 'PAO Console'");
+}
+
+void PaoBleService::setFwVersion(bool notify) {
+    if (!_fwVersionChar) return;
+    uint8_t buf[4] = {
+        clampU8(FW_VERSION_MAJOR),
+        clampU8(FW_VERSION_MINOR),
+        clampU8(FW_VERSION_PATCH),
+        clampU8(FW_VERSION_BUILD),
+    };
+    _fwVersionChar->setValue(buf, 4);
+    if (notify) _fwVersionChar->notify();
 }
 
 void PaoBleService::onConnect(NimBLEServer* pServer) {
     _connected = true;
     Serial.println("PAO BLE: Client connected");
+    // Push firmware version on connect so the mobile sees the dial version as
+    // soon as the GATT service is up — matches charger Phase 1 behaviour
+    // (Decision #43). Mobile may still also do a one-shot read.
+    setFwVersion(/*notify=*/true);
 }
 
 void PaoBleService::onDisconnect(NimBLEServer* pServer) {
     _connected = false;
     Serial.println("PAO BLE: Client disconnected, restarting advertising");
+    // Phase 5: if the client disconnects mid-OTA, abort so Update.abort()
+    // frees flash state. Skip if we're already REBOOTING (Update.end() has
+    // committed and ESP.restart() is imminent) — in that brief window between
+    // notify(STATUS_REBOOTING) and the actual restart, NimBLE will fire one
+    // last onDisconnect; we DON'T want to clobber the committed image.
+    // Mirrors charger Decision #52 onDisconnect behaviour.
+    ota::State otaState = ota::currentState();
+    if (otaState != ota::State::IDLE && otaState != ota::State::REBOOTING) {
+        Serial.printf("PAO BLE: disconnect during OTA (state=%d) — auto-aborting\n",
+                      (int)otaState);
+        ota::abort();
+    }
     NimBLEDevice::startAdvertising();
+}
+
+// ---------------------------------------------------------------------------
+// OTA callback implementations
+// ---------------------------------------------------------------------------
+
+// OTA dispatcher write — demultiplexes cmd byte to ota::* entry points.
+//   cmd=10 OTA_BEGIN  — payload: 4-byte LE total_size + 32-byte sha256 (36 B)
+//   cmd=11 OTA_END    — no payload
+//   cmd=12 OTA_ABORT  — no payload
+//   cmd=13 OTA_VERIFY — no payload
+// Wire-compatible with charger 0xFF05 cmd codes (Decision #52). The dial has
+// no equivalent of the charger's reused 0xFF05 config dispatcher, so this is
+// a NEW dedicated OTA-only dispatcher characteristic on its own UUID.
+void PaoBleService::OtaDispatchCallbacks::onWrite(NimBLECharacteristic* pCharacteristic) {
+    std::string value = pCharacteristic->getValue();
+    if (value.size() < 1) return;
+    uint8_t cmd = (uint8_t)value[0];
+    const uint8_t* payload = (value.size() > 1) ? (const uint8_t*)(value.data() + 1) : nullptr;
+    size_t payload_len = (value.size() > 1) ? (value.size() - 1) : 0;
+    Serial.printf("PAO BLE: OTA cmd=%d (len=%d)\n", (int)cmd, (int)value.size());
+    switch (cmd) {
+        case 10:
+            ota::begin(payload, payload_len);
+            break;
+        case 11:
+            ota::end();
+            break;
+        case 12:
+            ota::abort();
+            break;
+        case 13:
+            ota::verify();
+            break;
+        default:
+            Serial.printf("PAO BLE: unknown OTA cmd %d — ignored\n", (int)cmd);
+            break;
+    }
+}
+
+// OTA chunk receiver — WRITE_WITHOUT_RESPONSE. Each invocation = one chunk
+// (up to MTU-3 bytes). Forwards straight to ota::writeChunk; the ACK window
+// is managed inside ota.cpp.
+void PaoBleService::OtaDataCallbacks::onWrite(NimBLECharacteristic* pCharacteristic) {
+    std::string value = pCharacteristic->getValue();
+    if (value.size() == 0) return;
+    ota::writeChunk((const uint8_t*)value.data(), value.size());
 }
 
 bool PaoBleService::isConnected() const {

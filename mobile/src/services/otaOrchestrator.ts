@@ -5,7 +5,17 @@ import {
   CHARGER_SERVICE_UUID,
   CMD_OTA_VERIFY,
 } from '../ble/ChargerBleManager';
-import {useAppStore} from '../store/useAppStore';
+import {
+  paoBleManager,
+  PAO_SERVICE_UUID,
+  PAO_CMD_OTA_VERIFY,
+} from '../ble/PaoBleManager';
+import {
+  controllerBleManager,
+  CONTROLLER_SERVICE_UUID,
+  CTRL_CMD_OTA_VERIFY,
+} from '../ble/ControllerBleManager';
+import {OtaTarget, useAppStore} from '../store/useAppStore';
 import {getReadyOtaBytes, getReadyOtaSha256} from './otaController';
 import {
   transferFirmware,
@@ -17,27 +27,121 @@ import {
 } from './firmwareTransfer';
 
 // ---------------------------------------------------------------------------
-// Orchestrator that owns the full charger-flash pipeline.
+// Orchestrator that owns the full target-flash pipeline.
 //
-// Pipeline:
-//   1. preflight — readyOtaBytes + sha must be present
-//   2. transfer — transferFirmware() pushes bytes via 0xFF26 + 0xFF05 (cmd=10/11)
-//   3. wait for disconnect — charger reboots
+// Pipeline (same shape for every target — only the BLE plumbing differs):
+//   1. preflight — readyOtaBytes(target) + sha must be present
+//   2. transfer — transferFirmware(target) pushes bytes via target's chunk +
+//                 dispatcher chars (cmd=10/11)
+//   3. wait for disconnect — device reboots
 //   4. reconnect — scan-by-service-UUID, reconnect, re-discover
-//   5. version check — read 0xFF25, compare to expected
+//   5. version check — read the target's firmware-version char, compare to
+//                      expected
 //   6. verify — write cmd=13, await VERIFIED (or NOT_PENDING)
 //   7. done
 //
-// State transitions in `useAppStore.otaState`:
+// State transitions in `useAppStore.ota[target].state`:
 //   ready → transferring → rebooting → reconnecting → finalizing → done
 //
-// On error: → 'error' with `otaError` set. `done` auto-clears to idle in the
+// On error: → 'error' with `error` set. `done` auto-clears to idle in the
 // caller (UI) after a brief success display.
 // ---------------------------------------------------------------------------
 
 const RECONNECT_SCAN_TIMEOUT_MS = 30_000;
 const VERIFY_TIMEOUT_MS = 15_000;
 const POST_REBOOT_GRACE_MS = 2_000; // wait this long after disconnect before scanning
+
+// Target-specific BLE wiring + post-reconnect version setter. The shape
+// mirrors firmwareTransfer.ts's OtaProfile but adds orchestration-only
+// fields (service UUID for scan-by-UUID, device-name fingerprint, verify
+// cmd code, store version setter).
+interface OrchestrationProfile {
+  target: OtaTarget;
+  manager: {
+    isConnected(): boolean;
+    disconnect(): void | Promise<void>;
+    getConnectedDevice(): Device | null;
+    connect(deviceId: string): Promise<void>;
+    wirePostConnectSubscriptions?(): void;
+    subscribeOtaStatus(
+      handler: (code: number, bytesReceived: number) => void,
+    ): Subscription;
+    writeOtaCommand(cmd: number, payload?: Uint8Array): Promise<void>;
+    readFirmwareVersion(): Promise<string | null>;
+  };
+  serviceUuid: string;
+  verifyCmd: number;
+  // Device-name fingerprints used in the reconnect scan to disambiguate the
+  // target from other BLE peers in the same product.
+  selfDeviceName: string; // expected device name (case-insensitive match)
+  excludeDeviceName: string; // other peer's name we must NEVER reconnect as this target
+  // Setter for the running firmware version after reconnect. Charger uses
+  // `setChargerFirmwareVersion`, dial uses `setDialFirmwareVersion`.
+  setFirmwareVersion: (v: string | null) => void;
+  // Selector that reads the running version from store post-reconnect (used
+  // for the soft mismatch warn-log).
+  readFirmwareVersionFromStore: () => string | null;
+  // Per-target store-tracked device id snapshot for reconnect matching.
+  readDeviceIdFromStore: () => string | null;
+}
+
+function getOrchestrationProfile(target: OtaTarget): OrchestrationProfile {
+  switch (target) {
+    case 'charger':
+      return {
+        target,
+        manager: chargerBleManager,
+        serviceUuid: CHARGER_SERVICE_UUID,
+        verifyCmd: CMD_OTA_VERIFY,
+        selfDeviceName: 'pao charger',
+        excludeDeviceName: 'PAO Console',
+        setFirmwareVersion: v =>
+          useAppStore.getState().setChargerFirmwareVersion(v),
+        readFirmwareVersionFromStore: () =>
+          useAppStore.getState().chargerFirmwareVersion,
+        readDeviceIdFromStore: () => useAppStore.getState().chargerDeviceId,
+      };
+    case 'dial':
+      return {
+        target,
+        manager: paoBleManager,
+        serviceUuid: PAO_SERVICE_UUID,
+        verifyCmd: PAO_CMD_OTA_VERIFY,
+        selfDeviceName: 'pao console',
+        excludeDeviceName: 'Pao Charger',
+        setFirmwareVersion: v =>
+          useAppStore.getState().setDialFirmwareVersion(v),
+        readFirmwareVersionFromStore: () =>
+          useAppStore.getState().dialFirmwareVersion,
+        readDeviceIdFromStore: () => useAppStore.getState().deviceId,
+      };
+    case 'controller':
+      return {
+        target,
+        manager: controllerBleManager,
+        serviceUuid: CONTROLLER_SERVICE_UUID,
+        verifyCmd: CTRL_CMD_OTA_VERIFY,
+        // The controller advertises as "Pao Controller" (Bart's firmware).
+        // Exclude "Pao Charger" to avoid mis-routing during a reconnect scan.
+        selfDeviceName: 'pao controller',
+        excludeDeviceName: 'Pao Charger',
+        setFirmwareVersion: v =>
+          useAppStore.getState().setControllerFirmwareVersion(v),
+        readFirmwareVersionFromStore: () =>
+          useAppStore.getState().controllerFirmwareVersion,
+        readDeviceIdFromStore: () =>
+          // Controller does not have a dedicated `controllerDeviceId` in the
+          // store; the device object itself carries the ID. Retrieve from
+          // the connected device if available, else fall back to null so
+          // the reconnect scan always starts clean.
+          useAppStore.getState().controllerDevice?.id ?? null,
+      };
+    default: {
+      const _exhaustive: never = target;
+      throw new Error(`otaOrchestrator: unknown target ${_exhaustive}`);
+    }
+  }
+}
 
 export type OrchestratorPhase =
   | 'preparing'
@@ -61,27 +165,33 @@ export class OtaPreflightError extends Error {
 }
 
 /**
- * Orchestrate the full charger flash. The UI is responsible for showing the
- * "stay foreground / charger off" pre-flight modal BEFORE calling this; we
- * trust the caller and proceed straight into the transfer.
+ * Generalised flash entry-point. Drives the full pipeline for any target
+ * (charger | dial). The UI is responsible for showing any pre-flight modal
+ * BEFORE calling this; we trust the caller and proceed straight into the
+ * transfer.
  */
-export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
+export async function flashFirmware(
+  target: OtaTarget,
+  opts: FlashOpts,
+): Promise<void> {
+  const profile = getOrchestrationProfile(target);
   const {signal, onProgress, onPhase} = opts;
   const store = useAppStore.getState;
 
   // Tiny helper: forward to setOtaState while emitting a diagnostic log so a
   // post-crash logcat dump pinpoints exactly which transition we were on when
-  // things went sideways. Stays in flashChargerFirmware so it captures every
-  // state change driven by the orchestrator without scattering logs.
-  const setState = (newState: Parameters<ReturnType<typeof store>['setOtaState']>[0]) => {
-    console.log('[OTA] state →', newState);
-    store().setOtaState(newState);
+  // things went sideways.
+  const setState = (
+    newState: Parameters<ReturnType<typeof store>['setOtaState']>[1],
+  ) => {
+    console.log(`[OTA:${target}] state →`, newState);
+    store().setOtaState(target, newState);
   };
 
   // 1. Preflight ────────────────────────────────────────────────────────────
-  const bytes = getReadyOtaBytes();
-  const expectedSha = getReadyOtaSha256();
-  const expectedVersion = store().latestReleaseVersion;
+  const bytes = getReadyOtaBytes(target);
+  const expectedSha = getReadyOtaSha256(target);
+  const expectedVersion = store().ota[target].latestRelease.version;
 
   if (!bytes || !expectedSha) {
     throw new OtaPreflightError('No verified firmware payload — run download first.');
@@ -89,48 +199,47 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
   if (!expectedVersion) {
     throw new OtaPreflightError('No release version available.');
   }
-  if (!chargerBleManager.isConnected()) {
-    throw new OtaPreflightError('Charger not connected.');
+  if (!profile.manager.isConnected()) {
+    throw new OtaPreflightError(`${humanTargetName(target)} not connected.`);
   }
   // Capture the device id BEFORE the transfer — we need it post-reboot if the
-  // disconnect listener clears the store's chargerDeviceId.
-  const initialDeviceId = store().chargerDeviceId;
+  // disconnect listener clears the store's id field.
+  const initialDeviceId = profile.readDeviceIdFromStore();
 
-  store().setOtaError(null);
+  store().setOtaError(target, null);
 
   try {
     // 2. Transfer ──────────────────────────────────────────────────────────
     onPhase?.('transferring');
     setState('transferring');
-    store().setOtaProgress(0, 0, bytes.byteLength);
+    store().setOtaProgress(target, 0, 0, bytes.byteLength);
 
-    await transferFirmware(bytes, expectedSha, {
+    await transferFirmware(target, bytes, expectedSha, {
       signal,
       onProgress: (sent, total) => {
         // Push to store so the UI can render from a single source of truth,
         // and also forward to the caller in case it wants its own progress.
         const frac = total > 0 ? sent / total : 0;
-        useAppStore.getState().setOtaProgress(frac, sent, total);
+        useAppStore.getState().setOtaProgress(target, frac, sent, total);
         onProgress?.(sent, total);
       },
       onPhase: () => {
         // Sub-phases of transfer (requesting_mtu / sending_begin / etc) are
-        // not surfaced to the UI — they all collapse to 'transferring'. The
-        // user just sees "Sending firmware…" with a progress bar.
+        // not surfaced to the UI — they all collapse to 'transferring'.
       },
     });
 
     // 3. Wait for disconnect ──────────────────────────────────────────────
-    // The charger reboots ~immediately after REBOOTING is emitted. We wait
+    // The device reboots ~immediately after REBOOTING is emitted. We wait
     // for the BLE disconnect signal as the actual transition cue (reading
     // the status pipe is unreliable post-reboot — the GATT connection is
     // already torn down).
     onPhase?.('rebooting');
     setState('rebooting');
 
-    await waitForDisconnect(initialDeviceId, signal);
+    await waitForDisconnect(profile, initialDeviceId, signal);
 
-    // Brief grace so the charger's BLE stack can come back up clean before
+    // Brief grace so the device's BLE stack can come back up clean before
     // we start scanning again. iOS in particular is allergic to scanning
     // immediately after a disconnect.
     await delay(POST_REBOOT_GRACE_MS);
@@ -141,29 +250,27 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
 
     // Pass the pre-reboot device id so scanAndReconnect can prefer matching
     // by id (most reliable on Android — survives the reboot since the BT
-    // MAC stays the same). The store's chargerDeviceId is already cleared
-    // by the disconnect handler at this point, so we have to source it from
-    // the snapshot we took before the transfer began.
-    const reconnectedId = await scanAndReconnect(signal, initialDeviceId);
+    // MAC stays the same).
+    const reconnectedId = await scanAndReconnect(profile, signal, initialDeviceId);
 
     // 5. Version check + re-init connection ───────────────────────────────
-    // The chargerBleManager.connect() above set the connectedDevice
-    // internally. We can read 0xFF25 directly via readFirmwareVersion().
-    const newVersion = await chargerBleManager.readFirmwareVersion();
+    // The manager.connect() above set the connectedDevice internally. We
+    // can read the firmware version char directly.
+    const newVersion = await profile.manager.readFirmwareVersion();
     if (newVersion) {
-      store().setChargerFirmwareVersion(newVersion);
+      profile.setFirmwareVersion(newVersion);
     }
 
     // Compare bare semvers. If mismatch, surface a soft warning but proceed
-    // to verify — the bootloader will roll back on next boot if validation
-    // didn't fire.
+    // to verify — the bootloader / NVS-rollback will catch a bad image on
+    // its own time.
     if (
       newVersion &&
       expectedVersion &&
       stripBuildSuffix(newVersion) !== stripBuildSuffix(expectedVersion)
     ) {
       console.warn(
-        `[OTA] post-reconnect version mismatch: read=${newVersion} expected=${expectedVersion}`,
+        `[OTA:${target}] post-reconnect version mismatch: read=${newVersion} expected=${expectedVersion}`,
       );
     }
 
@@ -171,78 +278,87 @@ export async function flashChargerFirmware(opts: FlashOpts): Promise<void> {
     onPhase?.('verifying');
     setState('finalizing');
 
-    await sendVerifyAndAwait(signal);
+    await sendVerifyAndAwait(profile, signal);
 
     // 7. Done ──────────────────────────────────────────────────────────────
     onPhase?.('done');
     setState('done');
-    store().setOtaError(null);
+    store().setOtaError(target, null);
 
     // Re-set the firmware version one more time using whatever the device
     // last reported — this catches the case where the version characteristic
     // notify-fired between read and verify.
     if (newVersion) {
-      store().setChargerFirmwareVersion(newVersion);
+      profile.setFirmwareVersion(newVersion);
     }
 
-    // Note about reconnectedId: ChargerBleManager already updated the store
-    // with it via connect(). We log for traceability.
-    console.log(`[OTA] flash complete; reconnected device id=${reconnectedId}`);
+    console.log(`[OTA:${target}] flash complete; reconnected device id=${reconnectedId}`);
   } catch (e) {
     // BLE errors thrown during 'rebooting' or 'reconnecting' states are the
-    // EXPECTED side-effect of the charger restarting after cmd=11. Don't
+    // EXPECTED side-effect of the device restarting after cmd=11. Don't
     // surface those to the UI as flash failures.
-    const phase = store().otaState;
+    const phase = store().ota[target].state;
     if ((phase === 'rebooting' || phase === 'reconnecting') && isExpectedRebootError(e)) {
-      // Stay in current phase; let downstream logic (scan + reconnect) keep
-      // driving forward. A real failure here would have come from the verify
-      // step or the 30s reconnect timeout, both handled below.
-      console.log(`[OTA] swallowed expected disconnect during ${phase} phase`);
-      // Re-throw NOTHING here — but we need to bail out cleanly because the
-      // pipeline above is now broken. Convert to an abort-like soft fail
-      // and let the user retry. Power-cycle hint via dedicated message.
-      const message = 'Charger restarted but did not come back online — power-cycle and reconnect to check version.';
+      console.log(`[OTA:${target}] swallowed expected disconnect during ${phase} phase`);
+      const message = `${humanTargetName(target)} restarted but did not come back online — power-cycle and reconnect to check version.`;
       // Critical: clear manager state so AppNavigator's auto-reconnect loop
       // can take over without competing with stale orchestrator references.
-      // Without this the manager's connectedDevice may still point at the
-      // pre-reboot Device object, and chargerBleStatus may be stuck in a
-      // half-state that the auto-reconnect effect doesn't act on.
-      handOffToAppNavigatorReconnect();
+      handOffToAppNavigatorReconnect(profile);
       setState('error');
-      store().setOtaError(message);
+      store().setOtaError(target, message);
       throw new Error(message);
     }
     const message = mapErrorToMessage(e);
-    console.error('[OTA] flash error:', e);
+    console.error(`[OTA:${target}] flash error:`, e);
     // Same hand-off on a generic error during/after reconnect — leaves the
     // user with the error message visible but the manager state clean so a
     // background reconnect can succeed silently.
     if (phase === 'reconnecting' || phase === 'rebooting' || phase === 'finalizing') {
-      handOffToAppNavigatorReconnect();
+      handOffToAppNavigatorReconnect(profile);
     }
     setState('error');
-    store().setOtaError(message);
+    store().setOtaError(target, message);
     throw e;
   }
 }
 
 /**
+ * Backwards-compatible wrapper. Pre-Stream-2 callers (SettingsScreen) only
+ * knew about the charger; this signature stays identical so the existing
+ * `flashChargerFirmware({signal, …})` call site keeps working unchanged.
+ */
+export function flashChargerFirmware(opts: FlashOpts): Promise<void> {
+  return flashFirmware('charger', opts);
+}
+
+/**
  * Tear down whatever in-session BLE state the orchestrator was managing so
  * the regular AppNavigator auto-reconnect loop can take over with a clean
- * slate. Safe to call from any phase — chargerBleManager.disconnect() is
- * idempotent against a null connectedDevice.
+ * slate. Safe to call from any phase — `manager.disconnect()` is idempotent
+ * against a null connectedDevice.
  */
-function handOffToAppNavigatorReconnect(): void {
-  console.log('[OTA] reconnect: handing back to chargerBleManager');
+function handOffToAppNavigatorReconnect(profile: OrchestrationProfile): void {
+  console.log(`[OTA:${profile.target}] reconnect: handing back to manager`);
   try {
-    chargerBleManager.disconnect();
+    profile.manager.disconnect();
   } catch (e) {
     console.warn('[OTA] disconnect during hand-off failed (non-fatal):', e);
   }
-  // disconnect() already sets chargerBleStatus='disconnected'. Bumping the
-  // scan trigger ensures AppNavigator's unified scan effect re-runs even if
-  // it was already in 'disconnected' (Zustand swallows no-op sets).
+  // Bumping the scan trigger ensures AppNavigator's unified scan effect
+  // re-runs even if status is already 'disconnected' (Zustand swallows
+  // no-op sets).
   useAppStore.getState().incrementScanTrigger();
+}
+
+function humanTargetName(target: OtaTarget): string {
+  switch (target) {
+    case 'charger':
+      return 'Charger';
+    case 'dial':
+      return 'Dial';
+    case 'controller':
+      return 'Controller';
+  }
 }
 
 /**
@@ -252,6 +368,7 @@ function handOffToAppNavigatorReconnect(): void {
  * transfer's REBOOTING handler may have raced ahead), resolve immediately.
  */
 function waitForDisconnect(
+  profile: OrchestrationProfile,
   deviceId: string | null,
   signal: AbortSignal,
 ): Promise<void> {
@@ -261,7 +378,7 @@ function waitForDisconnect(
     }
 
     // Already disconnected → immediate resolve.
-    if (!chargerBleManager.isConnected() || !deviceId) {
+    if (!profile.manager.isConnected() || !deviceId) {
       return resolve();
     }
 
@@ -311,24 +428,24 @@ function waitForDisconnect(
 }
 
 /**
- * Scan for the charger after a reboot and connect to it. Resolves with the
- * new device id. Times out after RECONNECT_SCAN_TIMEOUT_MS.
+ * Scan for the target device after a reboot and connect to it. Resolves
+ * with the new device id. Times out after RECONNECT_SCAN_TIMEOUT_MS.
  *
  * Why no UUID filter:
  *   Android scan filters only match the primary advertisement payload, and
- *   even with our NimBLE charger setting `setScanResponse(true)` the name +
- *   sometimes the UUID lands in the scan response. Historical Bluefruit
- *   builds had the same quirk (charger UUID lived in scan response only).
- *   AppNavigator already discovered this and switched to a null filter
- *   (see the comment near the unified scan effect). We mirror that here so
- *   the orchestrator's reconnect doesn't time out on Android.
+ *   even with our NimBLE peripheral setting `setScanResponse(true)` the
+ *   name + sometimes the UUID lands in the scan response. AppNavigator
+ *   already discovered this and switched to a null filter (see the comment
+ *   near the unified scan effect). We mirror that here so the orchestrator's
+ *   reconnect doesn't time out on Android.
  *
  * Match priority in the callback (highest first):
- *   1. previously-saved chargerDeviceId (same physical hardware, same id post-reboot)
- *   2. advertised service UUID matches CHARGER_SERVICE_UUID
- *   3. device.name === "Pao Charger" (case-insensitive)
+ *   1. previously-saved device id (same physical hardware, same id post-reboot)
+ *   2. advertised service UUID matches profile.serviceUuid
+ *   3. device.name matches profile.selfDeviceName (case-insensitive)
  */
 function scanAndReconnect(
+  profile: OrchestrationProfile,
   signal: AbortSignal,
   preferredDeviceId: string | null,
 ): Promise<string> {
@@ -339,13 +456,13 @@ function scanAndReconnect(
 
     // Prefer the id passed in by the caller (snapshotted before transfer);
     // fall back to whatever's currently in the store. The disconnect handler
-    // clears chargerDeviceId synchronously when the reboot disconnect fires,
+    // clears the device id synchronously when the reboot disconnect fires,
     // so the store value is often null by the time we get here.
-    const savedChargerId =
-      preferredDeviceId ?? useAppStore.getState().chargerDeviceId ?? null;
+    const savedId =
+      preferredDeviceId ?? profile.readDeviceIdFromStore() ?? null;
 
     console.log(
-      `[OTA] reconnect: scan started for service UUID=${CHARGER_SERVICE_UUID} (null filter, savedId=${savedChargerId ?? 'none'})`,
+      `[OTA:${profile.target}] reconnect: scan started for service UUID=${profile.serviceUuid} (null filter, savedId=${savedId ?? 'none'})`,
     );
 
     let resolved = false;
@@ -373,55 +490,55 @@ function scanAndReconnect(
         if (error) {
           // Some scan errors are transient (BLE state churn during reboot);
           // log but don't immediately fail — the timeout is the real bound.
-          console.warn('[OTA] reconnect scan error:', error.message);
+          console.warn(`[OTA:${profile.target}] reconnect scan error:`, error.message);
           return;
         }
         if (!device) return;
 
-        // Reject obviously-wrong devices fast (PAO Console is the other BLE
-        // peer in this product — never reconnect to it as the charger).
-        if (device.name === 'PAO Console') return;
+        // Reject obviously-wrong devices fast (the other peer in this
+        // product — never reconnect to that as this target).
+        if (device.name === profile.excludeDeviceName) return;
 
         const advertised = (device.serviceUUIDs ?? []).map(u =>
           u.toLowerCase(),
         );
-        const isCharger =
-          (savedChargerId != null && device.id === savedChargerId) ||
-          advertised.includes(CHARGER_SERVICE_UUID.toLowerCase()) ||
-          device.name?.toLowerCase() === 'pao charger';
+        const isMatch =
+          (savedId != null && device.id === savedId) ||
+          advertised.includes(profile.serviceUuid.toLowerCase()) ||
+          device.name?.toLowerCase() === profile.selfDeviceName;
 
-        if (!isCharger) return;
+        if (!isMatch) return;
 
         console.log(
-          `[OTA] reconnect: device found id=${device.id} name=${device.name}`,
+          `[OTA:${profile.target}] reconnect: device found id=${device.id} name=${device.name}`,
         );
         sharedBleManager.stopDeviceScan();
 
         // Connect via the manager so the store + disconnect handler stay in
-        // sync. We then wire telemetry subscriptions so post-OTA the UI sees
-        // the same data flow it would after a normal AppNavigator connect —
-        // this is the critical fix: without subscriptions the connection
-        // looks healthy but no notifications reach the store.
-        chargerBleManager
+        // sync. We then wire post-connect subscriptions so post-OTA the UI
+        // sees the same data flow it would after a normal AppNavigator
+        // connect — without this the connection looks healthy but no
+        // notifications reach the store.
+        profile.manager
           .connect(device.id)
           .then(() => {
-            console.log(`[OTA] reconnect: connect success id=${device.id}`);
-            chargerBleManager.wirePostConnectSubscriptions();
+            console.log(`[OTA:${profile.target}] reconnect: connect success id=${device.id}`);
+            profile.manager.wirePostConnectSubscriptions?.();
             finish({ok: true, id: device.id});
           })
           .catch(e => {
-            console.log(`[OTA] reconnect: connect failed: ${(e as any)?.message ?? e}`);
+            console.log(`[OTA:${profile.target}] reconnect: connect failed: ${(e as any)?.message ?? e}`);
             finish({ok: false, err: e});
           });
       },
     );
 
     timer = setTimeout(() => {
-      console.log('[OTA] reconnect: scan timed out — handing back to chargerBleManager');
+      console.log(`[OTA:${profile.target}] reconnect: scan timed out — handing back to manager`);
       finish({
         ok: false,
         err: new Error(
-          'Charger did not come back online within 30 seconds.',
+          `${humanTargetName(profile.target)} did not come back online within 30 seconds.`,
         ),
       });
     }, RECONNECT_SCAN_TIMEOUT_MS);
@@ -429,11 +546,14 @@ function scanAndReconnect(
 }
 
 /**
- * Send CMD_OTA_VERIFY and await the VERIFIED notify (or NOT_PENDING — both
- * count as success). Subscribes a one-shot listener on 0xFF27. Errors map to
- * OtaProtocolError.
+ * Send the target's verify cmd and await the VERIFIED notify (or NOT_PENDING
+ * — both count as success). Subscribes a one-shot listener on the target's
+ * status char. Errors map to OtaProtocolError.
  */
-function sendVerifyAndAwait(signal: AbortSignal): Promise<void> {
+function sendVerifyAndAwait(
+  profile: OrchestrationProfile,
+  signal: AbortSignal,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
       return reject(new OtaAbortedError());
@@ -458,7 +578,7 @@ function sendVerifyAndAwait(signal: AbortSignal): Promise<void> {
     signal.addEventListener('abort', onAbort);
 
     try {
-      sub = chargerBleManager.subscribeOtaStatus((code, _bytesReceived) => {
+      sub = profile.manager.subscribeOtaStatus((code, _bytesReceived) => {
         if (resolved) return;
         if (code === OTA_STATUS.VERIFIED || code === OTA_STATUS.NOT_PENDING) {
           resolved = true;
@@ -480,7 +600,7 @@ function sendVerifyAndAwait(signal: AbortSignal): Promise<void> {
       return reject(e);
     }
 
-    chargerBleManager.writeOtaCommand(CMD_OTA_VERIFY).catch(e => {
+    profile.manager.writeOtaCommand(profile.verifyCmd).catch(e => {
       if (resolved) return;
       resolved = true;
       cleanup();
@@ -493,7 +613,7 @@ function sendVerifyAndAwait(signal: AbortSignal): Promise<void> {
       cleanup();
       reject(
         new Error(
-          'Update transferred but verify did not respond. Power-cycle the charger and reconnect — if it reports the new version, all good; if it reports the old version, the rollback fired and the update was undone safely.',
+          `Update transferred but verify did not respond. Power-cycle the ${humanTargetName(profile.target).toLowerCase()} and reconnect — if it reports the new version, all good; if it reports the old version, the rollback fired and the update was undone safely.`,
         ),
       );
     }, VERIFY_TIMEOUT_MS);

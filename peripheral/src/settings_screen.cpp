@@ -314,7 +314,7 @@ void SettingsScreen::drawCalibScreen(TFT_eSprite* sprite) {
     }
 }
 
-void SettingsScreen::display(TFT_eSprite* sprite, Arduino_ST7701_RGBPanel* gfx) {
+void SettingsScreen::display(TFT_eSprite* sprite, Arduino_RGB_Display* gfx) {
     if (calibMode != CALIB_NONE) {
         sprite->fillSprite(TFT_BLACK);
         GlobalState &state = GlobalState::getInstance();

@@ -10,7 +10,11 @@ void CanHandler::setup()
 {
     while (CAN_OK != CAN.begin(16)) // TODO move to config
     {
-        SERIAL_PORT_MONITOR.println("CAN init fail, retry...");
+        // ESP32 Arduino core does not expose the SERIAL_PORT_MONITOR macro
+        // that the SAMD core provided; use Serial directly. Behaviour
+        // unchanged — both resolved to the USB CDC monitor on the prior
+        // SAMD21 Feather M0 Express target.
+        Serial.println("CAN init fail, retry...");
         delay(200);
     }
 }
@@ -133,15 +137,29 @@ void CanHandler::handle_23B(CAN_FRAME *frame, State::Data *data)
 {
         uint8_t speedActual = abs(((frame->data.bytes[0] * 256) + frame->data.bytes[1]) - 20000);
         uint8_t reportedState = (frame->data.bytes[6] >> 4);
-        
-        enum State {
+
+        // The ESP32 Arduino core defines `DISABLED`, `ENABLE` etc. as
+        // preprocessor macros for pinMode() values, which collide with the
+        // bare enumerator names previously used here. We undef them for the
+        // scope of this function so the local enum can keep the same
+        // values/semantics it had on SAMD21 (no behaviour change).
+        #pragma push_macro("DISABLED")
+        #pragma push_macro("STANDBY")
+        #pragma push_macro("ENABLE")
+        #pragma push_macro("POWERDOWN")
+        #undef DISABLED
+        #undef STANDBY
+        #undef ENABLE
+        #undef POWERDOWN
+
+        enum MotorState {
             DISABLED = 0,
             STANDBY = 1,
             ENABLE = 2,
             POWERDOWN = 3
         };
 
-        State actualState = DISABLED;
+        MotorState actualState = DISABLED;
         bool faulted = false;
         bool ready;
 
@@ -193,6 +211,12 @@ void CanHandler::handle_23B(CAN_FRAME *frame, State::Data *data)
         data->resState = actualState;
         data->isFaulted = faulted;
         data->isReady = ready;
+
+        // Restore the pinMode macros for the rest of the translation unit.
+        #pragma pop_macro("DISABLED")
+        #pragma pop_macro("STANDBY")
+        #pragma pop_macro("ENABLE")
+        #pragma pop_macro("POWERDOWN")
 }
 
 void CanHandler::handle_650(CAN_FRAME *frame, State::Data *data)
