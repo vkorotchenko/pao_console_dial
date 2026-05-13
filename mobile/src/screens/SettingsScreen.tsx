@@ -38,7 +38,8 @@ import {
   openInstallPermissionSettings,
 } from '../services/apkInstaller';
 import {flashChargerFirmware, flashFirmware} from '../services/otaOrchestrator';
-import {compare, formatVersion, parse} from '../services/semver';
+import {formatVersion} from '../services/semver';
+import {computeUpdateOffer} from '../services/updateOffer';
 import _ScreenBrightness from 'react-native-screen-brightness';
 import {activateKeepAwake, deactivateKeepAwake} from '../utils/keepAwake';
 import {PageHeader} from '../components/PageHeader';
@@ -374,40 +375,14 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       return;
     }
     const s = useAppStore.getState();
-    const fw = s.chargerFirmwareVersion;
-    const latest = s.ota.charger.latestRelease.version;
-
-    // Note: the "no running firmware version" branch is unreachable here
-    // because the Check button is gated on charger BLE connection. If we
-    // can't talk to the charger, we never reach this handler. The
-    // "unrecognized version string" branch below is still reachable —
-    // charger may be connected but reporting a garbage version.
-    if (fw && !parse(fw)) {
-      Alert.alert(
-        "Couldn't determine running firmware",
-        `The charger reported an unrecognized firmware version (${fw}). Please reconnect or reflash.`,
-      );
-      return;
-    }
-    if (!latest) {
+    const offer = computeUpdateOffer(s.chargerFirmwareVersion, s.ota.charger.latestRelease.version);
+    if (offer.kind === 'none') {
       Alert.alert('No releases available yet', 'No published charger firmware release was found.');
       return;
     }
-    // `fw` defensively guarded: the button is gated on charger BLE connection
-    // so `fw` should be present when we get here. If for some reason it isn't,
-    // we silently no-op rather than alert — the "Last checked" timestamp still
-    // updated via `checkForChargerUpdate`, and the red dot will appear if a
-    // newer release exists once a running version becomes known.
-    if (fw && compare(latest, fw) === 1) {
-      // Newer release exists — red dot + contextual button already convey it.
-      return;
-    }
-    // Up-to-date (latest <= running) → silent. The Firmware tab already
-    // shows "vX.Y.Z" + "Latest available: vX.Y.Z" right there on the
-    // charger-firmware row, so a modal alert would be redundant. The "Last checked: just
-    // now" line updates via `latestReleaseCheckedAt` (touched inside
-    // `checkForChargerUpdate`) so the user still gets feedback. Network /
-    // unknown-version / no-release error branches above continue to alert.
+    // 'update' and 'unknown-current' — red dot + contextual button already
+    // communicate the actionable state; no alert needed. 'up-to-date' → silent.
+    // Network / parse error branches above continue to alert.
   };
 
   // ── OTA flash flow handlers (consolidated into Settings) ────────────────
@@ -516,27 +491,13 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       return;
     }
     const s = useAppStore.getState();
-    const fw = s.dialFirmwareVersion;
-    const latest = s.ota.dial.latestRelease.version;
-
-    if (fw && !parse(fw)) {
-      Alert.alert(
-        "Couldn't determine running firmware",
-        `The dial reported an unrecognized firmware version (${fw}). Please reconnect or reflash.`,
-      );
-      return;
-    }
-    if (!latest) {
+    const offer = computeUpdateOffer(s.dialFirmwareVersion, s.ota.dial.latestRelease.version);
+    if (offer.kind === 'none') {
       Alert.alert('No releases available yet', 'No published dial firmware release was found.');
       return;
     }
-    if (fw && compare(latest, fw) === 1) {
-      // Newer release exists — red dot + contextual button already convey it.
-      return;
-    }
-    // Up-to-date → silent. The Firmware tab already shows the comparison
-    // inline; a modal alert would be redundant. Network / unknown-version /
-    // no-release error branches above continue to alert.
+    // 'update' and 'unknown-current' — contextual button already surfaces the
+    // install affordance. 'up-to-date' → silent.
   };
 
   const onDialUpdateRequest = () => {
@@ -602,24 +563,13 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       return;
     }
     const s = useAppStore.getState();
-    const fw = s.controllerFirmwareVersion;
-    const latest = s.ota.controller.latestRelease.version;
-
-    if (fw && !parse(fw)) {
-      Alert.alert(
-        "Couldn't determine running firmware",
-        `The controller reported an unrecognized firmware version (${fw}). Please reconnect or reflash.`,
-      );
-      return;
-    }
-    if (!latest) {
+    const offer = computeUpdateOffer(s.controllerFirmwareVersion, s.ota.controller.latestRelease.version);
+    if (offer.kind === 'none') {
       Alert.alert('No releases available yet', 'No published controller firmware release was found.');
       return;
     }
-    if (fw && compare(latest, fw) === 1) {
-      // Newer release exists — red dot + contextual button already convey it.
-      return;
-    }
+    // 'update' and 'unknown-current' — contextual button already surfaces the
+    // install affordance. 'up-to-date' → silent.
   };
 
   const onControllerUpdateRequest = () => {
@@ -701,22 +651,19 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     };
   }, []);
 
-  // Pre-compute the firmware section state so the JSX below stays readable.
-  const hasUpdateAvailable = (() => {
-    if (!chargerFirmwareVersion || !latestReleaseVersion) return false;
-    if (!parse(chargerFirmwareVersion)) return false;
-    return compare(latestReleaseVersion, chargerFirmwareVersion) === 1;
-  })();
+  // Pre-compute UpdateOffer for all four targets so the JSX below stays readable.
+  // Using computeUpdateOffer instead of bare booleans means null/unknown current
+  // version now yields 'unknown-current' (install affordance) rather than hiding
+  // the install button entirely — this is the bootstrap fix (Decision inbox entry
+  // milhouse-unknown-current-version-install-offer).
+  const chargerOffer = computeUpdateOffer(chargerFirmwareVersion, latestReleaseVersion);
+  const hasUpdateAvailable = chargerOffer.kind === 'update';
 
-  // Same idea for the App section. We need both the running app version AND
-  // a fetched latest release; if either is missing we can't compare. parse()
-  // is the guard against weird native build outputs (alpha/beta tags that
-  // don't fit X.Y.Z).
-  const hasAppUpdateAvailable = (() => {
-    if (!appVersion || !latestAppReleaseVersion) return false;
-    if (!parse(appVersion)) return false;
-    return compare(latestAppReleaseVersion, appVersion) === 1;
-  })();
+  // Same structure for the App section. parse() guards against weird native
+  // build outputs (alpha/beta tags that don't fit X.Y.Z) are now inside
+  // computeUpdateOffer, so we don't need to duplicate them here.
+  const appOffer = computeUpdateOffer(appVersion, latestAppReleaseVersion);
+  const hasAppUpdateAvailable = appOffer.kind === 'update';
   const isAppCheckInFlight = appUpdateState === 'checking';
 
   // Forced GitHub release check used by the App section's contextual button.
@@ -734,35 +681,14 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       appVersion: running,
       latestAppReleaseVersion: latest,
     } = useAppStore.getState();
-
-    if (!running) {
-      Alert.alert(
-        "Couldn't determine running app version",
-        'Restart the app and try again.',
-      );
-      return;
-    }
-    if (!parse(running)) {
-      Alert.alert(
-        "Couldn't determine running app version",
-        `The app reported an unrecognized version (${running}).`,
-      );
-      return;
-    }
-    if (!latest) {
+    const offer = computeUpdateOffer(running, latest);
+    if (offer.kind === 'none') {
       Alert.alert('No releases available yet', 'No published app release was found.');
       return;
     }
-    if (compare(latest, running) === 1) {
-      // Newer release exists — red dot + contextual button already convey it.
-      return;
-    }
-    // Up-to-date (latest <= running) → silent. The Firmware tab already
-    // shows "Mobile App: vX.Y.Z" and "Latest available: vX.Y.Z" right
-    // there, so a modal alert would be redundant. The "Last checked: just
-    // now" line updates via `latestAppReleaseCheckedAt` (touched inside
-    // `checkForMobileUpdate`) so the user still gets feedback. Network /
-    // unknown-version / no-release error branches above continue to alert.
+    // 'update' and 'unknown-current' — contextual button already surfaces the
+    // install affordance. 'up-to-date' → silent. Network / parse-error branches
+    // above continue to alert.
   };
 
   // Real install flow. On tap:
@@ -922,8 +848,11 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       return appUpdateState === 'downloading' ? 'Cancel' : '…';
     }
     if (appUpdateState === 'error') return 'Try again';
-    if (hasAppUpdateAvailable && latestAppReleaseVersion) {
-      return `Update to ${formatVersion(latestAppReleaseVersion)}`;
+    if (appOffer.kind === 'update') {
+      return `Update to ${formatVersion(appOffer.latest)}`;
+    }
+    if (appOffer.kind === 'unknown-current') {
+      return `Install latest`;
     }
     return 'Check for updates';
   })();
@@ -935,12 +864,23 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       onAppUpdateCancel();
       return;
     }
-    if (appUpdateState === 'error' && hasAppUpdateAvailable) {
+    if (appUpdateState === 'error' && (hasAppUpdateAvailable || appOffer.kind === 'unknown-current')) {
       onAppUpdateRequest();
       return;
     }
     if (hasAppUpdateAvailable) {
       onAppUpdateRequest();
+      return;
+    }
+    if (appOffer.kind === 'unknown-current') {
+      Alert.alert(
+        `Install ${formatVersion(appOffer.latest)}?`,
+        `The running version of this app could not be read.\n\nInstalling the latest release may fail if the app build is incompatible. Continue?`,
+        [
+          {text: 'Cancel', style: 'cancel'},
+          {text: 'Install anyway', onPress: onAppUpdateRequest},
+        ],
+      );
       return;
     }
     handleCheckForAppUpdates();
@@ -1025,8 +965,11 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     if (otaState === 'error') {
       return 'Try again';
     }
-    if (hasUpdateAvailable && latestReleaseVersion) {
-      return `Update to ${formatVersion(latestReleaseVersion)}`;
+    if (chargerOffer.kind === 'update') {
+      return `Update to ${formatVersion(chargerOffer.latest)}`;
+    }
+    if (chargerOffer.kind === 'unknown-current') {
+      return 'Install latest';
     }
     return 'Check for updates';
   })();
@@ -1037,7 +980,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       onUpdateCancel();
       return;
     }
-    if (otaState === 'error' && hasUpdateAvailable) {
+    if (otaState === 'error' && (hasUpdateAvailable || chargerOffer.kind === 'unknown-current')) {
       // Retry the install path.
       onUpdateRequest();
       return;
@@ -1046,15 +989,23 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       onUpdateRequest();
       return;
     }
+    if (chargerOffer.kind === 'unknown-current') {
+      Alert.alert(
+        `Install ${formatVersion(chargerOffer.latest)}?`,
+        `The running version on this charger could not be read.\n\nInstalling the latest release may fail if the charger doesn't support over-the-air updates yet. For a freshly-acquired charger, a USB flash is required for the first deploy.\n\nContinue?`,
+        [
+          {text: 'Cancel', style: 'cancel'},
+          {text: 'Install anyway', onPress: onUpdateRequest},
+        ],
+      );
+      return;
+    }
     handleCheckForUpdates();
   };
 
   // ── Dial OTA derivations — mirror the charger block above ──────────────
-  const hasDialUpdateAvailable = (() => {
-    if (!dialFirmwareVersion || !dialLatestReleaseVersion) return false;
-    if (!parse(dialFirmwareVersion)) return false;
-    return compare(dialLatestReleaseVersion, dialFirmwareVersion) === 1;
-  })();
+  const dialOffer = computeUpdateOffer(dialFirmwareVersion, dialLatestReleaseVersion);
+  const hasDialUpdateAvailable = dialOffer.kind === 'update';
 
   const isDialOtaInFlight =
     dialOtaState === 'checking' ||
@@ -1109,8 +1060,11 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     if (dialOtaState === 'error') {
       return 'Try again';
     }
-    if (hasDialUpdateAvailable && dialLatestReleaseVersion) {
-      return `Update to ${formatVersion(dialLatestReleaseVersion)}`;
+    if (dialOffer.kind === 'update') {
+      return `Update to ${formatVersion(dialOffer.latest)}`;
+    }
+    if (dialOffer.kind === 'unknown-current') {
+      return 'Install latest';
     }
     return 'Check for updates';
   })();
@@ -1120,7 +1074,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       onDialUpdateCancel();
       return;
     }
-    if (dialOtaState === 'error' && hasDialUpdateAvailable) {
+    if (dialOtaState === 'error' && (hasDialUpdateAvailable || dialOffer.kind === 'unknown-current')) {
       onDialUpdateRequest();
       return;
     }
@@ -1128,15 +1082,23 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       onDialUpdateRequest();
       return;
     }
+    if (dialOffer.kind === 'unknown-current') {
+      Alert.alert(
+        `Install ${formatVersion(dialOffer.latest)}?`,
+        `The running version on this dial could not be read.\n\nInstalling the latest release may fail if the dial doesn't support over-the-air updates yet. For a freshly-acquired dial, a USB flash is required for the first deploy.\n\nContinue?`,
+        [
+          {text: 'Cancel', style: 'cancel'},
+          {text: 'Install anyway', onPress: onDialUpdateRequest},
+        ],
+      );
+      return;
+    }
     handleCheckForDialUpdates();
   };
 
   // ── Controller OTA derivations — mirror the dial block above ──────────────
-  const hasControllerUpdateAvailable = (() => {
-    if (!controllerFirmwareVersion || !controllerLatestReleaseVersion) return false;
-    if (!parse(controllerFirmwareVersion)) return false;
-    return compare(controllerLatestReleaseVersion, controllerFirmwareVersion) === 1;
-  })();
+  const controllerOffer = computeUpdateOffer(controllerFirmwareVersion, controllerLatestReleaseVersion);
+  const hasControllerUpdateAvailable = controllerOffer.kind === 'update';
 
   const isControllerOtaInFlight =
     controllerOtaState === 'checking' ||
@@ -1191,8 +1153,11 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     if (controllerOtaState === 'error') {
       return 'Try again';
     }
-    if (hasControllerUpdateAvailable && controllerLatestReleaseVersion) {
-      return `Update to ${formatVersion(controllerLatestReleaseVersion)}`;
+    if (controllerOffer.kind === 'update') {
+      return `Update to ${formatVersion(controllerOffer.latest)}`;
+    }
+    if (controllerOffer.kind === 'unknown-current') {
+      return 'Install latest';
     }
     return 'Check for updates';
   })();
@@ -1202,12 +1167,23 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       onControllerUpdateCancel();
       return;
     }
-    if (controllerOtaState === 'error' && hasControllerUpdateAvailable) {
+    if (controllerOtaState === 'error' && (hasControllerUpdateAvailable || controllerOffer.kind === 'unknown-current')) {
       onControllerUpdateRequest();
       return;
     }
     if (hasControllerUpdateAvailable) {
       onControllerUpdateRequest();
+      return;
+    }
+    if (controllerOffer.kind === 'unknown-current') {
+      Alert.alert(
+        `Install ${formatVersion(controllerOffer.latest)}?`,
+        `The running version on this controller could not be read.\n\nInstalling the latest release may fail if the controller doesn't support over-the-air updates yet. For a freshly-acquired controller, a USB flash is required for the first deploy.\n\nContinue?`,
+        [
+          {text: 'Cancel', style: 'cancel'},
+          {text: 'Install anyway', onPress: onControllerUpdateRequest},
+        ],
+      );
       return;
     }
     handleCheckForControllerUpdates();
@@ -1462,7 +1438,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
                 color="#5BA8C4"
               />
             </TouchableOpacity>
-            {hasAppUpdateAvailable && latestAppReleaseVersion ? (
+            {(hasAppUpdateAvailable || appOffer.kind === 'unknown-current') && latestAppReleaseVersion ? (
               <Text style={styles.fwHint}>
                 Latest available: {formatVersion(latestAppReleaseVersion)}
               </Text>
@@ -1470,12 +1446,16 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
           </View>
           <View style={styles.fwVersionRow}>
             <Text style={styles.value}>
-              {appVersion ? `v${appVersion}` : '—'}
+              {appOffer.kind === 'unknown-current'
+                ? 'Unknown'
+                : appVersion
+                  ? `v${appVersion}`
+                  : '—'}
             </Text>
-            {hasAppUpdateAvailable ? (
+            {hasAppUpdateAvailable || appOffer.kind === 'unknown-current' ? (
               <View
                 style={styles.updateDot}
-                accessibilityLabel="App update available"
+                accessibilityLabel={appOffer.kind === 'unknown-current' ? 'Install available' : 'App update available'}
               />
             ) : null}
           </View>
@@ -1578,14 +1558,16 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
           </View>
           <View style={styles.fwVersionRow}>
             <Text style={styles.value}>
-              {chargerFirmwareVersion
-                ? formatVersion(chargerFirmwareVersion)
-                : '—'}
+              {chargerOffer.kind === 'unknown-current'
+                ? 'Unknown'
+                : chargerFirmwareVersion
+                  ? formatVersion(chargerFirmwareVersion)
+                  : '—'}
             </Text>
-            {hasUpdateAvailable ? (
+            {hasUpdateAvailable || chargerOffer.kind === 'unknown-current' ? (
               <View
                 style={styles.updateDot}
-                accessibilityLabel="Update available"
+                accessibilityLabel={chargerOffer.kind === 'unknown-current' ? 'Install available' : 'Update available'}
               />
             ) : null}
           </View>
@@ -1675,11 +1657,16 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
             </View>
             <Text style={styles.fwHint}>
               {chargerBleStatus !== 'connected'
-                ? hasUpdateAvailable
+                ? hasUpdateAvailable || chargerOffer.kind === 'unknown-current'
                   ? 'Connect to the charger to install the update'
                   : 'Connect to the charger to check for updates'
                 : `Last checked: ${formatRelative(now, latestReleaseCheckedAt)}`}
             </Text>
+            {chargerOffer.kind === 'unknown-current' && chargerBleStatus === 'connected' ? (
+              <Text style={styles.fwHint}>
+                Install may fail if device firmware predates OTA support — USB flash required for first deploy.
+              </Text>
+            ) : null}
           </View>
         )}
       </View>
@@ -1699,14 +1686,16 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
           </View>
           <View style={styles.fwVersionRow}>
             <Text style={styles.value}>
-              {dialFirmwareVersion
-                ? formatVersion(dialFirmwareVersion)
-                : '—'}
+              {dialOffer.kind === 'unknown-current'
+                ? 'Unknown'
+                : dialFirmwareVersion
+                  ? formatVersion(dialFirmwareVersion)
+                  : '—'}
             </Text>
-            {hasDialUpdateAvailable ? (
+            {hasDialUpdateAvailable || dialOffer.kind === 'unknown-current' ? (
               <View
                 style={styles.updateDot}
-                accessibilityLabel="Update available"
+                accessibilityLabel={dialOffer.kind === 'unknown-current' ? 'Install available' : 'Update available'}
               />
             ) : null}
           </View>
@@ -1796,11 +1785,16 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
             </View>
             <Text style={styles.fwHint}>
               {bleStatus !== 'connected'
-                ? hasDialUpdateAvailable
+                ? hasDialUpdateAvailable || dialOffer.kind === 'unknown-current'
                   ? 'Connect to the dial to install the update'
                   : 'Connect to the dial to check for updates'
                 : `Last checked: ${formatRelative(now, dialLatestReleaseCheckedAt)}`}
             </Text>
+            {dialOffer.kind === 'unknown-current' && bleStatus === 'connected' ? (
+              <Text style={styles.fwHint}>
+                Install may fail if device firmware predates OTA support — USB flash required for first deploy.
+              </Text>
+            ) : null}
           </View>
         )}
       </View>
@@ -1821,14 +1815,16 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
           </View>
           <View style={styles.fwVersionRow}>
             <Text style={styles.value}>
-              {controllerFirmwareVersion
-                ? formatVersion(controllerFirmwareVersion)
-                : '—'}
+              {controllerOffer.kind === 'unknown-current'
+                ? 'Unknown'
+                : controllerFirmwareVersion
+                  ? formatVersion(controllerFirmwareVersion)
+                  : '—'}
             </Text>
-            {hasControllerUpdateAvailable ? (
+            {hasControllerUpdateAvailable || controllerOffer.kind === 'unknown-current' ? (
               <View
                 style={styles.updateDot}
-                accessibilityLabel="Update available"
+                accessibilityLabel={controllerOffer.kind === 'unknown-current' ? 'Install available' : 'Update available'}
               />
             ) : null}
           </View>
@@ -1916,11 +1912,16 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
             </View>
             <Text style={styles.fwHint}>
               {controllerBleStatus !== 'connected'
-                ? hasControllerUpdateAvailable
+                ? hasControllerUpdateAvailable || controllerOffer.kind === 'unknown-current'
                   ? 'Connect to the controller to install the update'
                   : 'Connect to the controller to check for updates'
                 : `Last checked: ${formatRelative(now, controllerLatestReleaseCheckedAt)}`}
             </Text>
+            {controllerOffer.kind === 'unknown-current' && controllerBleStatus === 'connected' ? (
+              <Text style={styles.fwHint}>
+                Install may fail if device firmware predates OTA support — USB flash required for first deploy.
+              </Text>
+            ) : null}
           </View>
         )}
       </View>
