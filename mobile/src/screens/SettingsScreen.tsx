@@ -19,6 +19,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useAppStore} from '../store/useAppStore';
 import {paoBleManager} from '../ble/PaoBleManager';
 import {chargerBleManager} from '../ble/ChargerBleManager';
+import {controllerBleManager, CONTROLLER_DEVICE_ID_KEY} from '../ble/ControllerBleManager';
 import {requestBlePermissions} from '../utils/permissions';
 import {
   checkForChargerUpdate,
@@ -114,10 +115,15 @@ function formatRelative(now: number, then: number | null): string {
 // Each tab mounts its own ScrollView so long tabs (Charging in particular,
 // which holds Charging + Notifications) scroll independently and tab swaps
 // reset scroll position cleanly.
+//
+// Tab keys stay as historical names ('display') even though the user-facing
+// label is now 'General' — this avoids any persistence/migration churn for
+// the AppNavigator → SettingsScreen `initialTab` plumbing. Only the label
+// in the TABS array (and TabBar render) changed.
 type SettingsTab = 'bluetooth' | 'charging' | 'firmware' | 'display';
 
 const TABS: ReadonlyArray<{key: SettingsTab; label: string}> = [
-  {key: 'display', label: 'Display'},
+  {key: 'display', label: 'General'},
   {key: 'charging', label: 'Charging'},
   {key: 'bluetooth', label: 'Bluetooth'},
   {key: 'firmware', label: 'Firmware'},
@@ -149,6 +155,13 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   const setChargeTimeWarnMinutes = useAppStore(state => state.setChargeTimeWarnMinutes);
   const socWarnThresholdPct = useAppStore(state => state.socWarnThresholdPct);
   const setSocWarnThresholdPct = useAppStore(state => state.setSocWarnThresholdPct);
+  // Optional peripheral toggles. When false, all dial-/charger-associated UI
+  // surface hides — Settings cards, navigator screens, status indicators.
+  // Both default `true` so existing installs see no change on first launch.
+  const dialEnabled = useAppStore(state => state.dialEnabled);
+  const setDialEnabled = useAppStore(state => state.setDialEnabled);
+  const chargerEnabled = useAppStore(state => state.chargerEnabled);
+  const setChargerEnabled = useAppStore(state => state.setChargerEnabled);
   const chargerFirmwareVersion = useAppStore(state => state.chargerFirmwareVersion);
   // Per-target OTA selectors. Charger + dial both wired in Stream 2 —
   // controller UI lands in Stream 3 once Bart's controller OTA chars ship.
@@ -190,6 +203,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   // Mirrors the dial selectors above. Controller is OTA-only (no telemetry
   // on BLE) so there are no chargerData equivalents — just version + OTA state.
   const controllerBleStatus = useAppStore(state => state.controllerBleStatus);
+  const controllerDeviceId = useAppStore(state => state.controllerDeviceId);
   const controllerFirmwareVersion = useAppStore(
     state => state.controllerFirmwareVersion,
   );
@@ -282,6 +296,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
 
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [isRequestingChargerPermission, setIsRequestingChargerPermission] = useState(false);
+  const [isRequestingControllerPermission, setIsRequestingControllerPermission] = useState(false);
 
   // Peripheral BLE helpers
   const canDisconnect =
@@ -308,6 +323,31 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       : chargerBleStatus === 'scanning' || chargerBleStatus === 'connecting'
       ? '#FFC107'
       : '#F44336';
+
+  // Controller BLE helpers — same shape as the charger block above. Controller
+  // is unconditional in the UI (no enable toggle), so this drives both the
+  // BT-tab row and the inline status pill on the Firmware tab.
+  const canDisconnectController =
+    controllerBleStatus === 'connected' ||
+    controllerBleStatus === 'connecting' ||
+    controllerBleStatus === 'scanning';
+  const isScanningController = controllerBleStatus === 'scanning';
+
+  const controllerStatusColor =
+    controllerBleStatus === 'connected'
+      ? '#4cff91'
+      : controllerBleStatus === 'scanning' || controllerBleStatus === 'connecting'
+      ? '#FFC107'
+      : '#F44336';
+
+  const controllerStatusLabel =
+    controllerBleStatus === 'connected'
+      ? 'Connected'
+      : controllerBleStatus === 'scanning'
+      ? 'Scanning…'
+      : controllerBleStatus === 'connecting'
+      ? 'Connecting…'
+      : 'Disconnected';
 
   const handleScan = async () => {
     setIsRequestingPermission(true);
@@ -362,6 +402,37 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     chargerBleManager.disconnect();
     setChargerData(null);
     AsyncStorage.removeItem(CHARGER_DEVICE_ID_KEY).catch(() => {});
+  };
+
+  const handleScanController = async () => {
+    setIsRequestingControllerPermission(true);
+    let granted = false;
+    try {
+      granted = await requestBlePermissions();
+    } finally {
+      setIsRequestingControllerPermission(false);
+    }
+
+    if (!granted) {
+      Alert.alert(
+        'Bluetooth Permission Required',
+        'Please grant Bluetooth permissions to connect to the controller.',
+        [{text: 'OK'}],
+      );
+      return;
+    }
+
+    // Hand off to the unified scan in AppNavigator. Flipping status to
+    // 'disconnected' is a no-op when already disconnected, but the
+    // scanTrigger bump forces the effect to re-run regardless.
+    useAppStore.getState().setControllerBleStatus('disconnected');
+    useAppStore.getState().incrementScanTrigger();
+  };
+
+  const handleDisconnectController = () => {
+    controllerBleManager.disconnect();
+    AsyncStorage.removeItem(CONTROLLER_DEVICE_ID_KEY).catch(() => {});
+    useAppStore.getState().setControllerDeviceId(null);
   };
 
   // Forced GitHub release check used by the contextual Firmware button when
@@ -1246,38 +1317,83 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
           </View>
         </View>
 
-        <View style={styles.divider} />
+        {/* Charger BLE row — hidden when chargerEnabled is OFF.
+            Wrapped together with the preceding divider so the Peripheral
+            row doesn't leave a dangling separator when charger is hidden. */}
+        {chargerEnabled ? (
+          <>
+            <View style={styles.divider} />
+            <View style={styles.bleRow}>
+              <View style={styles.bleRowLeft}>
+                <Text style={styles.label}>Charger</Text>
+                {chargerDeviceId ? (
+                  <Text style={styles.hint} numberOfLines={1}>{chargerDeviceId}</Text>
+                ) : null}
+              </View>
+              <View style={styles.bleRowRight}>
+                <View style={styles.statusIndicator}>
+                  {(isScanningCharger || isRequestingChargerPermission) ? (
+                    <ActivityIndicator size="small" color="#FFC107" />
+                  ) : (
+                    <View style={[styles.statusDot, {backgroundColor: chargerStatusColor}]} />
+                  )}
+                </View>
+                {canDisconnectCharger ? (
+                  <Button
+                    mode="outlined"
+                    onPress={handleDisconnectCharger}
+                    style={styles.bleButton}>
+                    Disconnect
+                  </Button>
+                ) : (
+                  <Button
+                    mode="contained"
+                    onPress={handleScanCharger}
+                    disabled={isScanningCharger || isRequestingChargerPermission}
+                    style={styles.bleButton}>
+                    {isScanningCharger || isRequestingChargerPermission ? 'Scanning…' : 'Connect'}
+                  </Button>
+                )}
+              </View>
+            </View>
+          </>
+        ) : null}
 
-        {/* Charger */}
+        {/* Controller BLE row — unconditional. The controller is always part
+            of the system (no enable toggle like dial/charger); BLE is only
+            used for OTA, but exposing the row gives users a manual recovery
+            path when auto-reconnect is stuck and a visible status indicator
+            without having to switch to the Firmware tab. */}
+        <View style={styles.divider} />
         <View style={styles.bleRow}>
           <View style={styles.bleRowLeft}>
-            <Text style={styles.label}>Charger</Text>
-            {chargerDeviceId ? (
-              <Text style={styles.hint} numberOfLines={1}>{chargerDeviceId}</Text>
+            <Text style={styles.label}>Controller</Text>
+            {controllerDeviceId ? (
+              <Text style={styles.hint} numberOfLines={1}>{controllerDeviceId}</Text>
             ) : null}
           </View>
           <View style={styles.bleRowRight}>
             <View style={styles.statusIndicator}>
-              {(isScanningCharger || isRequestingChargerPermission) ? (
+              {(isScanningController || isRequestingControllerPermission) ? (
                 <ActivityIndicator size="small" color="#FFC107" />
               ) : (
-                <View style={[styles.statusDot, {backgroundColor: chargerStatusColor}]} />
+                <View style={[styles.statusDot, {backgroundColor: controllerStatusColor}]} />
               )}
             </View>
-            {canDisconnectCharger ? (
+            {canDisconnectController ? (
               <Button
                 mode="outlined"
-                onPress={handleDisconnectCharger}
+                onPress={handleDisconnectController}
                 style={styles.bleButton}>
                 Disconnect
               </Button>
             ) : (
               <Button
                 mode="contained"
-                onPress={handleScanCharger}
-                disabled={isScanningCharger || isRequestingChargerPermission}
+                onPress={handleScanController}
+                disabled={isScanningController || isRequestingControllerPermission}
                 style={styles.bleButton}>
-                {isScanningCharger || isRequestingChargerPermission ? 'Scanning…' : 'Connect'}
+                {isScanningController || isRequestingControllerPermission ? 'Scanning…' : 'Connect'}
               </Button>
             )}
           </View>
@@ -1529,6 +1645,8 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
         )}
       </View>
 
+      {/* Charger firmware card — hidden when chargerEnabled is OFF. */}
+      {chargerEnabled ? (
       <View style={styles.card}>
         <View style={styles.row}>
           <View style={styles.fwTitleRow}>
@@ -1670,7 +1788,10 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
           </View>
         )}
       </View>
+      ) : null}
 
+      {/* Dial firmware card — hidden when dialEnabled is OFF. */}
+      {dialEnabled ? (
       <View style={styles.card}>
         <View style={styles.row}>
           <View style={styles.fwTitleRow}>
@@ -1798,6 +1919,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
           </View>
         )}
       </View>
+      ) : null}
 
       {/* Controller firmware row — mirrors the Dial row above. Controller is
           OTA-only on BLE; telemetry routes through the dial. The button is
@@ -1806,7 +1928,23 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       <View style={styles.card}>
         <View style={styles.row}>
           <View style={styles.fwTitleRow}>
-            <Text style={styles.fwRowTitle}>Controller</Text>
+            <View style={styles.fwTitleHeader}>
+              <Text style={styles.fwRowTitle}>Controller</Text>
+              {/* Inline status pill — same color mapping as the Bluetooth-tab
+                  dot. The Firmware card is busier than the BT row, so we
+                  pair the dot with a short label for at-a-glance clarity
+                  ("Connected" / "Scanning…" / "Disconnected"). Lets the user
+                  see why the Install button is disabled without tab-hopping. */}
+              <View style={styles.fwStatusPill}>
+                <View
+                  style={[
+                    styles.fwStatusDot,
+                    {backgroundColor: controllerStatusColor},
+                  ]}
+                />
+                <Text style={styles.fwStatusLabel}>{controllerStatusLabel}</Text>
+              </View>
+            </View>
             {controllerLatestReleaseVersion ? (
               <Text style={styles.fwHint}>
                 Latest available: {formatVersion(controllerLatestReleaseVersion)}
@@ -1930,6 +2068,39 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
 
   const renderDisplayTab = () => (
     <>
+      {/* Optional Peripherals Section — controls which of the two optional
+          BLE peripherals (dial OTA target, charger) have UI exposed. Both
+          default ON; explicit OFF hides all associated surface area
+          (settings tabs/cards, navigator screens, status indicators) and
+          gates the auto-connect logic. BLE plumbing (managers, store slices)
+          is intentionally NOT torn down — re-enabling is cheap. */}
+      <Text style={styles.sectionHeader}>Optional Peripherals</Text>
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>Enable Dial</Text>
+            <Text style={styles.hint}>Show dial firmware update UI</Text>
+          </View>
+          <Switch
+            value={dialEnabled}
+            onValueChange={setDialEnabled}
+            color="#00C853"
+          />
+        </View>
+        <View style={styles.divider} />
+        <View style={styles.row}>
+          <View style={styles.rowText}>
+            <Text style={styles.label}>Enable Charger</Text>
+            <Text style={styles.hint}>Show charger tab, screen, and firmware UI</Text>
+          </View>
+          <Switch
+            value={chargerEnabled}
+            onValueChange={setChargerEnabled}
+            color="#00C853"
+          />
+        </View>
+      </View>
+
       {/* Display Section */}
       <Text style={styles.sectionHeader}>Display</Text>
       <View style={styles.card}>
@@ -2246,6 +2417,34 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#E0E0E0',
     fontWeight: '600',
+  },
+  // Wrapper that keeps the Controller title and its inline status pill on a
+  // single horizontal line within the wrap-friendly fwTitleRow. Width 100%
+  // forces the existing fwHint ("Latest available: …") to wrap below.
+  fwTitleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+  },
+  // Compact status indicator paired with the Firmware-tab "Controller" title.
+  // Mirrors the BT-tab dot color but adds a label so the firmware card —
+  // which is busier than a plain BT row — communicates connection state at
+  // a glance without forcing a tab switch.
+  fwStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  fwStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  fwStatusLabel: {
+    fontSize: 12,
+    color: '#9E9E9E',
+    fontWeight: '500',
   },
   infoIcon: {
     marginLeft: 6,

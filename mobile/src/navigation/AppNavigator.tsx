@@ -14,7 +14,7 @@ import {FloatingIcons} from '../components/FloatingIcons';
 import {useAppStore} from '../store/useAppStore';
 import {paoBleManager, PAO_SERVICE_UUID} from '../ble/PaoBleManager';
 import {chargerBleManager, CHARGER_SERVICE_UUID} from '../ble/ChargerBleManager';
-import {controllerBleManager, CONTROLLER_SERVICE_UUID} from '../ble/ControllerBleManager';
+import {controllerBleManager, CONTROLLER_SERVICE_UUID, CONTROLLER_DEVICE_ID_KEY} from '../ble/ControllerBleManager';
 import {sharedBleManager} from '../ble/bleInstance';
 import {ChargerDirectData} from '../types';
 import {requestBlePermissions} from '../utils/permissions';
@@ -39,7 +39,7 @@ const BACKOFF_BASE_MS = 1_000;
 const DIRECT_CONNECT_TIMEOUT_MS = 5_000;
 const PAO_DEVICE_ID_KEY = 'pao_device_id';
 const CHARGER_DEVICE_ID_KEY = 'charger_device_id';
-const CONTROLLER_DEVICE_ID_KEY = 'controller_device_id';
+// CONTROLLER_DEVICE_ID_KEY is owned by ControllerBleManager (single source of truth).
 
 export default function AppNavigator() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('hud');
@@ -59,6 +59,15 @@ export default function AppNavigator() {
   >(undefined);
 
   const showGearTab = useAppStore(state => state.showGearTab);
+  // Optional peripheral toggles. When charger is disabled we drop the
+  // 'charger' route from the swipe-pager and the FloatingIcons row, and
+  // we skip charger-related auto-connect work. When dial is disabled the
+  // dial-OTA Settings card is hidden — there's no dedicated dial screen
+  // to drop, the peripheral provides telemetry that drives the rest of
+  // the app. dialEnabled does NOT tear down the BLE connection itself —
+  // re-enabling shouldn't require a reconnect.
+  const chargerEnabled = useAppStore(state => state.chargerEnabled);
+  const dialEnabled = useAppStore(state => state.dialEnabled);
   const bleStatus = useAppStore(state => state.bleStatus);
   const chargerBleStatus = useAppStore(state => state.chargerBleStatus);
   const controllerBleStatus = useAppStore(state => state.controllerBleStatus);
@@ -78,10 +87,17 @@ export default function AppNavigator() {
   const pagerRef = useRef<PagerView>(null);
 
   const swipeScreens = useMemo<Screen[]>(() => {
-    const base: Screen[] = ['dashboard', 'charger', 'settings'];
-    if (showGearTab) { base.splice(2, 0, 'gear'); }
+    // Base order: dashboard → [charger] → [gear] → settings. Charger is
+    // included only when the user has the optional charger enabled; same
+    // for the manual Gear tab. When chargerEnabled flips off mid-session
+    // the route is unregistered here, the effect below catches the user
+    // sitting on it and forwards them back to dashboard before render.
+    const base: Screen[] = ['dashboard'];
+    if (chargerEnabled) { base.push('charger'); }
+    if (showGearTab) { base.push('gear'); }
+    base.push('settings');
     return base;
-  }, [showGearTab]);
+  }, [showGearTab, chargerEnabled]);
 
   const paoRetries = useRef(0);
   const chargerRetries = useRef(0);
@@ -100,6 +116,9 @@ export default function AppNavigator() {
   };
   const saveControllerDeviceId = async (id: string) => {
     try { await AsyncStorage.setItem(CONTROLLER_DEVICE_ID_KEY, id); } catch {}
+    // Mirror into store so the Settings BT row can show the device-ID hint
+    // immediately, without waiting for a fresh rehydration round-trip.
+    useAppStore.getState().setControllerDeviceId(id);
   };
 
   // attempt direct reconnect to a known device ID; fall back to scan if
@@ -203,20 +222,24 @@ export default function AppNavigator() {
   // Fire-and-forget GitHub release check on app mount. Errors are swallowed
   // inside checkForChargerUpdate — they live in the store as
   // otaState='error', never bubble. The 1-hour TTL inside the service
-  // prevents thrashing if the app is restarted frequently.
+  // prevents thrashing if the app is restarted frequently. Skipped entirely
+  // when the user has the charger disabled — saves a network round-trip and
+  // keeps the store's `ota.charger.latestRelease` cleanly idle.
   useEffect(() => {
+    if (!chargerEnabled) { return; }
     checkForChargerUpdate().catch(() => {});
-  }, []);
+  }, [chargerEnabled]);
 
   // Re-check whenever the charger connects. The 1-hour TTL still applies,
   // so connect/disconnect cycles within an hour are essentially free
   // (cache hit). Fresh data lands when the user reconnects after a long gap
   // — exactly the moment they care.
   useEffect(() => {
+    if (!chargerEnabled) { return; }
     if (chargerBleStatus === 'connected') {
       checkForChargerUpdate().catch(() => {});
     }
-  }, [chargerBleStatus]);
+  }, [chargerBleStatus, chargerEnabled]);
 
   useEffect(() => {
     StatusBar.setHidden(currentScreen === 'hud', 'fade');
@@ -231,6 +254,17 @@ export default function AppNavigator() {
     const idx = swipeScreens.indexOf(currentScreen);
     if (idx >= 0) { pagerRef.current?.setPage(idx); }
   }, [currentScreen, swipeScreens]);
+
+  // Edge case: user is sitting on the charger screen and flips
+  // chargerEnabled OFF in Settings. The swipe pager has just unregistered
+  // the 'charger' route. Forward them to dashboard so they don't end up
+  // staring at a stale/unmounted screen.
+  useEffect(() => {
+    if (!chargerEnabled && currentScreen === 'charger') {
+      Orientation.lockToPortrait();
+      setCurrentScreen('dashboard');
+    }
+  }, [chargerEnabled, currentScreen]);
 
   // On mount: request BLE permissions, restore known device IDs, attempt direct
   // reconnect, then subscribe to BLE state changes for late Bluetooth enable.
@@ -256,14 +290,25 @@ export default function AppNavigator() {
         AsyncStorage.getItem(CHARGER_DEVICE_ID_KEY).catch(() => null),
         AsyncStorage.getItem(CONTROLLER_DEVICE_ID_KEY).catch(() => null),
       ]);
+      // Seed the controller device-ID slice so the Settings BT row shows the
+      // hint immediately on cold launch, before the auto-reconnect resolves.
+      // Charger uses the same pattern via Zustand persistence (chargerDeviceId
+      // is partialized), but the controller field is intentionally NOT
+      // persisted — AsyncStorage is the source of truth for the ID.
+      if (storedControllerId) {
+        useAppStore.getState().setControllerDeviceId(storedControllerId);
+      }
 
       const bleState = await sharedBleManager.state();
 
       if (bleState === State.PoweredOn) {
+        // Read the latest flags from the store at this moment — they may
+        // have rehydrated from AsyncStorage just before this effect runs.
+        const {chargerEnabled: cEn} = useAppStore.getState();
         if (storedPaoId && mounted) {
           connectPaoDirectOrScan(storedPaoId);
         }
-        if (storedChargerId && mounted) {
+        if (storedChargerId && mounted && cEn) {
           connectChargerDirectOrScan(storedChargerId);
         }
         if (storedControllerId && mounted) {
@@ -276,12 +321,12 @@ export default function AppNavigator() {
       bleStateSubscription = sharedBleManager.onStateChange(newState => {
         if (!mounted) { return; }
         if (newState === State.PoweredOn) {
-          const {bleStatus: pStatus, chargerBleStatus: cStatus, controllerBleStatus: ctrlStatus} = useAppStore.getState();
+          const {bleStatus: pStatus, chargerBleStatus: cStatus, controllerBleStatus: ctrlStatus, chargerEnabled: cEn} = useAppStore.getState();
           if (pStatus === 'disconnected' || pStatus === 'error') {
             paoRetries.current = 0;
             useAppStore.getState().incrementScanTrigger();
           }
-          if (cStatus === 'disconnected' || cStatus === 'error') {
+          if (cEn && (cStatus === 'disconnected' || cStatus === 'error')) {
             chargerRetries.current = 0;
             useAppStore.getState().incrementScanTrigger();
           }
@@ -382,8 +427,11 @@ export default function AppNavigator() {
 
     // Bug 2 fix: treat 'error' the same as 'disconnected' so a failed connect
     // attempt is retried by the unified scan rather than being stuck forever.
+    // Optional-peripheral fix: when chargerEnabled is OFF, the user opted out
+    // of the charger entirely — skip its scan-and-connect work even if the
+    // store has a stale 'disconnected' charger status.
     const needsPao = bleStatus === 'disconnected' || bleStatus === 'error';
-    const needsCharger = chargerBleStatus === 'disconnected' || chargerBleStatus === 'error';
+    const needsCharger = chargerEnabled && (chargerBleStatus === 'disconnected' || chargerBleStatus === 'error');
     const needsController = controllerBleStatus === 'disconnected' || controllerBleStatus === 'error';
 
     console.log(
@@ -629,7 +677,7 @@ export default function AppNavigator() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bleStatus, chargerBleStatus, controllerBleStatus, permissionsGranted, scanTrigger, otaState, controllerOtaState]);
+  }, [bleStatus, chargerBleStatus, controllerBleStatus, permissionsGranted, scanTrigger, otaState, controllerOtaState, chargerEnabled]);
 
   const navigate = (screen: string) => {
     if (screen === 'hud') {

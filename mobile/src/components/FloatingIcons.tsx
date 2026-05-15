@@ -1,6 +1,7 @@
 import * as React from 'react';
 import {useState} from 'react';
 import {FAB, Portal} from 'react-native-paper';
+import {useAppStore} from '../store/useAppStore';
 
 interface FloatingIconsProps {
   onNavigate: (screen: string) => void;
@@ -11,6 +12,10 @@ interface FloatingIconsProps {
 
 export const FloatingIcons: React.FC<FloatingIconsProps> = ({onNavigate, showGearTab, currentScreen, isHUD}) => {
   const [open, setOpen] = useState<boolean>(false);
+  // Optional peripheral: when chargerEnabled is OFF the charger nav action
+  // (lightning-bolt) drops from the FAB row so there's no path to a screen
+  // the app no longer registers.
+  const chargerEnabled = useAppStore(state => state.chargerEnabled);
 
   const isActive = (screen: string) =>
     screen === 'hud' ? isHUD : !isHUD && currentScreen === screen;
@@ -22,7 +27,7 @@ export const FloatingIcons: React.FC<FloatingIconsProps> = ({onNavigate, showGea
   const navActions = [
     {icon: 'speedometer', onPress: () => onNavigate('hud'), ...actionStyle('hud')},
     {icon: 'car', onPress: () => onNavigate('dashboard'), ...actionStyle('dashboard')},
-    {icon: 'lightning-bolt', onPress: () => onNavigate('charger'), ...actionStyle('charger')},
+    ...(chargerEnabled ? [{icon: 'lightning-bolt', onPress: () => onNavigate('charger'), ...actionStyle('charger')}] : []),
     ...(showGearTab ? [{icon: 'power-standby', onPress: () => onNavigate('gear'), ...actionStyle('gear')}] : []),
     {icon: 'car-wrench', onPress: () => onNavigate('settings'), ...actionStyle('settings')},
   ];

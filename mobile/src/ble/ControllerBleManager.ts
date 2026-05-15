@@ -37,7 +37,9 @@ export const CTRL_CMD_OTA_ABORT  = 12;
 export const CTRL_CMD_OTA_VERIFY = 13;
 
 // AsyncStorage key for last-known controller device ID (Decision #31 pattern).
-const CONTROLLER_DEVICE_ID_KEY = 'controller_device_id';
+// Exported so AppNavigator (auto-reconnect) and SettingsScreen (manual
+// Disconnect) reference the same string rather than redeclaring it.
+export const CONTROLLER_DEVICE_ID_KEY = 'controller_device_id';
 
 export class ControllerBleManager {
   private manager = sharedBleManager;
@@ -102,6 +104,7 @@ export class ControllerBleManager {
       this.connectedDevice = device;
       useAppStore.getState().setControllerBleStatus('connected');
       useAppStore.getState().setControllerDevice(device);
+      useAppStore.getState().setControllerDeviceId(deviceId);
       // Persist last-known controller device ID (Decision #31).
       try {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;

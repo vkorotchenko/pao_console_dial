@@ -162,6 +162,12 @@ interface AppState {
   // Mirrors the charger's top-level BLE state fields (not chargerData — the
   // controller has no charger-equivalent data model on BLE).
   controllerBleStatus: BleStatus;
+  // Last-known controller device ID. Mirrors `chargerDeviceId` so the
+  // Settings Bluetooth row can render a stable identifier hint underneath
+  // the "Controller" label. Populated when the unified scan effect
+  // auto-connects (AppNavigator) or when `ControllerBleManager.connect`
+  // persists the ID. Cleared on explicit Disconnect from Settings.
+  controllerDeviceId: string | null;
   // Device reference — needed by otaOrchestrator for the post-OTA reconnect
   // flow. Same pattern as the charger's implicit device tracking inside
   // ChargerBleManager; exposed here so AppNavigator can read it when needed.
@@ -251,6 +257,13 @@ interface AppState {
   notificationMode: 'time' | 'soc';
   chargeTimeWarnMinutes: number;
   socWarnThresholdPct: number;
+  // Optional peripheral toggles — both default ON so existing users see no
+  // change on first launch after upgrading. When disabled, all UI surface
+  // area for the peripheral hides and the auto-connect path skips it.
+  // BLE plumbing (managers, store slices) is intentionally NOT torn down —
+  // re-enabling should be cheap.
+  dialEnabled: boolean;
+  chargerEnabled: boolean;
 
   // Actions (peripheral)
   setBleStatus: (status: BleStatus) => void;
@@ -269,6 +282,7 @@ interface AppState {
 
   // Actions (controller BLE)
   setControllerBleStatus: (s: BleStatus) => void;
+  setControllerDeviceId: (id: string | null) => void;
   setControllerDevice: (d: Device | null) => void;
   setControllerFirmwareVersion: (v: string | null) => void;
   setControllerError: (e: string | null) => void;
@@ -361,6 +375,8 @@ interface AppState {
   setNotificationMode: (v: 'time' | 'soc') => void;
   setChargeTimeWarnMinutes: (v: number) => void;
   setSocWarnThresholdPct: (v: number) => void;
+  setDialEnabled: (v: boolean) => void;
+  setChargerEnabled: (v: boolean) => void;
   reset: () => void;
 }
 
@@ -405,6 +421,7 @@ export const useAppStore = create<AppState>()(
 
       // Initial state — controller BLE
       controllerBleStatus: 'disconnected',
+      controllerDeviceId: null,
       controllerDevice: null,
       controllerFirmwareVersion: null,
       controllerError: null,
@@ -454,6 +471,10 @@ export const useAppStore = create<AppState>()(
       notificationMode: 'time',
       chargeTimeWarnMinutes: 30,
       socWarnThresholdPct: 90,
+      // Optional peripherals — default ON so existing installs behave as
+      // before. Users explicitly turn these off in Settings → General.
+      dialEnabled: true,
+      chargerEnabled: true,
 
       // Actions — peripheral
       setBleStatus: status => set({bleStatus: status}),
@@ -472,6 +493,7 @@ export const useAppStore = create<AppState>()(
 
       // Actions — controller BLE
       setControllerBleStatus: s => set({controllerBleStatus: s}),
+      setControllerDeviceId: id => set({controllerDeviceId: id}),
       setControllerDevice: d => set({controllerDevice: d}),
       setControllerFirmwareVersion: v => set({controllerFirmwareVersion: v}),
       setControllerError: e => set({controllerError: e}),
@@ -581,6 +603,8 @@ export const useAppStore = create<AppState>()(
       setNotificationMode: v => set({notificationMode: v}),
       setChargeTimeWarnMinutes: v => set({chargeTimeWarnMinutes: v}),
       setSocWarnThresholdPct: v => set({socWarnThresholdPct: v}),
+      setDialEnabled: v => set({dialEnabled: v}),
+      setChargerEnabled: v => set({chargerEnabled: v}),
       reset: () =>
         set({
           bleStatus: 'disconnected',
@@ -595,6 +619,7 @@ export const useAppStore = create<AppState>()(
           chargerFirmwareVersion: null,
           dialFirmwareVersion: null,
           controllerBleStatus: 'disconnected',
+          controllerDeviceId: null,
           controllerDevice: null,
           controllerFirmwareVersion: null,
           controllerError: null,
@@ -627,6 +652,11 @@ export const useAppStore = create<AppState>()(
         hudAutoBrighten: state.hudAutoBrighten,
         hudBrightenOnlyWhenCharging: state.hudBrightenOnlyWhenCharging,
         debugBt: state.debugBt,
+        // Optional peripheral toggles. Defaults of `true` in the initialiser
+        // ensure first-launch (no persisted value) shows everything; an
+        // explicit `false` here flips off all dial-/charger-associated UI.
+        dialEnabled: state.dialEnabled,
+        chargerEnabled: state.chargerEnabled,
         chargeTimeExtendMinutes: state.chargeTimeExtendMinutes,
         notificationsEnabled: state.notificationsEnabled,
         notificationMode: state.notificationMode,
