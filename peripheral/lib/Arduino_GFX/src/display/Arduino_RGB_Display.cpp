@@ -1,7 +1,6 @@
 #include "../Arduino_DataBus.h"
 
-// #if defined(ESP32) && (CONFIG_IDF_TARGET_ESP32S3)
-#if defined(ESP32) && (CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32P4) // Modify
+#if defined(ESP32) && (CONFIG_IDF_TARGET_ESP32S3)
 
 #include "../Arduino_GFX.h"
 #include "Arduino_RGB_Display.h"
@@ -27,14 +26,11 @@ Arduino_RGB_Display::Arduino_RGB_Display(
 
 bool Arduino_RGB_Display::begin(int32_t speed)
 {
-  if (speed != GFX_SKIP_DATABUS_BEGIN)
+  if (_bus)
   {
-    if (_bus)
+    if (!_bus->begin())
     {
-      if (!_bus->begin())
-      {
-        return false;
-      }
+      return false;
     }
   }
 
@@ -79,32 +75,46 @@ bool Arduino_RGB_Display::begin(int32_t speed)
 
 void Arduino_RGB_Display::writePixelPreclipped(int16_t x, int16_t y, uint16_t color)
 {
-  int32_t y2 = y;
+  x += COL_OFFSET1;
+  y += ROW_OFFSET1;
+  uint16_t *fb = _framebuffer;
   switch (_rotation)
   {
   case 1:
-    y2 = x;
-    x = WIDTH - 1 - y;
+    fb += (int32_t)x * _fb_width;
+    fb += _fb_max_x - y;
+    *fb = color;
+    if (_auto_flush)
+    {
+      Cache_WriteBack_Addr((uint32_t)fb, 2);
+    }
     break;
   case 2:
-    x = WIDTH - 1 - x;
-    y2 = HEIGHT - 1 - y;
+    fb += (int32_t)(_fb_max_y - y) * _fb_width;
+    fb += _fb_max_x - x;
+    *fb = color;
+    if (_auto_flush)
+    {
+      Cache_WriteBack_Addr((uint32_t)fb, 2);
+    }
     break;
   case 3:
-    y2 = HEIGHT - 1 - x;
-    x = y;
+    fb += (int32_t)(_fb_max_y - x) * _fb_width;
+    fb += y;
+    *fb = color;
+    if (_auto_flush)
+    {
+      Cache_WriteBack_Addr((uint32_t)fb, 2);
+    }
     break;
-  }
-
-  x += COL_OFFSET1;
-  y2 += ROW_OFFSET1;
-
-  uint16_t *fb = _framebuffer + (y2 * _fb_width) + x;
-
-  *fb = color;
-  if (_auto_flush)
-  {
-    Cache_WriteBack_Addr((uint32_t)fb, 2);
+  default: // case 0:
+    fb += (int32_t)y * _fb_width;
+    fb += x;
+    *fb = color;
+    if (_auto_flush)
+    {
+      Cache_WriteBack_Addr((uint32_t)fb, 2);
+    }
   }
 }
 

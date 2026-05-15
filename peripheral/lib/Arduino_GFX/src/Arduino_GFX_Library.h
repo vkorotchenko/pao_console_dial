@@ -54,7 +54,6 @@
 #include "display/Arduino_DSI_Display.h"
 #include "display/Arduino_GC9A01.h"
 #include "display/Arduino_GC9C01.h"
-#include "display/Arduino_GC9D01.h"
 #include "display/Arduino_GC9106.h"
 #include "display/Arduino_GC9107.h"
 #include "display/Arduino_HX8347C.h"
@@ -88,7 +87,6 @@
 #include "display/Arduino_RGB_Display.h"
 #include "display/Arduino_SEPS525.h"
 #include "display/Arduino_SH1106.h"
-#include "display/Arduino_SH8601.h"
 #include "display/Arduino_SPD2010.h"
 #include "display/Arduino_SSD1283A.h"
 #include "display/Arduino_SSD1306.h"
@@ -212,46 +210,6 @@
 #define DF_GFX_DC 27
 #define DF_GFX_RST 33
 #define DF_GFX_BL 22
-#elif defined(ESP32) && ((CONFIG_IDF_TARGET_ESP32C2) || (CONFIG_IDF_TARGET_ESP32C3))
-#define DF_GFX_SCK 4
-#define DF_GFX_MOSI 6
-#define DF_GFX_MISO GFX_NOT_DEFINED
-#define DF_GFX_CS 7
-#define DF_GFX_DC 2
-#define DF_GFX_RST 1
-#define DF_GFX_BL 3
-#elif defined(ESP32) && (CONFIG_IDF_TARGET_ESP32C5)
-#define DF_GFX_SCK 10
-#define DF_GFX_MOSI 8
-#define DF_GFX_MISO GFX_NOT_DEFINED
-#define DF_GFX_CS 23
-#define DF_GFX_DC 24
-#define DF_GFX_RST 25
-#define DF_GFX_BL 26
-#elif defined(ESP32) && (CONFIG_IDF_TARGET_ESP32C6)
-#define DF_GFX_SCK 21
-#define DF_GFX_MOSI 19
-#define DF_GFX_MISO GFX_NOT_DEFINED
-#define DF_GFX_CS 18
-#define DF_GFX_DC 22
-#define DF_GFX_RST 23
-#define DF_GFX_BL 15
-#elif defined(ESP32) && (CONFIG_IDF_TARGET_ESP32H2)
-#define DF_GFX_SCK 10
-#define DF_GFX_MOSI 25
-#define DF_GFX_MISO GFX_NOT_DEFINED
-#define DF_GFX_CS 0
-#define DF_GFX_DC 12
-#define DF_GFX_RST 8
-#define DF_GFX_BL 22
-#elif defined(ESP32) && (CONFIG_IDF_TARGET_ESP32P4)
-#define DF_GFX_SCK 36
-#define DF_GFX_MOSI 32
-#define DF_GFX_MISO GFX_NOT_DEFINED
-#define DF_GFX_CS 26
-#define DF_GFX_DC 27
-#define DF_GFX_RST 25
-#define DF_GFX_BL 24
 #elif defined(ESP32) && (CONFIG_IDF_TARGET_ESP32S2)
 #define DF_GFX_SCK 36
 #define DF_GFX_MOSI 35
@@ -268,6 +226,14 @@
 #define DF_GFX_DC 41
 #define DF_GFX_RST 42
 #define DF_GFX_BL 48
+#elif defined(ESP32) && (CONFIG_IDF_TARGET_ESP32C3)
+#define DF_GFX_SCK 4
+#define DF_GFX_MOSI 6
+#define DF_GFX_MISO GFX_NOT_DEFINED
+#define DF_GFX_CS 7
+#define DF_GFX_DC 2
+#define DF_GFX_RST 1
+#define DF_GFX_BL 3
 #elif defined(ESP8266)
 #define DF_GFX_SCK 14
 #define DF_GFX_MOSI 13

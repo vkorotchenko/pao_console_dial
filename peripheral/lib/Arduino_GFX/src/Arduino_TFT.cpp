@@ -20,21 +20,18 @@ Arduino_TFT::Arduino_TFT(
 
 bool Arduino_TFT::begin(int32_t speed)
 {
-  if (speed != GFX_SKIP_DATABUS_BEGIN)
+  if (_override_datamode != GFX_NOT_DEFINED)
   {
-    if (_override_datamode != GFX_NOT_DEFINED)
+    if (!_bus->begin(speed, _override_datamode))
     {
-      if (!_bus->begin(speed, _override_datamode))
-      {
-        return false;
-      }
+      return false;
     }
-    else
+  }
+  else
+  {
+    if (!_bus->begin(speed))
     {
-      if (!_bus->begin(speed))
-      {
-        return false;
-      }
+      return false;
     }
   }
 
@@ -152,34 +149,22 @@ void Arduino_TFT::setRotation(uint8_t r)
   Arduino_GFX::setRotation(r);
   switch (_rotation)
   {
-  case 1:
-    _xStart = ROW_OFFSET1;
-    _yStart = COL_OFFSET2;
-    break;
-  case 2:
-    _xStart = COL_OFFSET2;
-    _yStart = ROW_OFFSET2;
-    break;
+  case 5:
   case 3:
     _xStart = ROW_OFFSET2;
     _yStart = COL_OFFSET1;
     break;
-  case 4:
-    _xStart = COL_OFFSET2;
-    _yStart = ROW_OFFSET1;
-    break;
-  case 5:
-    _xStart = ROW_OFFSET2;
-    _yStart = COL_OFFSET2;
-    break;
   case 6:
-    _xStart = COL_OFFSET1;
+  case 2:
+    _xStart = COL_OFFSET2;
     _yStart = ROW_OFFSET2;
     break;
   case 7:
+  case 1:
     _xStart = ROW_OFFSET1;
-    _yStart = COL_OFFSET1;
+    _yStart = COL_OFFSET2;
     break;
+  case 4:
   default: // case 0:
     _xStart = COL_OFFSET1;
     _yStart = ROW_OFFSET1;
@@ -998,7 +983,7 @@ void Arduino_TFT::drawChar(int16_t x, int16_t y, unsigned char c, uint16_t color
   {
     Arduino_GFX::drawChar(x, y, c, color, bg);
   }
-  else // glcdfont
+  else // not u8g2Font
 #endif // defined(U8G2_FONT_SUPPORT)
   {
     block_w = 6 * textsize_x;

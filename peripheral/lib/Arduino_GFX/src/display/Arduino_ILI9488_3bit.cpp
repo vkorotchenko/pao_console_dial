@@ -10,12 +10,9 @@ Arduino_ILI9488_3bit::Arduino_ILI9488_3bit(Arduino_DataBus *bus, int8_t rst, uin
 
 bool Arduino_ILI9488_3bit::begin(int32_t speed)
 {
-  if (speed != GFX_SKIP_DATABUS_BEGIN)
+  if (!_bus->begin(speed))
   {
-    if (!_bus->begin(speed))
-    {
-      return false;
-    }
+    return false;
   }
 
   if (_rst != GFX_NOT_DEFINED)

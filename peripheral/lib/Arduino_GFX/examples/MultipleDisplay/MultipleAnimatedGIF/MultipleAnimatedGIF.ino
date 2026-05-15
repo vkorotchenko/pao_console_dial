@@ -97,7 +97,7 @@ void setup()
   {
     Serial.println("gfx3->begin() failed!");
   }
-  gfx3->fillScreen(RGB565_LIME);
+  gfx3->fillScreen(RGB565_GREEN);
   delay(200);
 
   if (!gfx4->begin())
