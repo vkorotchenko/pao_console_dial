@@ -299,6 +299,30 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     }
   }, [chargerEnabled, activeTab]);
 
+  // Auto-refresh latest GitHub release for every enabled firmware module on
+  // Settings mount (and when enable toggles flip while the screen is alive).
+  // This is independent of BLE connection state — the user opening Settings
+  // is the strongest "I care about firmware status right now" signal we have.
+  // The release service has a 1-hour TTL (see `githubReleases.ts` TTL_MS), so
+  // repeat opens within the hour are cache hits — no GitHub round-trip, no
+  // rate-limit pressure. Real fetches only happen when the cache is stale,
+  // which is the desired cadence. Errors are swallowed by the service and
+  // land as `otaState='error'` on the per-module card, so we don't need to
+  // branch or await here. Controller has no enable toggle, so it always
+  // checks. Mobile-app update is intentionally excluded — this effect is for
+  // firmware modules only; the app-update flow runs on its own schedule.
+  useEffect(() => {
+    const checks: Promise<unknown>[] = [];
+    if (dialEnabled) {
+      checks.push(checkForUpdate('dial').catch(() => {}));
+    }
+    if (chargerEnabled) {
+      checks.push(checkForChargerUpdate().catch(() => {}));
+    }
+    checks.push(checkForUpdate('controller').catch(() => {}));
+    Promise.allSettled(checks);
+  }, [dialEnabled, chargerEnabled]);
+
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
