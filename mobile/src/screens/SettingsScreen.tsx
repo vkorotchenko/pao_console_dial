@@ -320,6 +320,10 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [isRequestingChargerPermission, setIsRequestingChargerPermission] = useState(false);
   const [isRequestingControllerPermission, setIsRequestingControllerPermission] = useState(false);
+  // Tracks the "Check for all updates" button at the bottom of the Firmware
+  // tab. Goes true while the parallel per-module check fan-out is in flight,
+  // gates the button (disabled + label swap + spinner) so it can't be retapped.
+  const [isCheckingAll, setIsCheckingAll] = useState<boolean>(false);
 
   // Peripheral BLE helpers
   const canDisconnect =
@@ -664,6 +668,30 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     }
     // 'update' and 'unknown-current' — contextual button already surfaces the
     // install affordance. 'up-to-date' → silent.
+  };
+
+  // "Check for all updates" — fans out the three per-module checks in
+  // parallel and waits for all to settle. Skips disabled peripherals
+  // (dial / charger) so we never fetch releases the user has explicitly
+  // hidden. Controller has no enable toggle and is always included. Errors
+  // surfaced by individual handlers (Alert) still appear; this wrapper just
+  // gates the button while the fan-out is running.
+  const handleCheckAllForUpdates = async () => {
+    if (isCheckingAll) return;
+    setIsCheckingAll(true);
+    try {
+      const checks: Array<Promise<unknown>> = [];
+      if (dialEnabled) {
+        checks.push(handleCheckForDialUpdates());
+      }
+      if (chargerEnabled) {
+        checks.push(handleCheckForUpdates());
+      }
+      checks.push(handleCheckForControllerUpdates());
+      await Promise.allSettled(checks);
+    } finally {
+      setIsCheckingAll(false);
+    }
   };
 
   const onControllerUpdateRequest = () => {
@@ -1557,7 +1585,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
             - Divider
             - Button: "Check for updates" OR "Update to v0.3.4" when newer
             - Last-checked timestamp underneath */}
-      <View style={styles.card}>
+      <View style={[styles.card, styles.fwCard]}>
         <View style={styles.row}>
           <View style={styles.fwTitleRow}>
             {/* Inline row title replacing the prior external "APP" section
@@ -1670,7 +1698,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
 
       {/* Charger firmware card — hidden when chargerEnabled is OFF. */}
       {chargerEnabled ? (
-      <View style={styles.card}>
+      <View style={[styles.card, styles.fwCard]}>
         <View style={styles.row}>
           <View style={styles.fwTitleRow}>
             {/* Inline row title replacing the prior external
@@ -1815,7 +1843,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
 
       {/* Dial firmware card — hidden when dialEnabled is OFF. */}
       {dialEnabled ? (
-      <View style={styles.card}>
+      <View style={[styles.card, styles.fwCard]}>
         <View style={styles.row}>
           <View style={styles.fwTitleRow}>
             {/* Dial firmware row — mirrors the Charger row above so the two
@@ -1948,7 +1976,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
           OTA-only on BLE; telemetry routes through the dial. The button is
           gated on controllerBleStatus === 'connected' because OTA_BEGIN
           requires an active GATT connection to 0x27B1. */}
-      <View style={styles.card}>
+      <View style={[styles.card, styles.fwCard]}>
         <View style={styles.row}>
           <View style={styles.fwTitleRow}>
             <View style={styles.fwTitleHeader}>
@@ -2085,6 +2113,29 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
             ) : null}
           </View>
         )}
+      </View>
+
+      {/* Bottom-of-tab utility: re-fetch GitHub release info for all enabled
+          firmware modules in one tap. Outlined (not contained) so it reads as
+          a passive utility action vs. the contained Install/Check buttons
+          inside each module card. Skips disabled peripherals; controller is
+          unconditional. Button is disabled while the fan-out is in flight. */}
+      <View style={[styles.card, styles.fwCard]}>
+        <View style={styles.fwBody}>
+          <View style={styles.fwButtonRow}>
+            <Button
+              mode="outlined"
+              onPress={handleCheckAllForUpdates}
+              disabled={isCheckingAll}
+              loading={isCheckingAll}
+              style={styles.fwFullWidthButton}>
+              {isCheckingAll ? 'Checking…' : 'Check for all updates'}
+            </Button>
+          </View>
+          <Text style={styles.fwHint}>
+            Re-fetches GitHub release info for all enabled modules
+          </Text>
+        </View>
       </View>
     </>
   );
@@ -2342,6 +2393,13 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 4,
+  },
+  // Firmware-tab-only card spacing. Composed alongside `card` on the four
+  // OTA cards (Mobile App / Charger / Dial / Controller) and the
+  // "Check for all updates" wrapper. Intentionally not applied to other tabs
+  // so existing layouts elsewhere keep their flush rhythm.
+  fwCard: {
+    marginBottom: 12,
   },
   row: {
     flexDirection: 'row',
