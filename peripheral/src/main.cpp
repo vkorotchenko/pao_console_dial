@@ -148,7 +148,6 @@ void setup()
   rtc.setTime(0, 47, 13, 10, 23, 2023, 0);
 
   sprite.createSprite(540, 540);
-  tft.fillScreen(TFT_BLACK);
   sprite.loadFont(midleFont);
   i2cHandler.setup(I2C_SDA_PIN, I2C_SCL_PIN);
   gfx->begin();
