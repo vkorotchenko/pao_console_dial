@@ -1,72 +1,69 @@
 #include "Arduino_ESP32QSPI.h"
 
-#if defined(ESP32)
+#if defined(ESP32) && (CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C2 || CONFIG_IDF_TARGET_ESP32C3 || CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32H2 || CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32C5)
 
-/**
- * @brief Arduino_ESP32QSPI
- *
- */
 Arduino_ESP32QSPI::Arduino_ESP32QSPI(
     int8_t cs, int8_t sck, int8_t mosi, int8_t miso, int8_t quadwp, int8_t quadhd, bool is_shared_interface /* = false */)
     : _cs(cs), _sck(sck), _mosi(mosi), _miso(miso), _quadwp(quadwp), _quadhd(quadhd), _is_shared_interface(is_shared_interface)
 {
 }
 
-/**
- * @brief begin
- *
- * @param speed
- * @param dataMode
- * @return true
- * @return false
- */
 bool Arduino_ESP32QSPI::begin(int32_t speed, int8_t dataMode)
 {
   // set SPI parameters
-  _speed = (speed == GFX_NOT_DEFINED) ? ESP32QSPI_FREQUENCY : speed;
+  _speed = (speed <= GFX_NOT_DEFINED) ? ESP32QSPI_FREQUENCY : speed;
   _dataMode = (dataMode == GFX_NOT_DEFINED) ? ESP32QSPI_SPI_MODE : dataMode;
 
   pinMode(_cs, OUTPUT);
   digitalWrite(_cs, HIGH); // disable chip select
-#if (CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3)
+#if (CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32C5)
   if (_cs >= 32)
   {
     _csPinMask = digitalPinToBitMask(_cs);
     _csPortSet = (PORTreg_t)GPIO_OUT1_W1TS_REG;
     _csPortClr = (PORTreg_t)GPIO_OUT1_W1TC_REG;
   }
-  else
-#endif
-      if (_cs != GFX_NOT_DEFINED)
+  else if (_cs != GFX_NOT_DEFINED)
   {
     _csPinMask = digitalPinToBitMask(_cs);
     _csPortSet = (PORTreg_t)GPIO_OUT_W1TS_REG;
     _csPortClr = (PORTreg_t)GPIO_OUT_W1TC_REG;
   }
-
-  spi_bus_config_t buscfg = {
-      .mosi_io_num = _mosi,
-      .miso_io_num = _miso,
-      .sclk_io_num = _sck,
-      .quadwp_io_num = _quadwp,
-      .quadhd_io_num = _quadhd,
-      .data4_io_num = -1,
-      .data5_io_num = -1,
-      .data6_io_num = -1,
-      .data7_io_num = -1,
-      .max_transfer_sz = (ESP32QSPI_MAX_PIXELS_AT_ONCE * 16) + 8,
-      .flags = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_GPIO_PINS,
-#if (!defined(ESP_ARDUINO_VERSION_MAJOR)) || (ESP_ARDUINO_VERSION_MAJOR < 3)
-      // skip this
 #else
-      .isr_cpu_id = ESP_INTR_CPU_AFFINITY_AUTO,
-#endif
-      .intr_flags = 0};
-  esp_err_t ret = spi_bus_initialize(ESP32QSPI_SPI_HOST, &buscfg, ESP32QSPI_DMA_CHANNEL);
-  if (ret != ESP_OK)
+  if (_cs != GFX_NOT_DEFINED)
   {
-    ESP_ERROR_CHECK(ret);
-    return false;
+    _csPinMask = digitalPinToBitMask(_cs);
+    _csPortSet = (PORTreg_t)GPIO_OUT_W1TS_REG;
+    _csPortClr = (PORTreg_t)GPIO_OUT_W1TC_REG;
+  }
+#endif
+
+  if (speed != GFX_SKIP_DATABUS_UNDERLAYING_BEGIN)
+  {
+    spi_bus_config_t buscfg = {
+        .mosi_io_num = _mosi,
+        .miso_io_num = _miso,
+        .sclk_io_num = _sck,
+        .quadwp_io_num = _quadwp,
+        .quadhd_io_num = _quadhd,
+        .data4_io_num = -1,
+        .data5_io_num = -1,
+        .data6_io_num = -1,
+        .data7_io_num = -1,
+        .max_transfer_sz = (ESP32QSPI_MAX_PIXELS_AT_ONCE * 16) + 8,
+        .flags = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_GPIO_PINS,
+#if (!defined(ESP_ARDUINO_VERSION_MAJOR)) || (ESP_ARDUINO_VERSION_MAJOR < 3)
+    // skip this
+#else
+        .isr_cpu_id = ESP_INTR_CPU_AFFINITY_AUTO,
+#endif
+        .intr_flags = 0};
+    esp_err_t ret = spi_bus_initialize(ESP32QSPI_SPI_HOST, &buscfg, ESP32QSPI_DMA_CHANNEL);
+    if (ret != ESP_OK)
+    {
+      ESP_ERROR_CHECK(ret);
+      return false;
+    }
   }
 
   spi_device_interface_config_t devcfg = {
@@ -74,9 +71,9 @@ bool Arduino_ESP32QSPI::begin(int32_t speed, int8_t dataMode)
       .address_bits = 24,
       .dummy_bits = 0,
       .mode = (uint8_t)_dataMode,
-      #if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
       .clock_source = SPI_CLK_SRC_DEFAULT,
-      #endif
+#endif
       .duty_cycle_pos = 0,
       .cs_ena_pretrans = 0,
       .cs_ena_posttrans = 0,
@@ -87,7 +84,7 @@ bool Arduino_ESP32QSPI::begin(int32_t speed, int8_t dataMode)
       .queue_size = 1,
       .pre_cb = nullptr,
       .post_cb = nullptr};
-  ret = spi_bus_add_device(ESP32QSPI_SPI_HOST, &devcfg, &_handle);
+  esp_err_t ret = spi_bus_add_device(ESP32QSPI_SPI_HOST, &devcfg, &_handle);
   if (ret != ESP_OK)
   {
     ESP_ERROR_CHECK(ret);
@@ -116,10 +113,6 @@ bool Arduino_ESP32QSPI::begin(int32_t speed, int8_t dataMode)
   return true;
 }
 
-/**
- * @brief beginWrite
- *
- */
 void Arduino_ESP32QSPI::beginWrite()
 {
   if (_is_shared_interface)
@@ -128,10 +121,6 @@ void Arduino_ESP32QSPI::beginWrite()
   }
 }
 
-/**
- * @brief endWrite
- *
- */
 void Arduino_ESP32QSPI::endWrite()
 {
   if (_is_shared_interface)
@@ -140,11 +129,6 @@ void Arduino_ESP32QSPI::endWrite()
   }
 }
 
-/**
- * @brief writeCommand
- *
- * @param c
- */
 void Arduino_ESP32QSPI::writeCommand(uint8_t c)
 {
   CS_LOW();
@@ -158,11 +142,6 @@ void Arduino_ESP32QSPI::writeCommand(uint8_t c)
   CS_HIGH();
 }
 
-/**
- * @brief writeCommand16
- *
- * @param c
- */
 void Arduino_ESP32QSPI::writeCommand16(uint16_t c)
 {
   CS_LOW();
@@ -197,11 +176,6 @@ void Arduino_ESP32QSPI::writeCommandBytes(uint8_t *data, uint32_t len)
   CS_HIGH();
 }
 
-/**
- * @brief write
- *
- * @param d
- */
 void Arduino_ESP32QSPI::write(uint8_t d)
 {
   CS_LOW();
@@ -215,11 +189,6 @@ void Arduino_ESP32QSPI::write(uint8_t d)
   CS_HIGH();
 }
 
-/**
- * @brief write16
- *
- * @param d
- */
 void Arduino_ESP32QSPI::write16(uint16_t d)
 {
   CS_LOW();
@@ -234,12 +203,6 @@ void Arduino_ESP32QSPI::write16(uint16_t d)
   CS_HIGH();
 }
 
-/**
- * @brief writeC8D8
- *
- * @param c
- * @param d
- */
 void Arduino_ESP32QSPI::writeC8D8(uint8_t c, uint8_t d)
 {
   CS_LOW();
@@ -253,13 +216,6 @@ void Arduino_ESP32QSPI::writeC8D8(uint8_t c, uint8_t d)
   CS_HIGH();
 }
 
-/**
- * @brief writeC8D16D16
- *
- * @param c
- * @param d1
- * @param d2
- */
 void Arduino_ESP32QSPI::writeC8D16(uint8_t c, uint16_t d)
 {
   CS_LOW();
@@ -274,13 +230,6 @@ void Arduino_ESP32QSPI::writeC8D16(uint8_t c, uint16_t d)
   CS_HIGH();
 }
 
-/**
- * @brief writeC8D16D16
- *
- * @param c
- * @param d1
- * @param d2
- */
 void Arduino_ESP32QSPI::writeC8D16D16(uint8_t c, uint16_t d1, uint16_t d2)
 {
   CS_LOW();
@@ -297,13 +246,6 @@ void Arduino_ESP32QSPI::writeC8D16D16(uint8_t c, uint16_t d1, uint16_t d2)
   CS_HIGH();
 }
 
-/**
- * @brief writeC8D16D16Split
- *
- * @param c
- * @param d1
- * @param d2
- */
 void Arduino_ESP32QSPI::writeC8D16D16Split(uint8_t c, uint16_t d1, uint16_t d2)
 {
   CS_LOW();
@@ -320,13 +262,6 @@ void Arduino_ESP32QSPI::writeC8D16D16Split(uint8_t c, uint16_t d1, uint16_t d2)
   CS_HIGH();
 }
 
-/**
- * @brief writeC8Bytes
- *
- * @param c
- * @param data
- * @param len
- */
 void Arduino_ESP32QSPI::writeC8Bytes(uint8_t c, uint8_t *data, uint32_t len)
 {
   CS_LOW();
@@ -340,12 +275,6 @@ void Arduino_ESP32QSPI::writeC8Bytes(uint8_t c, uint8_t *data, uint32_t len)
   CS_HIGH();
 }
 
-/**
- * @brief writeRepeat
- *
- * @param p
- * @param len
- */
 void Arduino_ESP32QSPI::writeRepeat(uint16_t p, uint32_t len)
 {
   bool first_send = true;
@@ -390,12 +319,6 @@ void Arduino_ESP32QSPI::writeRepeat(uint16_t p, uint32_t len)
   CS_HIGH();
 }
 
-/**
- * @brief writePixels
- *
- * @param data
- * @param len
- */
 void Arduino_ESP32QSPI::writePixels(uint16_t *data, uint32_t len)
 {
 
@@ -509,12 +432,6 @@ void Arduino_ESP32QSPI::batchOperation(const uint8_t *operations, size_t len)
   }
 }
 
-/**
- * @brief writeBytes
- *
- * @param data
- * @param len
- */
 void Arduino_ESP32QSPI::writeBytes(uint8_t *data, uint32_t len)
 {
   CS_LOW();
@@ -549,13 +466,6 @@ void Arduino_ESP32QSPI::writeBytes(uint8_t *data, uint32_t len)
   CS_HIGH();
 }
 
-/**
- * @brief write16bitBeRGBBitmapR1
- *
- * @param bitmap
- * @param w
- * @param h
- */
 void Arduino_ESP32QSPI::write16bitBeRGBBitmapR1(uint16_t *bitmap, int16_t w, int16_t h)
 {
   if (h > ESP32QSPI_MAX_PIXELS_AT_ONCE)
@@ -603,13 +513,6 @@ void Arduino_ESP32QSPI::write16bitBeRGBBitmapR1(uint16_t *bitmap, int16_t w, int
   }
 }
 
-/**
- * @brief writeIndexedPixels
- *
- * @param data
- * @param idx
- * @param len
- */
 void Arduino_ESP32QSPI::writeIndexedPixels(uint8_t *data, uint16_t *idx, uint32_t len)
 {
   CS_LOW();
@@ -656,13 +559,6 @@ void Arduino_ESP32QSPI::writeIndexedPixels(uint8_t *data, uint16_t *idx, uint32_
   CS_HIGH();
 }
 
-/**
- * @brief writeIndexedPixelsDouble
- *
- * @param data
- * @param idx
- * @param len
- */
 void Arduino_ESP32QSPI::writeIndexedPixelsDouble(uint8_t *data, uint16_t *idx, uint32_t len)
 {
   CS_LOW();
@@ -781,44 +677,24 @@ void Arduino_ESP32QSPI::writeYCbCrPixels(uint8_t *yData, uint8_t *cbData, uint8_
 }
 /******** low level bit twiddling **********/
 
-/**
- * @brief CS_HIGH
- *
- * @return GFX_INLINE
- */
 GFX_INLINE void Arduino_ESP32QSPI::CS_HIGH(void)
 {
   *_csPortSet = _csPinMask;
 }
 
-/**
- * @brief CS_LOW
- *
- * @return GFX_INLINE
- */
 GFX_INLINE void Arduino_ESP32QSPI::CS_LOW(void)
 {
   *_csPortClr = _csPinMask;
 }
 
-/**
- * @brief POLL_START
- *
- * @return GFX_INLINE
- */
 GFX_INLINE void Arduino_ESP32QSPI::POLL_START()
 {
   spi_device_polling_start(_handle, _spi_tran, portMAX_DELAY);
 }
 
-/**
- * @brief POLL_END
- *
- * @return GFX_INLINE
- */
 GFX_INLINE void Arduino_ESP32QSPI::POLL_END()
 {
   spi_device_polling_end(_handle, portMAX_DELAY);
 }
 
-#endif // #if defined(ESP32)
+#endif // #if defined(ESP32) && (CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32C2 || CONFIG_IDF_TARGET_ESP32C3 || CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32H2 || CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32C5)

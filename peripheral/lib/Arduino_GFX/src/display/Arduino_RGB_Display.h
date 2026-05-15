@@ -2,7 +2,8 @@
 
 #include "../Arduino_DataBus.h"
 
-#if defined(ESP32) && (CONFIG_IDF_TARGET_ESP32S3)
+//#if defined(ESP32) && (CONFIG_IDF_TARGET_ESP32S3)
+#if defined(ESP32) && (CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32P4)  //Modify
 
 #include "../Arduino_GFX.h"
 #include "../databus/Arduino_ESP32RGBPanel.h"
@@ -407,6 +408,7 @@ static const uint8_t gc9503v_type2_init_operations[] = {
     END_WRITE,
 
     DELAY, 120};
+
 
 static const uint8_t st7701_type1_init_operations[] = {
     BEGIN_WRITE,
