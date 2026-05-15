@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {
   View,
   Text,
@@ -119,10 +119,10 @@ function formatRelative(now: number, then: number | null): string {
 // Tab keys stay as historical names ('display') even though the user-facing
 // label is now 'General' — this avoids any persistence/migration churn for
 // the AppNavigator → SettingsScreen `initialTab` plumbing. Only the label
-// in the TABS array (and TabBar render) changed.
+// in the ALL_TABS array (and TabBar render) changed.
 type SettingsTab = 'bluetooth' | 'charging' | 'firmware' | 'display';
 
-const TABS: ReadonlyArray<{key: SettingsTab; label: string}> = [
+const ALL_TABS: ReadonlyArray<{key: SettingsTab; label: string}> = [
   {key: 'display', label: 'General'},
   {key: 'charging', label: 'Charging'},
   {key: 'bluetooth', label: 'Bluetooth'},
@@ -275,6 +275,29 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   const [activeTab, setActiveTab] = useState<SettingsTab>(
     initialTab ?? 'display',
   );
+
+  // Derived tab list — hide the Charging tab entirely when the charger
+  // peripheral is disabled. Both the body of that tab (Charging cards +
+  // Notifications cards) and its corresponding BT row / Firmware card are
+  // already gated on `chargerEnabled`; the tab itself was the last hole.
+  const tabs = useMemo(
+    () =>
+      chargerEnabled
+        ? ALL_TABS
+        : ALL_TABS.filter(t => t.key !== 'charging'),
+    [chargerEnabled],
+  );
+
+  // Defensive: if the user is sitting on the Charging tab and flips
+  // `chargerEnabled` off from the General tab in the same session,
+  // `activeTab` would point at a tab that no longer exists. Fall back to
+  // 'display' (General) in that case. Cleaner than a render-time guard —
+  // the next render sees a valid tab and `renderActiveTab` falls through.
+  useEffect(() => {
+    if (!chargerEnabled && activeTab === 'charging') {
+      setActiveTab('display');
+    }
+  }, [chargerEnabled, activeTab]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60_000);
@@ -2216,7 +2239,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
           StatusBar.currentHeight on Android in case PageHeader is ever
           removed; today PageHeader handles the visible top inset. */}
       <View style={[styles.tabBar, {paddingTop: Math.max(0, tabBarSafeTop - 44) /* PageHeader already absorbs 44px */}]}>
-        {TABS.map(tab => {
+        {tabs.map(tab => {
           const active = tab.key === activeTab;
           return (
             <TouchableOpacity
