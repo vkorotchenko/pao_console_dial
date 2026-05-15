@@ -94,6 +94,32 @@ configurations.all {
     }
 }
 
+def parseGitVersion = { ->
+    def fallback = [name: "0.0.1-dev", code: 1]
+    try {
+        def proc = ['git', 'describe', '--tags', '--match', 'mobile-v*', '--long', '--dirty']
+            .execute(null, rootProject.projectDir)
+        proc.waitFor()
+        if (proc.exitValue() != 0) return fallback
+        def desc = proc.text.trim()
+        def m = desc =~ /^mobile-v(\d+)\.(\d+)\.(\d+)-(\d+)-g([0-9a-f]+)(-dirty)?$/
+        if (!m.matches()) return fallback
+        def major = m[0][1].toInteger()
+        def minor = m[0][2].toInteger()
+        def patch = m[0][3].toInteger()
+        def commits = m[0][4].toInteger()
+        def sha = m[0][5]
+        def dirty = m[0][6] != null
+        def code = major * 10000 + minor * 100 + patch + commits
+        def name = "${major}.${minor}.${patch}+${commits}-g${sha}" + (dirty ? "-dirty" : "")
+        return [name: name, code: code]
+    } catch (Exception e) {
+        return fallback
+    }
+}
+
+def gitVersion = parseGitVersion()
+
 android {
     ndkVersion = rootProject.ext.ndkVersion
     buildToolsVersion = rootProject.ext.buildToolsVersion
@@ -105,10 +131,11 @@ android {
         minSdkVersion = rootProject.ext.minSdkVersion
         targetSdkVersion = rootProject.ext.targetSdkVersion
         // versionCode / versionName are injected by CI via `-PversionCode=...`
-        // and `-PversionName=...`. Local builds fall back to dev defaults so
-        // `./gradlew assembleRelease` keeps working without arguments.
-        versionCode project.hasProperty('versionCode') ? project.versionCode.toInteger() : 1
-        versionName project.hasProperty('versionName') ? project.versionName : "0.0.1-dev"
+        // and `-PversionName=...`. Local builds fall back to git-derived values
+        // from `git describe --tags --match 'mobile-v*'`, or to "0.0.1-dev" / 1
+        // if git describe fails (no tags / git missing).
+        versionCode project.hasProperty('versionCode') ? project.versionCode.toInteger() : gitVersion.code
+        versionName project.hasProperty('versionName') ? project.versionName : gitVersion.name
     }
     signingConfigs {
         debug {

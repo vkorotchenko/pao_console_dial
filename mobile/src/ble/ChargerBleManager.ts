@@ -4,6 +4,7 @@ import {Buffer} from 'buffer';
 import {useAppStore} from '../store/useAppStore';
 import {ChargerDirectData, ChargeState} from '../types';
 import {decodeCharValue} from './decodeCharValue';
+import {decodeFirmwareVersion} from './firmwareVersion';
 
 export const CHARGER_SERVICE_UUID = '000027b0-0000-1000-8000-00805f9b34fb';
 
@@ -57,30 +58,10 @@ export const CMD_OTA_END    = 11; // payload: empty
 export const CMD_OTA_ABORT  = 12; // payload: empty
 export const CMD_OTA_VERIFY = 13; // payload: empty (post-reconnect verify gate)
 
-/**
- * Decode the 4-byte firmware version payload (little-endian) to the canonical
- * bare semver string (no "v" prefix — the prefix is a display-time concern,
- * applied by `formatVersion()` at render time).
- * Format: [major, minor, patch, build] → "MAJOR.MINOR.PATCH+BUILD"
- *         When build == 0, render as "MAJOR.MINOR.PATCH".
- * Returns null if the payload is missing or shorter than 4 bytes.
- *
- * History: previously returned "vMAJOR.MINOR.PATCH..." which produced the
- * "vv0.0.0" double-prefix bug when UI sites also prepended "v" at render
- * time. Storage is now bare so that `compare()` in semver.ts works directly
- * against `latestReleaseVersion` (also bare, e.g. "0.1.0").
- */
-function decodeFirmwareVersion(base64Value: string | null | undefined): string | null {
-  if (!base64Value) return null;
-  const bytes = Buffer.from(base64Value, 'base64');
-  if (bytes.length < 4) return null;
-  const major = bytes[0];
-  const minor = bytes[1];
-  const patch = bytes[2];
-  const build = bytes[3];
-  const base = `${major}.${minor}.${patch}`;
-  return build === 0 ? base : `${base}+${build}`;
-}
+// `decodeFirmwareVersion` lives in ./firmwareVersion so the dial BLE manager
+// (PaoBleManager) can reuse it for the byte-identical 4-byte LE version
+// payload on `ff250001-…` (Decision #58 / #61 B-3). DO NOT re-introduce a
+// parallel decoder here — keep one source of truth for the wire format.
 
 function logBleRead(label: string, value: string | null | undefined, divisor = 1): void {
   if (!value) { console.log(`[BleInit] ${label}: FAILED/NULL`); return; }
@@ -186,7 +167,7 @@ export class ChargerBleManager {
             // Suppress noise when the charger is intentionally rebooting as
             // part of the OTA flow — the disconnect that fires here is
             // expected protocol behavior, not an error worth shouting about.
-            const otaPhase = useAppStore.getState().otaState;
+            const otaPhase = useAppStore.getState().ota.charger.state;
             if (otaPhase !== 'rebooting' && otaPhase !== 'reconnecting') {
               console.error(`ChargerBle monitor error (${charUUID}):`, error);
             }
@@ -257,7 +238,7 @@ export class ChargerBleManager {
         CHAR_FW_VERSION,
         (error: BleError | null, characteristic: any) => {
           if (error) {
-            const otaPhase = useAppStore.getState().otaState;
+            const otaPhase = useAppStore.getState().ota.charger.state;
             if (otaPhase !== 'rebooting' && otaPhase !== 'reconnecting') {
               console.error(`ChargerBle monitor error (${CHAR_FW_VERSION}):`, error);
             }

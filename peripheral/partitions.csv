@@ -1,0 +1,24 @@
+# Dial (ESP32-S3 peripheral) partition layout — 16 MB flash, OTA-capable.
+# Mirrors the charger's OTA layout (Decision #43/#52) but sized for the 16 MB
+# dial flash instead of the charger's 8 MB.
+#
+# Two app slots ("ota_0" / "ota_1") let us flash a new image into the inactive
+# bank, mark it as boot, and roll back automatically if the new image fails to
+# call esp_ota_mark_app_valid_cancel_rollback() at boot.
+#
+# Sized at ~3 MB per slot — current dial build is ~1.2 MB, so ~2.5x headroom.
+# This is deliberately tighter than Espressif's stock default_16MB.csv (which
+# splits two 6.25 MB slots) so the SPIFFS region has room to host fonts,
+# rotated logs, or future filesystem-backed assets without re-partitioning.
+#
+# App partition offsets must be 0x10000-aligned.
+#
+# Name,     Type, SubType,   Offset,    Size,      Flags
+nvs,        data, nvs,       0x9000,    0x5000
+otadata,    data, ota,       0xE000,    0x2000
+nvs_keys,   data, nvs_keys,  0x10000,   0x1000,    encrypted
+phy_init,   data, phy,       0x11000,   0x1000
+app0,       app,  ota_0,     0x20000,   0x300000
+app1,       app,  ota_1,     0x320000,  0x300000
+spiffs,     data, spiffs,    0x620000,  0x9D0000
+coredump,   data, coredump,  0xFF0000,  0x10000

@@ -32,7 +32,7 @@ protected:
 
 public:
     ChargeScreen() {};
-    void display(TFT_eSprite* sprite, Arduino_ST7701_RGBPanel* gfx) override;
+    void display(TFT_eSprite* sprite, Arduino_RGB_Display* gfx) override;
     void onScroll(int x, TFT_eSprite* sprite) override;
     void onTouch(int x, int y, TFT_eSprite* sprite) override;
     bool onClick(TFT_eSprite* sprite) override;

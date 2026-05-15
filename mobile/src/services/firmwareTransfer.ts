@@ -1,5 +1,23 @@
 import {Subscription} from 'react-native-ble-plx';
-import {chargerBleManager, CMD_OTA_BEGIN, CMD_OTA_END, CMD_OTA_ABORT} from '../ble/ChargerBleManager';
+import {
+  chargerBleManager,
+  CMD_OTA_BEGIN,
+  CMD_OTA_END,
+  CMD_OTA_ABORT,
+} from '../ble/ChargerBleManager';
+import {
+  paoBleManager,
+  PAO_CMD_OTA_BEGIN,
+  PAO_CMD_OTA_END,
+  PAO_CMD_OTA_ABORT,
+} from '../ble/PaoBleManager';
+import {
+  controllerBleManager,
+  CTRL_CMD_OTA_BEGIN,
+  CTRL_CMD_OTA_END,
+  CTRL_CMD_OTA_ABORT,
+} from '../ble/ControllerBleManager';
+import {OtaTarget} from '../store/useAppStore';
 
 // ---------------------------------------------------------------------------
 // Pure BLE OTA transfer logic.
@@ -10,9 +28,20 @@ import {chargerBleManager, CMD_OTA_BEGIN, CMD_OTA_END, CMD_OTA_ABORT} from '../b
 // (otaOrchestrator), UI state.
 //
 // Protocol contract (must match firmware exactly):
-//   - 0xFF26 WRITE_WITHOUT_RESPONSE: chunked firmware bytes
-//   - 0xFF27 NOTIFY: 5-byte status [code: u8][bytes_received: u32 LE]
-//   - 0xFF05 WRITE: cmd dispatcher
+//
+//   Charger (16-bit UUIDs):
+//     - 0xFF26 WRITE_WITHOUT_RESPONSE: chunked firmware bytes
+//     - 0xFF27 NOTIFY: 5-byte status [code: u8][bytes_received: u32 LE]
+//     - 0xFF05 WRITE: cmd dispatcher
+//
+//   Dial (128-bit UUIDs, all under PAO service c909d45a-…):
+//     - ff260001-… WRITE_WITHOUT_RESPONSE: chunked firmware bytes
+//     - ff270001-… NOTIFY: 5-byte status [code: u8][bytes_received: u32 LE]
+//     - ff050001-… WRITE: cmd dispatcher
+//
+// Cmd codes (10/11/12/13), status codes (0x00–0x17), and payload shapes are
+// IDENTICAL across both targets — Bart engineered this on purpose so the
+// transfer engine can drive either through a single profile dispatch.
 //
 // Status codes (from 0xFF27):
 //   0x00 IDLE                 — no-op
@@ -77,6 +106,73 @@ export interface TransferOpts {
   signal: AbortSignal;
   onProgress?: (bytesSent: number, total: number) => void;
   onPhase?: (phase: TransferPhase) => void;
+}
+
+// ---------------------------------------------------------------------------
+// OTA target profile. Abstracts away which BLE manager + which cmd opcodes
+// the transfer engine should use. Each target's BLE manager exposes the SAME
+// method names (`requestOtaMtu`, `subscribeOtaStatus`, `writeOtaCommand`,
+// `writeOtaChunk`, `readFirmwareVersion`, `getConnectedDevice`) — added to
+// PaoBleManager to mirror ChargerBleManager. So once a profile is resolved
+// we can drive the transfer without further branching.
+//
+// The opcodes are duplicated per-manager but their numeric values match
+// (10/11/12 — Bart guarantees wire-identicality with the charger). Choosing
+// per-target here just keeps each manager's exports self-contained.
+// ---------------------------------------------------------------------------
+
+interface OtaManager {
+  requestOtaMtu(): Promise<number>;
+  subscribeOtaStatus(
+    handler: (code: number, bytesReceived: number) => void,
+  ): Subscription;
+  writeOtaCommand(cmd: number, payload?: Uint8Array): Promise<void>;
+  writeOtaChunk(chunk: Uint8Array): Promise<void>;
+}
+
+interface OtaProfile {
+  target: OtaTarget;
+  manager: OtaManager;
+  cmd: {begin: number; end: number; abort: number};
+}
+
+function getProfile(target: OtaTarget): OtaProfile {
+  switch (target) {
+    case 'charger':
+      return {
+        target,
+        manager: chargerBleManager,
+        cmd: {
+          begin: CMD_OTA_BEGIN,
+          end: CMD_OTA_END,
+          abort: CMD_OTA_ABORT,
+        },
+      };
+    case 'dial':
+      return {
+        target,
+        manager: paoBleManager,
+        cmd: {
+          begin: PAO_CMD_OTA_BEGIN,
+          end: PAO_CMD_OTA_END,
+          abort: PAO_CMD_OTA_ABORT,
+        },
+      };
+    case 'controller':
+      return {
+        target,
+        manager: controllerBleManager,
+        cmd: {
+          begin: CTRL_CMD_OTA_BEGIN,
+          end: CTRL_CMD_OTA_END,
+          abort: CTRL_CMD_OTA_ABORT,
+        },
+      };
+    default: {
+      const _exhaustive: never = target;
+      throw new Error(`firmwareTransfer: unknown target ${_exhaustive}`);
+    }
+  }
 }
 
 export class OtaAbortedError extends Error {
@@ -232,8 +328,10 @@ class StatusPipe {
   // late-arriving status notification.
   public lastBytesReceived = 0;
 
+  constructor(private readonly manager: OtaManager) {}
+
   start(): void {
-    this.subscription = chargerBleManager.subscribeOtaStatus((code, bytesReceived) => {
+    this.subscription = this.manager.subscribeOtaStatus((code, bytesReceived) => {
       const ev = {code, bytesReceived};
       if (code === OTA_STATUS.ACK || isErrorCode(code)) {
         this.lastBytesReceived = Math.max(this.lastBytesReceived, bytesReceived);
@@ -336,6 +434,7 @@ async function expectStatus(
  * Android BLE writes and almost always succeeds on retry.
  */
 export async function transferFirmware(
+  target: OtaTarget,
   bytes: Uint8Array,
   expectedSha256Hex: string,
   opts: TransferOpts,
@@ -347,10 +446,11 @@ export async function transferFirmware(
     throw new Error('expectedSha256Hex must be 64 lowercase hex chars');
   }
 
+  const profile = getProfile(target);
   const {signal, onProgress, onPhase} = opts;
   const total = bytes.byteLength;
 
-  const pipe = new StatusPipe();
+  const pipe = new StatusPipe(profile.manager);
   let abortListener: (() => void) | null = null;
 
   // Wire up abort. We don't immediately throw on abort; the state machine
@@ -368,14 +468,14 @@ export async function transferFirmware(
   try {
     // ── 1. MTU ──────────────────────────────────────────────────────────────
     onPhase?.('requesting_mtu');
-    const mtu = await chargerBleManager.requestOtaMtu();
+    const mtu = await profile.manager.requestOtaMtu();
     const chunkSize = Math.max(20, Math.min(MAX_CHUNK_SIZE, mtu - 3));
-    console.log(`[OTA] starting transfer: total=${total}B chunkSize=${chunkSize}B mtu=${mtu}`);
+    console.log(`[OTA] starting ${target} transfer: total=${total}B chunkSize=${chunkSize}B mtu=${mtu}`);
 
     // Fail-fast: if the negotiated MTU is below what the OTA_BEGIN payload
     // needs, the OS will reject the very first write with "Operation was
     // rejected" — and the user gets a confusing dead-end. Surface a clear,
-    // actionable error instead. The charger may need to be power-cycled or
+    // actionable error instead. The device may need to be power-cycled or
     // reconnected so MTU re-negotiation has another chance to land on 247+.
     if (mtu < MIN_MTU_FOR_OTA_BEGIN) {
       console.log('[ota] MTU too small for OTA_BEGIN payload — failing fast');
@@ -390,7 +490,7 @@ export async function transferFirmware(
     // ── 3. OTA_BEGIN ────────────────────────────────────────────────────────
     onPhase?.('sending_begin');
     const beginPayload = buildBeginPayload(total, expectedSha256Hex);
-    await chargerBleManager.writeOtaCommand(CMD_OTA_BEGIN, beginPayload);
+    await profile.manager.writeOtaCommand(profile.cmd.begin, beginPayload);
 
     // ── 4. await READY ──────────────────────────────────────────────────────
     await expectStatus(pipe, OTA_STATUS.READY, READY_TIMEOUT_MS);
@@ -410,7 +510,7 @@ export async function transferFirmware(
       const chunk = bytes.subarray(offset, end);
 
       try {
-        await chargerBleManager.writeOtaChunk(chunk);
+        await profile.manager.writeOtaChunk(chunk);
       } catch (e: any) {
         // Android GATT_INTERNAL_ERROR (status 129): retry the chunk once.
         // It almost always succeeds on retry; if it doesn't, bubble.
@@ -459,7 +559,7 @@ export async function transferFirmware(
     checkAbort();
 
     // ── 6. OTA_END ──────────────────────────────────────────────────────────
-    // Expected protocol reality: after the charger receives cmd=11 it commits
+    // Expected protocol reality: after the device receives cmd=11 it commits
     // the image and reboots. On Android, the GATT stack frequently drops the
     // ACK for this write because the link tears down faster than the stack
     // can confirm it — surfacing as `GATT_ERROR status 133` / `errorCode 401`
@@ -469,7 +569,7 @@ export async function transferFirmware(
     // phase instead of bubbling a confusing error to the UI.
     onPhase?.('sending_end');
     try {
-      await chargerBleManager.writeOtaCommand(CMD_OTA_END);
+      await profile.manager.writeOtaCommand(profile.cmd.end);
     } catch (endErr: any) {
       if (isExpectedRebootError(endErr)) {
         console.log('[OTA] cmd=11 write returned an expected post-reboot disconnect — proceeding to reconnect');
@@ -508,7 +608,7 @@ export async function transferFirmware(
     if (signal.aborted && !(e instanceof OtaAbortedError)) {
       // Convert any in-flight error into an abort if the user requested it.
       try {
-        await chargerBleManager.writeOtaCommand(CMD_OTA_ABORT);
+        await profile.manager.writeOtaCommand(profile.cmd.abort);
         await Promise.race([
           expectStatus(pipe, OTA_STATUS.ABORTED, ABORT_TIMEOUT_MS),
           new Promise<void>(resolve => setTimeout(() => resolve(), ABORT_TIMEOUT_MS)),
@@ -521,9 +621,9 @@ export async function transferFirmware(
       throw new OtaAbortedError();
     }
     if (e instanceof OtaAbortedError) {
-      // Tell the charger about the abort so it can clean up its OTA partition.
+      // Tell the device about the abort so it can clean up its OTA partition.
       try {
-        await chargerBleManager.writeOtaCommand(CMD_OTA_ABORT);
+        await profile.manager.writeOtaCommand(profile.cmd.abort);
         await Promise.race([
           expectStatus(pipe, OTA_STATUS.ABORTED, ABORT_TIMEOUT_MS),
           new Promise<void>(resolve => setTimeout(() => resolve(), ABORT_TIMEOUT_MS)),

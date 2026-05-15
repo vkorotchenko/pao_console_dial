@@ -1,8 +1,6 @@
 #ifndef _ARDUINO_NV3041A_H_
 #define _ARDUINO_NV3041A_H_
 
-#include <Arduino.h>
-#include <Print.h>
 #include "../Arduino_GFX.h"
 #include "../Arduino_TFT.h"
 
@@ -316,7 +314,7 @@ public:
       bool ips = false, int16_t w = NV3041A_TFTWIDTH, int16_t h = NV3041A_TFTHEIGHT,
       uint8_t col_offset1 = 0, uint8_t row_offset1 = 0, uint8_t col_offset2 = 0, uint8_t row_offset2 = 0);
 
-  void begin(int32_t speed = GFX_NOT_DEFINED) override;
+  bool begin(int32_t speed = GFX_NOT_DEFINED) override;
 
   void setRotation(uint8_t r) override;
 

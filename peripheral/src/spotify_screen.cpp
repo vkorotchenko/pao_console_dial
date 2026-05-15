@@ -50,12 +50,12 @@ void SpotifyScreen::onTouch(int x, int y, TFT_eSprite *sprite)
     if (cmd != 0) paoBle().notifyMediaCommand(cmd);
 };
 
-void SpotifyScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
+void SpotifyScreen::display(TFT_eSprite *sprite, Arduino_RGB_Display *gfx) {
     // Spotify screen is static - just need to ensure sprite is displayed
     // Content is drawn once in onLoad() and doesn't need per-frame updates
     // The main loop handles pushing the sprite to the display
 };
-void SpotifyScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
+void SpotifyScreen::onLoad(TFT_eSprite *sprite, Arduino_RGB_Display *gfx)
 {
     // Clear screen with black background
     sprite->fillSprite(TFT_BLACK);

@@ -42,7 +42,7 @@ export default function DashboardScreen() {
 
   const getChargeStateLabel = (state?: ChargeState): string => {
     switch (state) {
-      case ChargeState.NOT_CHARGING: return 'NOT CHARGING';
+      case ChargeState.STOPPED: return 'STOPPED';
       case ChargeState.CHARGING: return 'CHARGING';
       case ChargeState.COMPLETE: return 'COMPLETE';
       default: return '—';

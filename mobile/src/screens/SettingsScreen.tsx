@@ -22,6 +22,7 @@ import {chargerBleManager} from '../ble/ChargerBleManager';
 import {requestBlePermissions} from '../utils/permissions';
 import {
   checkForChargerUpdate,
+  checkForUpdate,
   prepareOtaPayload,
   cancelOtaPreparation,
 } from '../services/otaController';
@@ -36,8 +37,9 @@ import {
   canRequestInstalls,
   openInstallPermissionSettings,
 } from '../services/apkInstaller';
-import {flashChargerFirmware} from '../services/otaOrchestrator';
-import {compare, formatVersion, parse} from '../services/semver';
+import {flashChargerFirmware, flashFirmware} from '../services/otaOrchestrator';
+import {formatVersion} from '../services/semver';
+import {computeUpdateOffer} from '../services/updateOffer';
 import _ScreenBrightness from 'react-native-screen-brightness';
 import {activateKeepAwake, deactivateKeepAwake} from '../utils/keepAwake';
 import {PageHeader} from '../components/PageHeader';
@@ -148,13 +150,68 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   const socWarnThresholdPct = useAppStore(state => state.socWarnThresholdPct);
   const setSocWarnThresholdPct = useAppStore(state => state.setSocWarnThresholdPct);
   const chargerFirmwareVersion = useAppStore(state => state.chargerFirmwareVersion);
-  const otaState = useAppStore(state => state.otaState);
-  const otaError = useAppStore(state => state.otaError);
-  const otaProgress = useAppStore(state => state.otaProgress);
-  const otaBytesReceived = useAppStore(state => state.otaBytesReceived);
-  const otaBytesTotal = useAppStore(state => state.otaBytesTotal);
-  const latestReleaseCheckedAt = useAppStore(state => state.latestReleaseCheckedAt);
-  const latestReleaseVersion = useAppStore(state => state.latestReleaseVersion);
+  // Per-target OTA selectors. Charger + dial both wired in Stream 2 —
+  // controller UI lands in Stream 3 once Bart's controller OTA chars ship.
+  const otaState = useAppStore(state => state.ota.charger.state);
+  const otaError = useAppStore(state => state.ota.charger.error);
+  const otaProgress = useAppStore(state => state.ota.charger.progress.frac);
+  const otaBytesReceived = useAppStore(
+    state => state.ota.charger.progress.received,
+  );
+  const otaBytesTotal = useAppStore(state => state.ota.charger.progress.total);
+  const latestReleaseCheckedAt = useAppStore(
+    state => state.ota.charger.latestReleaseCheckedAt,
+  );
+  const latestReleaseVersion = useAppStore(
+    state => state.ota.charger.latestRelease.version,
+  );
+  // ── Dial OTA selectors (Phase 5 mobile — Stream 2) ─────────────────────
+  // Mirrors the charger selectors above. `dialFirmwareVersion` is the
+  // currently-running version (top-level, persisted via partialize like
+  // chargerFirmwareVersion). The `ota.dial.*` slice is the multi-target
+  // shape from Decision #60.
+  const dialFirmwareVersion = useAppStore(state => state.dialFirmwareVersion);
+  const dialOtaState = useAppStore(state => state.ota.dial.state);
+  const dialOtaError = useAppStore(state => state.ota.dial.error);
+  const dialOtaProgress = useAppStore(state => state.ota.dial.progress.frac);
+  const dialOtaBytesReceived = useAppStore(
+    state => state.ota.dial.progress.received,
+  );
+  const dialOtaBytesTotal = useAppStore(
+    state => state.ota.dial.progress.total,
+  );
+  const dialLatestReleaseCheckedAt = useAppStore(
+    state => state.ota.dial.latestReleaseCheckedAt,
+  );
+  const dialLatestReleaseVersion = useAppStore(
+    state => state.ota.dial.latestRelease.version,
+  );
+  // ── Controller OTA selectors (Stream 3 mobile) ───────────────────────────
+  // Mirrors the dial selectors above. Controller is OTA-only (no telemetry
+  // on BLE) so there are no chargerData equivalents — just version + OTA state.
+  const controllerBleStatus = useAppStore(state => state.controllerBleStatus);
+  const controllerFirmwareVersion = useAppStore(
+    state => state.controllerFirmwareVersion,
+  );
+  const controllerOtaState = useAppStore(state => state.ota.controller.state);
+  const controllerOtaError = useAppStore(
+    state => state.ota.controller.error,
+  );
+  const controllerOtaProgress = useAppStore(
+    state => state.ota.controller.progress.frac,
+  );
+  const controllerOtaBytesReceived = useAppStore(
+    state => state.ota.controller.progress.received,
+  );
+  const controllerOtaBytesTotal = useAppStore(
+    state => state.ota.controller.progress.total,
+  );
+  const controllerLatestReleaseCheckedAt = useAppStore(
+    state => state.ota.controller.latestReleaseCheckedAt,
+  );
+  const controllerLatestReleaseVersion = useAppStore(
+    state => state.ota.controller.latestRelease.version,
+  );
   // App self-update — running app versionName plus detection fields
   // (latestAppReleaseVersion, etc) so the App row mirrors the Firmware row's
   // red-dot + "Latest available" hint + contextual button pattern.
@@ -182,6 +239,14 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   // FLAG_KEEP_SCREEN_ON on the Activity window — replaces the abandoned
   // `react-native-keep-awake` library that broke Gradle 9 CI builds.
   const flashAbortRef = useRef<AbortController | null>(null);
+  // Independent AbortController for the dial flash — dial + charger can be
+  // updated in the same session (just not literally concurrently, since
+  // there's only one phone). Keeping the refs separate so a charger flash
+  // doesn't inadvertently cancel a dial flash mid-run, or vice versa.
+  const dialFlashAbortRef = useRef<AbortController | null>(null);
+  // Independent AbortController for the controller flash — mirrors the
+  // dial ref above. Controller OTA runs through the same orchestrator path.
+  const controllerFlashAbortRef = useRef<AbortController | null>(null);
   const [hasWriteSettings, setHasWriteSettings] = useState<boolean | null>(null);
   // Tick once a minute so the "Last checked" relative time updates without
   // forcing a re-render of the rest of the screen. Cheap; runs only while
@@ -309,42 +374,15 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       Alert.alert('Update check failed', result.errorMessage ?? 'Unknown error');
       return;
     }
-    const {
-      chargerFirmwareVersion: fw,
-      latestReleaseVersion: latest,
-    } = useAppStore.getState();
-
-    // Note: the "no running firmware version" branch is unreachable here
-    // because the Check button is gated on charger BLE connection. If we
-    // can't talk to the charger, we never reach this handler. The
-    // "unrecognized version string" branch below is still reachable —
-    // charger may be connected but reporting a garbage version.
-    if (fw && !parse(fw)) {
-      Alert.alert(
-        "Couldn't determine running firmware",
-        `The charger reported an unrecognized firmware version (${fw}). Please reconnect or reflash.`,
-      );
-      return;
-    }
-    if (!latest) {
+    const s = useAppStore.getState();
+    const offer = computeUpdateOffer(s.chargerFirmwareVersion, s.ota.charger.latestRelease.version);
+    if (offer.kind === 'none') {
       Alert.alert('No releases available yet', 'No published charger firmware release was found.');
       return;
     }
-    // `fw` defensively guarded: the button is gated on charger BLE connection
-    // so `fw` should be present when we get here. If for some reason it isn't,
-    // we silently no-op rather than alert — the "Last checked" timestamp still
-    // updated via `checkForChargerUpdate`, and the red dot will appear if a
-    // newer release exists once a running version becomes known.
-    if (fw && compare(latest, fw) === 1) {
-      // Newer release exists — red dot + contextual button already convey it.
-      return;
-    }
-    // Up-to-date (latest <= running) → silent. The Firmware tab already
-    // shows "vX.Y.Z" + "Latest available: vX.Y.Z" right there on the
-    // charger-firmware row, so a modal alert would be redundant. The "Last checked: just
-    // now" line updates via `latestReleaseCheckedAt` (touched inside
-    // `checkForChargerUpdate`) so the user still gets feedback. Network /
-    // unknown-version / no-release error branches above continue to alert.
+    // 'update' and 'unknown-current' — red dot + contextual button already
+    // communicate the actionable state; no alert needed. 'up-to-date' → silent.
+    // Network / parse error branches above continue to alert.
   };
 
   // ── OTA flash flow handlers (consolidated into Settings) ────────────────
@@ -422,8 +460,8 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
         }
         console.log('[OTA] auto-revert to idle after done');
         const s = useAppStore.getState();
-        if (s.otaState === 'done') {
-          s.setOtaState('idle');
+        if (s.ota.charger.state === 'done') {
+          s.setOtaState('charger', 'idle');
         }
       }, 3000);
       return () => {
@@ -441,6 +479,151 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     return undefined;
   }, [otaState]);
 
+  // ── Dial OTA flash flow (Stream 2 mobile) ──────────────────────────────
+  // Mirrors the charger flow above. Independent abort ref + watchers so
+  // dial / charger don't interfere. Both share the global wake-lock — only
+  // one flash can run at a time in practice (single phone), so reusing the
+  // wake-lock is fine; the unmount cleanup releases it once.
+  const handleCheckForDialUpdates = async () => {
+    const result = await checkForUpdate('dial', {force: true});
+    if (!result.ok) {
+      Alert.alert('Update check failed', result.errorMessage ?? 'Unknown error');
+      return;
+    }
+    const s = useAppStore.getState();
+    const offer = computeUpdateOffer(s.dialFirmwareVersion, s.ota.dial.latestRelease.version);
+    if (offer.kind === 'none') {
+      Alert.alert('No releases available yet', 'No published dial firmware release was found.');
+      return;
+    }
+    // 'update' and 'unknown-current' — contextual button already surfaces the
+    // install affordance. 'up-to-date' → silent.
+  };
+
+  const onDialUpdateRequest = () => {
+    dialFlashAbortRef.current?.abort();
+    dialFlashAbortRef.current = new AbortController();
+    activateKeepAwake();
+    prepareOtaPayload('dial');
+  };
+
+  useEffect(() => {
+    if (dialOtaState !== 'ready' || !dialFlashAbortRef.current) {
+      return;
+    }
+    const controller = dialFlashAbortRef.current;
+    flashFirmware('dial', {signal: controller.signal});
+  }, [dialOtaState]);
+
+  const onDialUpdateCancel = () => {
+    dialFlashAbortRef.current?.abort();
+    cancelOtaPreparation('dial');
+  };
+
+  // Auto-revert 'done' → 'idle' for dial.
+  const dialAutoRevertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (dialOtaState === 'done') {
+      deactivateKeepAwake();
+      if (dialAutoRevertTimerRef.current) {
+        clearTimeout(dialAutoRevertTimerRef.current);
+      }
+      dialAutoRevertTimerRef.current = setTimeout(() => {
+        dialAutoRevertTimerRef.current = null;
+        if (!mountedRef.current) {
+          return;
+        }
+        console.log('[OTA:dial] auto-revert to idle after done');
+        const s = useAppStore.getState();
+        if (s.ota.dial.state === 'done') {
+          s.setOtaState('dial', 'idle');
+        }
+      }, 3000);
+      return () => {
+        if (dialAutoRevertTimerRef.current) {
+          clearTimeout(dialAutoRevertTimerRef.current);
+          dialAutoRevertTimerRef.current = null;
+        }
+      };
+    }
+    if (dialOtaState === 'idle' || dialOtaState === 'error') {
+      deactivateKeepAwake();
+    }
+    return undefined;
+  }, [dialOtaState]);
+
+  // ── Controller OTA flash flow (Stream 3 mobile) ───────────────────────────
+  // Mirrors the dial flow above. Independent abort ref + watchers so
+  // controller / charger / dial don't interfere. Controller is OTA-only —
+  // after connect, wirePostConnectSubscriptions() sets up version notify only.
+  const handleCheckForControllerUpdates = async () => {
+    const result = await checkForUpdate('controller', {force: true});
+    if (!result.ok) {
+      Alert.alert('Update check failed', result.errorMessage ?? 'Unknown error');
+      return;
+    }
+    const s = useAppStore.getState();
+    const offer = computeUpdateOffer(s.controllerFirmwareVersion, s.ota.controller.latestRelease.version);
+    if (offer.kind === 'none') {
+      Alert.alert('No releases available yet', 'No published controller firmware release was found.');
+      return;
+    }
+    // 'update' and 'unknown-current' — contextual button already surfaces the
+    // install affordance. 'up-to-date' → silent.
+  };
+
+  const onControllerUpdateRequest = () => {
+    controllerFlashAbortRef.current?.abort();
+    controllerFlashAbortRef.current = new AbortController();
+    activateKeepAwake();
+    prepareOtaPayload('controller');
+  };
+
+  useEffect(() => {
+    if (controllerOtaState !== 'ready' || !controllerFlashAbortRef.current) {
+      return;
+    }
+    const controller = controllerFlashAbortRef.current;
+    flashFirmware('controller', {signal: controller.signal});
+  }, [controllerOtaState]);
+
+  const onControllerUpdateCancel = () => {
+    controllerFlashAbortRef.current?.abort();
+    cancelOtaPreparation('controller');
+  };
+
+  // Auto-revert 'done' → 'idle' for controller.
+  const controllerAutoRevertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (controllerOtaState === 'done') {
+      deactivateKeepAwake();
+      if (controllerAutoRevertTimerRef.current) {
+        clearTimeout(controllerAutoRevertTimerRef.current);
+      }
+      controllerAutoRevertTimerRef.current = setTimeout(() => {
+        controllerAutoRevertTimerRef.current = null;
+        if (!mountedRef.current) {
+          return;
+        }
+        console.log('[OTA:controller] auto-revert to idle after done');
+        const s = useAppStore.getState();
+        if (s.ota.controller.state === 'done') {
+          s.setOtaState('controller', 'idle');
+        }
+      }, 3000);
+      return () => {
+        if (controllerAutoRevertTimerRef.current) {
+          clearTimeout(controllerAutoRevertTimerRef.current);
+          controllerAutoRevertTimerRef.current = null;
+        }
+      };
+    }
+    if (controllerOtaState === 'idle' || controllerOtaState === 'error') {
+      deactivateKeepAwake();
+    }
+    return undefined;
+  }, [controllerOtaState]);
+
   // Abort any in-flight flash on unmount. Also flips mountedRef so the
   // auto-revert timer (if still pending) becomes a no-op when it eventually
   // fires. Belt-and-suspenders wake-lock release in case we unmount mid-flash
@@ -453,27 +636,34 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
         clearTimeout(autoRevertTimerRef.current);
         autoRevertTimerRef.current = null;
       }
+      if (dialAutoRevertTimerRef.current) {
+        clearTimeout(dialAutoRevertTimerRef.current);
+        dialAutoRevertTimerRef.current = null;
+      }
+      if (controllerAutoRevertTimerRef.current) {
+        clearTimeout(controllerAutoRevertTimerRef.current);
+        controllerAutoRevertTimerRef.current = null;
+      }
       flashAbortRef.current?.abort();
+      dialFlashAbortRef.current?.abort();
+      controllerFlashAbortRef.current?.abort();
       deactivateKeepAwake();
     };
   }, []);
 
-  // Pre-compute the firmware section state so the JSX below stays readable.
-  const hasUpdateAvailable = (() => {
-    if (!chargerFirmwareVersion || !latestReleaseVersion) return false;
-    if (!parse(chargerFirmwareVersion)) return false;
-    return compare(latestReleaseVersion, chargerFirmwareVersion) === 1;
-  })();
+  // Pre-compute UpdateOffer for all four targets so the JSX below stays readable.
+  // Using computeUpdateOffer instead of bare booleans means null/unknown current
+  // version now yields 'unknown-current' (install affordance) rather than hiding
+  // the install button entirely — this is the bootstrap fix (Decision inbox entry
+  // milhouse-unknown-current-version-install-offer).
+  const chargerOffer = computeUpdateOffer(chargerFirmwareVersion, latestReleaseVersion);
+  const hasUpdateAvailable = chargerOffer.kind === 'update';
 
-  // Same idea for the App section. We need both the running app version AND
-  // a fetched latest release; if either is missing we can't compare. parse()
-  // is the guard against weird native build outputs (alpha/beta tags that
-  // don't fit X.Y.Z).
-  const hasAppUpdateAvailable = (() => {
-    if (!appVersion || !latestAppReleaseVersion) return false;
-    if (!parse(appVersion)) return false;
-    return compare(latestAppReleaseVersion, appVersion) === 1;
-  })();
+  // Same structure for the App section. parse() guards against weird native
+  // build outputs (alpha/beta tags that don't fit X.Y.Z) are now inside
+  // computeUpdateOffer, so we don't need to duplicate them here.
+  const appOffer = computeUpdateOffer(appVersion, latestAppReleaseVersion);
+  const hasAppUpdateAvailable = appOffer.kind === 'update';
   const isAppCheckInFlight = appUpdateState === 'checking';
 
   // Forced GitHub release check used by the App section's contextual button.
@@ -491,35 +681,14 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       appVersion: running,
       latestAppReleaseVersion: latest,
     } = useAppStore.getState();
-
-    if (!running) {
-      Alert.alert(
-        "Couldn't determine running app version",
-        'Restart the app and try again.',
-      );
-      return;
-    }
-    if (!parse(running)) {
-      Alert.alert(
-        "Couldn't determine running app version",
-        `The app reported an unrecognized version (${running}).`,
-      );
-      return;
-    }
-    if (!latest) {
+    const offer = computeUpdateOffer(running, latest);
+    if (offer.kind === 'none') {
       Alert.alert('No releases available yet', 'No published app release was found.');
       return;
     }
-    if (compare(latest, running) === 1) {
-      // Newer release exists — red dot + contextual button already convey it.
-      return;
-    }
-    // Up-to-date (latest <= running) → silent. The Firmware tab already
-    // shows "Mobile App: vX.Y.Z" and "Latest available: vX.Y.Z" right
-    // there, so a modal alert would be redundant. The "Last checked: just
-    // now" line updates via `latestAppReleaseCheckedAt` (touched inside
-    // `checkForMobileUpdate`) so the user still gets feedback. Network /
-    // unknown-version / no-release error branches above continue to alert.
+    // 'update' and 'unknown-current' — contextual button already surfaces the
+    // install affordance. 'up-to-date' → silent. Network / parse-error branches
+    // above continue to alert.
   };
 
   // Real install flow. On tap:
@@ -679,8 +848,11 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       return appUpdateState === 'downloading' ? 'Cancel' : '…';
     }
     if (appUpdateState === 'error') return 'Try again';
-    if (hasAppUpdateAvailable && latestAppReleaseVersion) {
-      return `Update to ${formatVersion(latestAppReleaseVersion)}`;
+    if (appOffer.kind === 'update') {
+      return `Update to ${formatVersion(appOffer.latest)}`;
+    }
+    if (appOffer.kind === 'unknown-current') {
+      return `Install latest`;
     }
     return 'Check for updates';
   })();
@@ -692,12 +864,23 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       onAppUpdateCancel();
       return;
     }
-    if (appUpdateState === 'error' && hasAppUpdateAvailable) {
+    if (appUpdateState === 'error' && (hasAppUpdateAvailable || appOffer.kind === 'unknown-current')) {
       onAppUpdateRequest();
       return;
     }
     if (hasAppUpdateAvailable) {
       onAppUpdateRequest();
+      return;
+    }
+    if (appOffer.kind === 'unknown-current') {
+      Alert.alert(
+        `Install ${formatVersion(appOffer.latest)}?`,
+        `The running version of this app could not be read.\n\nInstalling the latest release may fail if the app build is incompatible. Continue?`,
+        [
+          {text: 'Cancel', style: 'cancel'},
+          {text: 'Install anyway', onPress: onAppUpdateRequest},
+        ],
+      );
       return;
     }
     handleCheckForAppUpdates();
@@ -782,8 +965,11 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     if (otaState === 'error') {
       return 'Try again';
     }
-    if (hasUpdateAvailable && latestReleaseVersion) {
-      return `Update to ${formatVersion(latestReleaseVersion)}`;
+    if (chargerOffer.kind === 'update') {
+      return `Update to ${formatVersion(chargerOffer.latest)}`;
+    }
+    if (chargerOffer.kind === 'unknown-current') {
+      return 'Install latest';
     }
     return 'Check for updates';
   })();
@@ -794,7 +980,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       onUpdateCancel();
       return;
     }
-    if (otaState === 'error' && hasUpdateAvailable) {
+    if (otaState === 'error' && (hasUpdateAvailable || chargerOffer.kind === 'unknown-current')) {
       // Retry the install path.
       onUpdateRequest();
       return;
@@ -803,7 +989,204 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
       onUpdateRequest();
       return;
     }
+    if (chargerOffer.kind === 'unknown-current') {
+      Alert.alert(
+        `Install ${formatVersion(chargerOffer.latest)}?`,
+        `The running version on this charger could not be read.\n\nInstalling the latest release may fail if the charger doesn't support over-the-air updates yet. For a freshly-acquired charger, a USB flash is required for the first deploy.\n\nContinue?`,
+        [
+          {text: 'Cancel', style: 'cancel'},
+          {text: 'Install anyway', onPress: onUpdateRequest},
+        ],
+      );
+      return;
+    }
     handleCheckForUpdates();
+  };
+
+  // ── Dial OTA derivations — mirror the charger block above ──────────────
+  const dialOffer = computeUpdateOffer(dialFirmwareVersion, dialLatestReleaseVersion);
+  const hasDialUpdateAvailable = dialOffer.kind === 'update';
+
+  const isDialOtaInFlight =
+    dialOtaState === 'checking' ||
+    dialOtaState === 'downloading' ||
+    dialOtaState === 'verifying' ||
+    dialOtaState === 'transferring' ||
+    dialOtaState === 'rebooting' ||
+    dialOtaState === 'reconnecting' ||
+    dialOtaState === 'finalizing';
+
+  const dialProgressPctRaw = Number.isFinite(dialOtaProgress)
+    ? Math.max(0, Math.min(1, dialOtaProgress as number)) * 100
+    : 0;
+  const dialProgressPct = Math.round(dialProgressPctRaw);
+
+  const dialBytesPresent =
+    typeof dialOtaBytesReceived === 'number' &&
+    Number.isFinite(dialOtaBytesReceived) &&
+    dialOtaBytesReceived >= 0 &&
+    typeof dialOtaBytesTotal === 'number' &&
+    Number.isFinite(dialOtaBytesTotal) &&
+    dialOtaBytesTotal > 0;
+  const showDialBytesLine =
+    (dialOtaState === 'downloading' || dialOtaState === 'transferring') &&
+    dialBytesPresent;
+
+  const dialPhaseLabel = (() => {
+    switch (dialOtaState) {
+      case 'checking':
+        return 'Checking…';
+      case 'downloading':
+        return 'Downloading…';
+      case 'verifying':
+        return 'Verifying…';
+      case 'transferring':
+        return 'Transferring…';
+      case 'rebooting':
+        return 'Dial restarting…';
+      case 'reconnecting':
+        return 'Reconnecting…';
+      case 'finalizing':
+        return 'Finalizing…';
+      default:
+        return '';
+    }
+  })();
+
+  const dialFirmwareButtonLabel = (() => {
+    if (isDialOtaInFlight) {
+      return dialOtaState === 'transferring' ? 'Cancel' : '…';
+    }
+    if (dialOtaState === 'error') {
+      return 'Try again';
+    }
+    if (dialOffer.kind === 'update') {
+      return `Update to ${formatVersion(dialOffer.latest)}`;
+    }
+    if (dialOffer.kind === 'unknown-current') {
+      return 'Install latest';
+    }
+    return 'Check for updates';
+  })();
+
+  const onDialFirmwareButtonPress = () => {
+    if (isDialOtaInFlight) {
+      onDialUpdateCancel();
+      return;
+    }
+    if (dialOtaState === 'error' && (hasDialUpdateAvailable || dialOffer.kind === 'unknown-current')) {
+      onDialUpdateRequest();
+      return;
+    }
+    if (hasDialUpdateAvailable) {
+      onDialUpdateRequest();
+      return;
+    }
+    if (dialOffer.kind === 'unknown-current') {
+      Alert.alert(
+        `Install ${formatVersion(dialOffer.latest)}?`,
+        `The running version on this dial could not be read.\n\nInstalling the latest release may fail if the dial doesn't support over-the-air updates yet. For a freshly-acquired dial, a USB flash is required for the first deploy.\n\nContinue?`,
+        [
+          {text: 'Cancel', style: 'cancel'},
+          {text: 'Install anyway', onPress: onDialUpdateRequest},
+        ],
+      );
+      return;
+    }
+    handleCheckForDialUpdates();
+  };
+
+  // ── Controller OTA derivations — mirror the dial block above ──────────────
+  const controllerOffer = computeUpdateOffer(controllerFirmwareVersion, controllerLatestReleaseVersion);
+  const hasControllerUpdateAvailable = controllerOffer.kind === 'update';
+
+  const isControllerOtaInFlight =
+    controllerOtaState === 'checking' ||
+    controllerOtaState === 'downloading' ||
+    controllerOtaState === 'verifying' ||
+    controllerOtaState === 'transferring' ||
+    controllerOtaState === 'rebooting' ||
+    controllerOtaState === 'reconnecting' ||
+    controllerOtaState === 'finalizing';
+
+  const controllerProgressPctRaw = Number.isFinite(controllerOtaProgress)
+    ? Math.max(0, Math.min(1, controllerOtaProgress as number)) * 100
+    : 0;
+  const controllerProgressPct = Math.round(controllerProgressPctRaw);
+
+  const controllerBytesPresent =
+    typeof controllerOtaBytesReceived === 'number' &&
+    Number.isFinite(controllerOtaBytesReceived) &&
+    controllerOtaBytesReceived >= 0 &&
+    typeof controllerOtaBytesTotal === 'number' &&
+    Number.isFinite(controllerOtaBytesTotal) &&
+    controllerOtaBytesTotal > 0;
+  const showControllerBytesLine =
+    (controllerOtaState === 'downloading' || controllerOtaState === 'transferring') &&
+    controllerBytesPresent;
+
+  const controllerPhaseLabel = (() => {
+    switch (controllerOtaState) {
+      case 'checking':
+        return 'Checking…';
+      case 'downloading':
+        return 'Downloading…';
+      case 'verifying':
+        return 'Verifying…';
+      case 'transferring':
+        return 'Transferring…';
+      case 'rebooting':
+        return 'Controller restarting…';
+      case 'reconnecting':
+        return 'Reconnecting…';
+      case 'finalizing':
+        return 'Finalizing…';
+      default:
+        return '';
+    }
+  })();
+
+  const controllerFirmwareButtonLabel = (() => {
+    if (isControllerOtaInFlight) {
+      return controllerOtaState === 'transferring' ? 'Cancel' : '…';
+    }
+    if (controllerOtaState === 'error') {
+      return 'Try again';
+    }
+    if (controllerOffer.kind === 'update') {
+      return `Update to ${formatVersion(controllerOffer.latest)}`;
+    }
+    if (controllerOffer.kind === 'unknown-current') {
+      return 'Install latest';
+    }
+    return 'Check for updates';
+  })();
+
+  const onControllerFirmwareButtonPress = () => {
+    if (isControllerOtaInFlight) {
+      onControllerUpdateCancel();
+      return;
+    }
+    if (controllerOtaState === 'error' && (hasControllerUpdateAvailable || controllerOffer.kind === 'unknown-current')) {
+      onControllerUpdateRequest();
+      return;
+    }
+    if (hasControllerUpdateAvailable) {
+      onControllerUpdateRequest();
+      return;
+    }
+    if (controllerOffer.kind === 'unknown-current') {
+      Alert.alert(
+        `Install ${formatVersion(controllerOffer.latest)}?`,
+        `The running version on this controller could not be read.\n\nInstalling the latest release may fail if the controller doesn't support over-the-air updates yet. For a freshly-acquired controller, a USB flash is required for the first deploy.\n\nContinue?`,
+        [
+          {text: 'Cancel', style: 'cancel'},
+          {text: 'Install anyway', onPress: onControllerUpdateRequest},
+        ],
+      );
+      return;
+    }
+    handleCheckForControllerUpdates();
   };
 
   // Safe-area padding for the tab bar. PageHeader handles the status bar
@@ -1055,7 +1438,7 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
                 color="#5BA8C4"
               />
             </TouchableOpacity>
-            {hasAppUpdateAvailable && latestAppReleaseVersion ? (
+            {(hasAppUpdateAvailable || appOffer.kind === 'unknown-current') && latestAppReleaseVersion ? (
               <Text style={styles.fwHint}>
                 Latest available: {formatVersion(latestAppReleaseVersion)}
               </Text>
@@ -1063,12 +1446,16 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
           </View>
           <View style={styles.fwVersionRow}>
             <Text style={styles.value}>
-              {appVersion ? `v${appVersion}` : '—'}
+              {appOffer.kind === 'unknown-current'
+                ? 'Unknown'
+                : appVersion
+                  ? `v${appVersion}`
+                  : '—'}
             </Text>
-            {hasAppUpdateAvailable ? (
+            {hasAppUpdateAvailable || appOffer.kind === 'unknown-current' ? (
               <View
                 style={styles.updateDot}
-                accessibilityLabel="App update available"
+                accessibilityLabel={appOffer.kind === 'unknown-current' ? 'Install available' : 'App update available'}
               />
             ) : null}
           </View>
@@ -1171,14 +1558,16 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
           </View>
           <View style={styles.fwVersionRow}>
             <Text style={styles.value}>
-              {chargerFirmwareVersion
-                ? formatVersion(chargerFirmwareVersion)
-                : '—'}
+              {chargerOffer.kind === 'unknown-current'
+                ? 'Unknown'
+                : chargerFirmwareVersion
+                  ? formatVersion(chargerFirmwareVersion)
+                  : '—'}
             </Text>
-            {hasUpdateAvailable ? (
+            {hasUpdateAvailable || chargerOffer.kind === 'unknown-current' ? (
               <View
                 style={styles.updateDot}
-                accessibilityLabel="Update available"
+                accessibilityLabel={chargerOffer.kind === 'unknown-current' ? 'Install available' : 'Update available'}
               />
             ) : null}
           </View>
@@ -1268,11 +1657,271 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
             </View>
             <Text style={styles.fwHint}>
               {chargerBleStatus !== 'connected'
-                ? hasUpdateAvailable
+                ? hasUpdateAvailable || chargerOffer.kind === 'unknown-current'
                   ? 'Connect to the charger to install the update'
                   : 'Connect to the charger to check for updates'
                 : `Last checked: ${formatRelative(now, latestReleaseCheckedAt)}`}
             </Text>
+            {chargerOffer.kind === 'unknown-current' && chargerBleStatus === 'connected' ? (
+              <Text style={styles.fwHint}>
+                Install may fail if device firmware predates OTA support — USB flash required for first deploy.
+              </Text>
+            ) : null}
+          </View>
+        )}
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <View style={styles.fwTitleRow}>
+            {/* Dial firmware row — mirrors the Charger row above so the two
+                OTA targets present identically. Visual weight matches both
+                the Mobile App and Charger rows for parity. */}
+            <Text style={styles.fwRowTitle}>Dial</Text>
+            {dialLatestReleaseVersion ? (
+              <Text style={styles.fwHint}>
+                Latest available: {formatVersion(dialLatestReleaseVersion)}
+              </Text>
+            ) : null}
+          </View>
+          <View style={styles.fwVersionRow}>
+            <Text style={styles.value}>
+              {dialOffer.kind === 'unknown-current'
+                ? 'Unknown'
+                : dialFirmwareVersion
+                  ? formatVersion(dialFirmwareVersion)
+                  : '—'}
+            </Text>
+            {hasDialUpdateAvailable || dialOffer.kind === 'unknown-current' ? (
+              <View
+                style={styles.updateDot}
+                accessibilityLabel={dialOffer.kind === 'unknown-current' ? 'Install available' : 'Update available'}
+              />
+            ) : null}
+          </View>
+        </View>
+
+        <View style={styles.divider} />
+
+        {/* In-flight: phase label + progress bar + optional bytes/percent + Cancel
+            Mirrors the charger row above. For dial, "rebooting" / "reconnecting" /
+            "finalizing" show a spinner inline with the phase label. */}
+        {isDialOtaInFlight ? (
+          <View style={styles.fwBody}>
+            <Text style={styles.fwPhase}>
+              {dialPhaseLabel}
+              {dialOtaState === 'rebooting' ||
+              dialOtaState === 'reconnecting' ||
+              dialOtaState === 'finalizing' ? (
+                <ActivityIndicator
+                  size="small"
+                  color="#5BA8C4"
+                  style={styles.inlineSpinner}
+                />
+              ) : null}
+            </Text>
+            <View style={styles.progressBarTrack}>
+              <View
+                style={[styles.progressBarFill, {width: `${dialProgressPct}%`}]}
+              />
+            </View>
+            {showDialBytesLine ? (
+              <Text style={styles.fwBytes}>
+                {formatBytesShort(dialOtaBytesReceived)} /{' '}
+                {formatBytesShort(dialOtaBytesTotal)}
+                {` (${dialProgressPct}%)`}
+              </Text>
+            ) : null}
+            {dialOtaState === 'transferring' ||
+            dialOtaState === 'downloading' ||
+            dialOtaState === 'verifying' ? (
+              <View style={styles.fwButtonRow}>
+                <Button
+                  mode="outlined"
+                  onPress={onDialUpdateCancel}
+                  style={styles.fwFullWidthButton}>
+                  Cancel
+                </Button>
+              </View>
+            ) : null}
+          </View>
+        ) : dialOtaState === 'done' ? (
+          <View style={styles.fwBody}>
+            <Text style={styles.successText}>✓ Update complete</Text>
+            <View style={styles.fwButtonRow}>
+              <Button
+                mode="contained"
+                onPress={handleCheckForDialUpdates}
+                style={styles.fwFullWidthButton}>
+                Check for updates
+              </Button>
+            </View>
+            <Text style={styles.fwHint}>
+              Last checked: {formatRelative(now, dialLatestReleaseCheckedAt)}
+            </Text>
+          </View>
+        ) : dialOtaState === 'error' && dialOtaError ? (
+          <View style={styles.fwBody}>
+            <Text style={styles.errorText}>⚠ {dialOtaError}</Text>
+            <View style={styles.fwButtonRow}>
+              <Button
+                mode="contained"
+                onPress={onDialFirmwareButtonPress}
+                style={styles.fwFullWidthButton}>
+                {dialFirmwareButtonLabel}
+              </Button>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.fwBody}>
+            <View style={styles.fwButtonRow}>
+              <Button
+                mode="contained"
+                onPress={onDialFirmwareButtonPress}
+                disabled={bleStatus !== 'connected'}
+                style={styles.fwFullWidthButton}>
+                {dialFirmwareButtonLabel}
+              </Button>
+            </View>
+            <Text style={styles.fwHint}>
+              {bleStatus !== 'connected'
+                ? hasDialUpdateAvailable || dialOffer.kind === 'unknown-current'
+                  ? 'Connect to the dial to install the update'
+                  : 'Connect to the dial to check for updates'
+                : `Last checked: ${formatRelative(now, dialLatestReleaseCheckedAt)}`}
+            </Text>
+            {dialOffer.kind === 'unknown-current' && bleStatus === 'connected' ? (
+              <Text style={styles.fwHint}>
+                Install may fail if device firmware predates OTA support — USB flash required for first deploy.
+              </Text>
+            ) : null}
+          </View>
+        )}
+      </View>
+
+      {/* Controller firmware row — mirrors the Dial row above. Controller is
+          OTA-only on BLE; telemetry routes through the dial. The button is
+          gated on controllerBleStatus === 'connected' because OTA_BEGIN
+          requires an active GATT connection to 0x27B1. */}
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <View style={styles.fwTitleRow}>
+            <Text style={styles.fwRowTitle}>Controller</Text>
+            {controllerLatestReleaseVersion ? (
+              <Text style={styles.fwHint}>
+                Latest available: {formatVersion(controllerLatestReleaseVersion)}
+              </Text>
+            ) : null}
+          </View>
+          <View style={styles.fwVersionRow}>
+            <Text style={styles.value}>
+              {controllerOffer.kind === 'unknown-current'
+                ? 'Unknown'
+                : controllerFirmwareVersion
+                  ? formatVersion(controllerFirmwareVersion)
+                  : '—'}
+            </Text>
+            {hasControllerUpdateAvailable || controllerOffer.kind === 'unknown-current' ? (
+              <View
+                style={styles.updateDot}
+                accessibilityLabel={controllerOffer.kind === 'unknown-current' ? 'Install available' : 'Update available'}
+              />
+            ) : null}
+          </View>
+        </View>
+
+        <View style={styles.divider} />
+
+        {/* In-flight: phase label + progress bar + optional bytes/percent + Cancel */}
+        {isControllerOtaInFlight ? (
+          <View style={styles.fwBody}>
+            <Text style={styles.fwPhase}>
+              {controllerPhaseLabel}
+              {controllerOtaState === 'rebooting' ||
+              controllerOtaState === 'reconnecting' ||
+              controllerOtaState === 'finalizing' ? (
+                <ActivityIndicator
+                  size="small"
+                  color="#5BA8C4"
+                  style={styles.inlineSpinner}
+                />
+              ) : null}
+            </Text>
+            <View style={styles.progressBarTrack}>
+              <View
+                style={[styles.progressBarFill, {width: `${controllerProgressPct}%`}]}
+              />
+            </View>
+            {showControllerBytesLine ? (
+              <Text style={styles.fwBytes}>
+                {formatBytesShort(controllerOtaBytesReceived)} /{' '}
+                {formatBytesShort(controllerOtaBytesTotal)}
+                {` (${controllerProgressPct}%)`}
+              </Text>
+            ) : null}
+            {controllerOtaState === 'transferring' ||
+            controllerOtaState === 'downloading' ||
+            controllerOtaState === 'verifying' ? (
+              <View style={styles.fwButtonRow}>
+                <Button
+                  mode="outlined"
+                  onPress={onControllerUpdateCancel}
+                  style={styles.fwFullWidthButton}>
+                  Cancel
+                </Button>
+              </View>
+            ) : null}
+          </View>
+        ) : controllerOtaState === 'done' ? (
+          <View style={styles.fwBody}>
+            <Text style={styles.successText}>✓ Update complete</Text>
+            <View style={styles.fwButtonRow}>
+              <Button
+                mode="contained"
+                onPress={handleCheckForControllerUpdates}
+                style={styles.fwFullWidthButton}>
+                Check for updates
+              </Button>
+            </View>
+            <Text style={styles.fwHint}>
+              Last checked: {formatRelative(now, controllerLatestReleaseCheckedAt)}
+            </Text>
+          </View>
+        ) : controllerOtaState === 'error' && controllerOtaError ? (
+          <View style={styles.fwBody}>
+            <Text style={styles.errorText}>⚠ {controllerOtaError}</Text>
+            <View style={styles.fwButtonRow}>
+              <Button
+                mode="contained"
+                onPress={onControllerFirmwareButtonPress}
+                style={styles.fwFullWidthButton}>
+                {controllerFirmwareButtonLabel}
+              </Button>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.fwBody}>
+            <View style={styles.fwButtonRow}>
+              <Button
+                mode="contained"
+                onPress={onControllerFirmwareButtonPress}
+                disabled={controllerBleStatus !== 'connected'}
+                style={styles.fwFullWidthButton}>
+                {controllerFirmwareButtonLabel}
+              </Button>
+            </View>
+            <Text style={styles.fwHint}>
+              {controllerBleStatus !== 'connected'
+                ? hasControllerUpdateAvailable || controllerOffer.kind === 'unknown-current'
+                  ? 'Connect to the controller to install the update'
+                  : 'Connect to the controller to check for updates'
+                : `Last checked: ${formatRelative(now, controllerLatestReleaseCheckedAt)}`}
+            </Text>
+            {controllerOffer.kind === 'unknown-current' && controllerBleStatus === 'connected' ? (
+              <Text style={styles.fwHint}>
+                Install may fail if device firmware predates OTA support — USB flash required for first deploy.
+              </Text>
+            ) : null}
           </View>
         )}
       </View>

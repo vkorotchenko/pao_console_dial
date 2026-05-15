@@ -195,7 +195,7 @@ void SpeedometerScreen::drawValueBar(
 
 // ── Main draw loop ────────────────────────────────────────────────────────────
 
-void SpeedometerScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
+void SpeedometerScreen::display(TFT_eSprite *sprite, Arduino_RGB_Display *gfx)
 {
     GlobalState &state = GlobalState::getInstance();
 
@@ -234,7 +234,7 @@ void SpeedometerScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gf
     drawValueBar(sprite, currentSpeed, speedUnit, currentBat, currentRPM, isGpsStale, isCanStale);
 }
 
-void SpeedometerScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
+void SpeedometerScreen::onLoad(TFT_eSprite *sprite, Arduino_RGB_Display *gfx)
 {
     sprite->fillSprite(TFT_BLACK);
     gfx->fillScreen(TFT_BLACK);

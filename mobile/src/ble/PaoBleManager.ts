@@ -10,6 +10,7 @@ import {
   encodeChargerConfig,
 } from './packets';
 import {Gear, ChargerConfig} from '../types';
+import {decodeFirmwareVersion} from './firmwareVersion';
 
 export const PAO_SERVICE_UUID = 'c909d45a-0560-4725-85e7-c20a9bbb74c2';
 const TELEMETRY_CHAR_UUID = 'c169df83-5127-46df-a18b-066672243018';
@@ -19,6 +20,37 @@ const SPEED_UNIT_CHAR_UUID = 'd3b4f172-9e8a-4c0b-a1d2-7f3e8c5b2a91';
 const MEDIA_CMD_CHAR_UUID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567891';
 const DEVICE_NAME = 'PAO Console';
 
+// ── Phase 1 + Phase 5 dial characteristics (Bart's firmware decisions
+//    #58 + dial-phase5-ota-firmware) ──────────────────────────────────────
+// Firmware version (Read + Notify). 4-byte LE payload `[major, minor, patch, build]` —
+// byte-identical to charger 0xFF25 (decodeFirmwareVersion handles both).
+export const PAO_FW_VERSION_CHAR_UUID =
+  'ff250001-5127-46df-a18b-066672243018';
+
+// OTA dispatcher (WRITE). cmd byte + payload — see firmwareTransfer.ts for
+// the cmd code table. This is NOT grafted onto CHARGER_CHAR_UUID (Bart's
+// design call — the existing charger config char is structured, not a cmd
+// dispatcher). New dedicated UUID.
+export const PAO_OTA_DISPATCH_CHAR_UUID =
+  'ff050001-5127-46df-a18b-066672243018';
+
+// OTA chunk receiver (WRITE_NR only). Up to (MTU-3) bytes per write.
+export const PAO_OTA_DATA_CHAR_UUID =
+  'ff260001-5127-46df-a18b-066672243018';
+
+// OTA status pipe (NOTIFY only). 5-byte payload `[code:u8][bytesReceived:u32 LE]`.
+// Wire-identical to charger 0xFF27 — same status-code decoder for both.
+export const PAO_OTA_STATUS_CHAR_UUID =
+  'ff270001-5127-46df-a18b-066672243018';
+
+// OTA command opcodes (mirror charger ChargerBleManager.ts CMD_OTA_* — same
+// firmware contract; redefined here so firmwareTransfer.ts can pick them up
+// per target without cross-importing between BLE managers).
+export const PAO_CMD_OTA_BEGIN = 10;
+export const PAO_CMD_OTA_END = 11;
+export const PAO_CMD_OTA_ABORT = 12;
+export const PAO_CMD_OTA_VERIFY = 13;
+
 export class PaoBleManager {
   private manager = sharedBleManager;
   private connectedDevice: Device | null = null;
@@ -27,6 +59,10 @@ export class PaoBleManager {
   private disconnectSubscription: Subscription | null = null;
   private speedUnitSubscription: Subscription | null = null;
   private mediaCmdSubscription: Subscription | null = null;
+  // Phase 1 dial: live firmware-version notifications (post-OTA reboot,
+  // firmware-side hot-swap). One subscription per connect, torn down by
+  // unsubscribeAll on disconnect.
+  private fwVersionSubscription: Subscription | null = null;
 
   /**
    * Scan for PAO Console devices
@@ -123,6 +159,14 @@ export class PaoBleManager {
       }
 
       this.subscribeToSpeedUnit();
+      // Phase 1 dial: read the firmware version characteristic + subscribe for
+      // live notifications. Both the read and the subscribe are best-effort —
+      // a dial running pre-Phase-1 firmware simply won't expose this char and
+      // both calls will reject; we swallow those failures so a legacy dial
+      // keeps connecting cleanly. The store value stays at its persisted
+      // last-known until a fresh read succeeds.
+      this.readDialFirmwareVersion().catch(() => {});
+      this.subscribeToDialFirmwareVersion();
       this.setupDisconnectHandler(deviceId);
 
       console.log('Connected successfully');
@@ -329,6 +373,281 @@ export class PaoBleManager {
     }
   }
 
+  // ── Phase 1 dial: firmware-version primitives ──────────────────────────
+  //
+  // The dial exposes its currently-running firmware version on
+  // PAO_FW_VERSION_CHAR_UUID (`ff250001-…`) — Read + Notify. The 4-byte LE
+  // payload is byte-identical to charger 0xFF25, so we reuse the shared
+  // `decodeFirmwareVersion` decoder (Decision #61 B-3 — no parallel decoder).
+  //
+  // The store field `dialFirmwareVersion` is intentionally NOT cleared on
+  // disconnect (mirrors the charger pattern in Decision #44) — wiping it on
+  // every transient drop would flicker the Settings row to "—" on every
+  // reconnect. A fresh read on next connect overwrites it.
+
+  /**
+   * Read the dial firmware version characteristic and push the decoded semver
+   * to the store. Used by the OTA orchestrator (after post-OTA reconnect) and
+   * by `connect()` for initial seeding. Returns the decoded version (or null
+   * on failure / decode error). Best-effort — failures don't disturb the
+   * connection.
+   */
+  async readDialFirmwareVersion(): Promise<string | null> {
+    if (!this.connectedDevice) return null;
+    try {
+      const ch = await this.connectedDevice.readCharacteristicForService(
+        PAO_SERVICE_UUID,
+        PAO_FW_VERSION_CHAR_UUID,
+      );
+      const ver = decodeFirmwareVersion(ch.value);
+      if (ver) {
+        console.log(
+          `[PaoBle] firmwareVersion read b64=${ch.value} decoded=${ver}`,
+        );
+        useAppStore.getState().setDialFirmwareVersion(ver);
+        return ver;
+      }
+      console.warn(
+        '[PaoBle] firmwareVersion read returned an unrecognised payload',
+      );
+      return null;
+    } catch (e) {
+      console.warn('[PaoBle] readDialFirmwareVersion failed:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Subscribe to live notifications on PAO_FW_VERSION_CHAR_UUID. Firmware
+   * notifies once on connect (Bart's Phase 1) and again post-OTA reboot when
+   * the new image comes up — so this catches both the initial state and the
+   * post-flash version flip without forcing a re-connect cycle.
+   */
+  subscribeToDialFirmwareVersion(): void {
+    if (!this.connectedDevice) return;
+    // Defensive: if a prior subscription is still around (e.g. stale state
+    // from a half-torn-down reconnect), drop it before re-monitoring.
+    this.fwVersionSubscription?.remove();
+    this.fwVersionSubscription =
+      this.connectedDevice.monitorCharacteristicForService(
+        PAO_SERVICE_UUID,
+        PAO_FW_VERSION_CHAR_UUID,
+        (error: BleError | null, characteristic: any) => {
+          if (error) {
+            // Suppress noise on the disconnect that fires when the dial reboots
+            // as part of the OTA flow — that disconnect is the protocol signal,
+            // not an error worth shouting about.
+            const otaPhase = useAppStore.getState().ota.dial.state;
+            if (otaPhase !== 'rebooting' && otaPhase !== 'reconnecting') {
+              console.warn(
+                `[PaoBle] firmwareVersion notify error: ${error.message}`,
+              );
+            }
+            return;
+          }
+          if (characteristic?.value) {
+            const ver = decodeFirmwareVersion(characteristic.value);
+            if (ver) {
+              console.log(
+                `[PaoBle] firmwareVersion notify b64=${characteristic.value} decoded=${ver}`,
+              );
+              useAppStore.getState().setDialFirmwareVersion(ver);
+            }
+          }
+        },
+      );
+  }
+
+  // ── Phase 5 dial: OTA primitives ────────────────────────────────────────
+  //
+  // Mirrors the OTA API surface on `ChargerBleManager`. The wire contract is
+  // byte-identical (cmd codes, status codes, payload shapes — see Decision
+  // #52 / dial-phase5-ota-firmware) so `firmwareTransfer.ts` and
+  // `otaOrchestrator.ts` can drive both targets through a single profile-
+  // dispatched interface. The only thing that differs is which characteristic
+  // UUIDs we write to / monitor.
+
+  /**
+   * Returns the connected dial device. Mirrors
+   * `ChargerBleManager.getConnectedDevice()` — used by the OTA orchestrator's
+   * reconnect path. Caller MUST refetch after a disconnect (the Device proxy
+   * is unsafe across reconnects).
+   */
+  getConnectedDevice(): Device | null {
+    return this.connectedDevice;
+  }
+
+  /**
+   * Returns true if currently connected to a dial device.
+   */
+  isConnected(): boolean {
+    return this.connectedDevice !== null;
+  }
+
+  /**
+   * Request MTU 517 (BLE spec max). The dial firmware sets MTU=517 in
+   * `paoService.begin()` (Decision #58 point 5) — the actual negotiated value
+   * is whichever the central + peripheral both accept (Android typically lands
+   * on 247, iOS on ~185). Returns the negotiated MTU; falls back to 23 if the
+   * platform doesn't support `requestMTU` (iOS auto-negotiates).
+   */
+  async requestOtaMtu(): Promise<number> {
+    if (!this.connectedDevice) {
+      throw new Error('PaoBle: Not connected');
+    }
+    try {
+      console.log('[ota] requesting dial MTU 517 on device', this.connectedDevice.id);
+      const updated = await this.connectedDevice.requestMTU(517);
+      const rawMtu = (updated as any)?.mtu;
+      const mtu = rawMtu ?? 23;
+      console.log('[ota] negotiated dial MTU:', mtu, '(raw=', rawMtu, ')');
+      return mtu;
+    } catch (e) {
+      console.warn('[OTA] requestMTU (dial) failed, falling back to 23:', e);
+      return 23;
+    }
+  }
+
+  /**
+   * Subscribe to the dial OTA status notify pipe (`ff270001-…`). 5-byte
+   * payload `[code:u8][bytesReceived:u32 LE]`. Returns the subscription so
+   * the caller can manage its lifecycle (the orchestrator re-subscribes on
+   * the new device after a post-OTA reconnect). Intentionally NOT added to
+   * `this.subscriptions` for that reason.
+   */
+  subscribeOtaStatus(
+    handler: (code: number, bytesReceived: number) => void,
+  ): Subscription {
+    if (!this.connectedDevice) {
+      throw new Error('PaoBle: Not connected');
+    }
+    return this.connectedDevice.monitorCharacteristicForService(
+      PAO_SERVICE_UUID,
+      PAO_OTA_STATUS_CHAR_UUID,
+      (error: BleError | null, characteristic: any) => {
+        if (error) {
+          // EOF / cancellation surfaces here on disconnect — expected mid-OTA
+          // when the dial reboots. The orchestrator's disconnect listener is
+          // the authoritative "reboot happened" signal.
+          if (!error.message?.includes('cancelled')) {
+            console.warn(`[OTA] dial status monitor error: ${error.message}`);
+          }
+          return;
+        }
+        if (!characteristic?.value) return;
+        const bytes = Buffer.from(characteristic.value, 'base64');
+        if (bytes.length < 5) {
+          console.warn(`[OTA] short dial status payload: ${bytes.length} bytes`);
+          return;
+        }
+        const code = bytes[0];
+        const view = new DataView(
+          bytes.buffer,
+          bytes.byteOffset,
+          bytes.byteLength,
+        );
+        const bytesReceived = view.getUint32(1, true);
+        handler(code, bytesReceived);
+      },
+    );
+  }
+
+  /**
+   * Write an OTA command to the dial dispatcher (`ff050001-…`) with an
+   * optional payload. Format on the wire: `[cmd: u8, ...payload]`. Uses
+   * write-with-response — the dial ACKs the write before we proceed.
+   *
+   * The 38-byte OTA_BEGIN payload (cmd + 4-byte size + 32-byte sha256) is
+   * the binding constraint on MTU; firmwareTransfer.ts fails fast if the
+   * negotiated MTU is too small.
+   */
+  async writeOtaCommand(cmd: number, payload?: Uint8Array): Promise<void> {
+    if (!this.connectedDevice) {
+      throw new Error('PaoBle: Not connected');
+    }
+    const len = 1 + (payload?.byteLength ?? 0);
+    const buf = Buffer.alloc(len);
+    buf[0] = cmd;
+    if (payload) {
+      buf.set(payload, 1);
+    }
+    if (cmd === PAO_CMD_OTA_BEGIN) {
+      console.log('[ota] writing dial OTA_BEGIN, bytes:', buf.length);
+    } else {
+      console.log(`[ota] writing dial OTA cmd=${cmd}, bytes:`, buf.length);
+    }
+    try {
+      await this.connectedDevice.writeCharacteristicWithResponseForService(
+        PAO_SERVICE_UUID,
+        PAO_OTA_DISPATCH_CHAR_UUID,
+        buf.toString('base64'),
+      );
+    } catch (err: any) {
+      const detail = {
+        message: err?.message,
+        errorCode: err?.errorCode,
+        attErrorCode: err?.attErrorCode,
+        androidErrorCode: err?.androidErrorCode,
+        iosErrorCode: err?.iosErrorCode,
+        reason: err?.reason,
+      };
+      if (cmd === PAO_CMD_OTA_BEGIN) {
+        console.log('[ota] dial OTA_BEGIN write failed:', JSON.stringify(detail));
+      } else {
+        console.log(`[ota] dial OTA cmd=${cmd} write failed:`, JSON.stringify(detail));
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Write a single OTA data chunk to `ff260001-…` (WRITE_NR). Hot path —
+   * the windowing protocol on top (see firmwareTransfer.ts) catches up with
+   * ACKs every WINDOW_SIZE chunks via the status pipe.
+   */
+  async writeOtaChunk(chunk: Uint8Array): Promise<void> {
+    if (!this.connectedDevice) {
+      throw new Error('PaoBle: Not connected');
+    }
+    const buf = Buffer.from(chunk);
+    await this.connectedDevice.writeCharacteristicWithoutResponseForService(
+      PAO_SERVICE_UUID,
+      PAO_OTA_DATA_CHAR_UUID,
+      buf.toString('base64'),
+    );
+  }
+
+  /**
+   * Read the dial firmware version and return the decoded semver string.
+   * Used by the OTA orchestrator after the post-OTA reconnect to confirm the
+   * new image booted before sending CMD_OTA_VERIFY. Wraps
+   * `readDialFirmwareVersion` to expose the same `readFirmwareVersion()` name
+   * as the charger manager — orchestrator-side dispatch stays uniform.
+   */
+  async readFirmwareVersion(): Promise<string | null> {
+    return this.readDialFirmwareVersion();
+  }
+
+  /**
+   * Wire up post-connect subscriptions used by the OTA orchestrator after a
+   * post-OTA reconnect. Mirrors `ChargerBleManager.wirePostConnectSubscriptions()`.
+   * For the dial we don't have the same broad telemetry-seed pattern (the
+   * existing `connect()` path drives speed unit + firmware version directly),
+   * so this is just re-establishing the firmware-version notify subscription.
+   * Idempotent — `subscribeToDialFirmwareVersion()` removes any prior sub
+   * before re-monitoring.
+   */
+  wirePostConnectSubscriptions(): void {
+    if (!this.connectedDevice) {
+      console.warn('[PaoBle] wirePostConnectSubscriptions: no device');
+      return;
+    }
+    this.subscribeToDialFirmwareVersion();
+    // Re-seed firmware version with an explicit read in case the device
+    // wasn't ready to notify yet at reconnect moment.
+    this.readDialFirmwareVersion().catch(() => {});
+  }
+
   /**
    * Disconnect from the current device
    */
@@ -402,6 +721,12 @@ export class PaoBleManager {
 
     this.mediaCmdSubscription?.remove();
     this.mediaCmdSubscription = null;
+
+    // Phase 1 dial: tear down firmware-version notify. The store value
+    // (dialFirmwareVersion) is intentionally NOT cleared here — it's a
+    // persisted "last-known" value (mirrors charger pattern, Decision #44).
+    this.fwVersionSubscription?.remove();
+    this.fwVersionSubscription = null;
 
     this.disconnectSubscription?.remove();
     this.disconnectSubscription = null;

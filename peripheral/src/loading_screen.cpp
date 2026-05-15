@@ -14,7 +14,7 @@ void LoadingScreen::onTouch(int x, int y, TFT_eSprite *sprite)
   return;
 };
 
-void LoadingScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
+void LoadingScreen::display(TFT_eSprite *sprite, Arduino_RGB_Display *gfx) {
   // Check if precharge is ready - if so, auto-advance to next screen
   GlobalState &state = GlobalState::getInstance();
   if (state.getPreChargeReady()) {
@@ -23,7 +23,7 @@ void LoadingScreen::display(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) {
   }
 };
 
-void LoadingScreen::onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx)
+void LoadingScreen::onLoad(TFT_eSprite *sprite, Arduino_RGB_Display *gfx)
 {
 
   sprite->fillSprite(TFT_SKYBLUE);

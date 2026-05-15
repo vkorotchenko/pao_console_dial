@@ -65,11 +65,20 @@ function formatRelative(now: number, then: number | null): string {
  */
 export default function FirmwareInfoScreen({onClose}: FirmwareInfoScreenProps) {
   const chargerFirmwareVersion = useAppStore(s => s.chargerFirmwareVersion);
-  const latestReleaseTag = useAppStore(s => s.latestReleaseTag);
-  const latestReleaseVersion = useAppStore(s => s.latestReleaseVersion);
-  const latestReleaseUrl = useAppStore(s => s.latestReleaseUrl);
-  const latestReleaseSize = useAppStore(s => s.latestReleaseSize);
-  const latestReleaseCheckedAt = useAppStore(s => s.latestReleaseCheckedAt);
+  // Per-target OTA selectors — charger slice is the only consumer here.
+  const latestReleaseTag = useAppStore(s => s.ota.charger.latestRelease.tag);
+  const latestReleaseVersion = useAppStore(
+    s => s.ota.charger.latestRelease.version,
+  );
+  const latestReleaseUrl = useAppStore(
+    s => s.ota.charger.latestRelease.htmlUrl,
+  );
+  const latestReleaseSize = useAppStore(
+    s => s.ota.charger.latestRelease.binAssetSize,
+  );
+  const latestReleaseCheckedAt = useAppStore(
+    s => s.ota.charger.latestReleaseCheckedAt,
+  );
 
   // Tick once a minute so "Last checked" relative time stays current while
   // the screen is mounted.

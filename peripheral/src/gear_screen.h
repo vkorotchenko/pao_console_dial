@@ -30,7 +30,7 @@ public:
     GearScreen() {};
     void onTouch(int x, int y, TFT_eSprite *sprite) override;
     bool onClick(TFT_eSprite *sprite) override;
-    void onLoad(TFT_eSprite *sprite, Arduino_ST7701_RGBPanel *gfx) override;
+    void onLoad(TFT_eSprite *sprite, Arduino_RGB_Display *gfx) override;
 };
 
 #endif /* GEAR_SCREEN_H_ */

@@ -68,30 +68,18 @@ jobs:
           echo "VERSION_CODE=${VERSION_CODE}" >> "$GITHUB_ENV"
           echo "Resolved versionName=${VERSION} versionCode=${VERSION_CODE}"
 
-      - name: Decode release keystore
-        # base64 -d on Linux runners; the workspace is ephemeral but we still
-        # delete the file at the end of the job as a defensive habit.
-        run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > mobile/android/app/paoconsole-release.jks
-          if [ ! -s mobile/android/app/paoconsole-release.jks ]; then
-            echo "Decoded keystore is empty — check ANDROID_KEYSTORE_BASE64 secret."
-            exit 1
-          fi
-
       - name: Build signed release APK
-        # Uses Gradle's `android.injected.signing.*` properties to override the
-        # signingConfig at the command line. Combined with -PversionName /
-        # -PversionCode (consumed by build.gradle), this produces a fully
-        # signed APK without committing any signing config to the repo.
+        # Signing is handled by build.gradle's signingConfigs.debug block, which
+        # references the committed mobile/android/app/debug.keystore. This
+        # produces APKs with a consistent signature across local and CI builds,
+        # enabling over-the-air sideload updates without reinstalling.
+        # Note: APKs signed this way are NOT eligible for Google Play Store
+        # submission. Acceptable for this sideload-only distribution model.
         run: |
           cd mobile/android
           ./gradlew :app:assembleRelease \
             -PversionName="${VERSION}" \
             -PversionCode="${VERSION_CODE}" \
-            -Pandroid.injected.signing.store.file="${GITHUB_WORKSPACE}/mobile/android/app/paoconsole-release.jks" \
-            -Pandroid.injected.signing.store.password="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
-            -Pandroid.injected.signing.key.alias="${{ secrets.ANDROID_KEY_ALIAS }}" \
-            -Pandroid.injected.signing.key.password="${{ secrets.ANDROID_KEY_PASSWORD }}" \
             --no-daemon
 
       - name: Stage release artifacts
@@ -144,8 +132,3 @@ jobs:
             dist/pao-console-mobile-${{ env.VERSION }}.apk
             dist/pao-console-mobile-${{ env.VERSION }}.apk.sha256
 
-      - name: Wipe keystore from workspace
-        # Runs always so a failed build still scrubs the decoded keystore.
-        if: always()
-        run: |
-          rm -f mobile/android/app/paoconsole-release.jks
