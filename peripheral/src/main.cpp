@@ -94,12 +94,17 @@ Arduino_RGB_Display *gfx = new Arduino_RGB_Display(
     st7701_bus, GFX_NOT_DEFINED /* RST */,
     st7701_type5_init_operations, sizeof(st7701_type5_init_operations));
 
-// arduino-esp32 3.x unified LEDC API: ledcAttach(pin, freq, resolution) replaces
-// ledcSetup(channel, freq, resolution) + ledcAttachPin(pin, channel). Channel
-// allocation is now internal — ledcWrite() takes the pin instead of a channel
-// number. PWM_CHANNEL was removed for that reason.
+// arduino-esp32 2.x LEDC API: ledcSetup(channel, freq, resolution) +
+// ledcAttachPin(pin, channel), and ledcWrite(channel, duty). The unified
+// ledcAttach(pin, freq, resolution) / ledcWrite(pin, duty) form arrived in
+// core 3.x but the platform is pinned to `platform-espressif32 @ 7.0.1`
+// (ships arduino-esp32 2.0.17), so we stay on the two-call channel-based
+// API. When the platform pin moves to 51.x / core 3.x (the deferred half of
+// Decision #59), collapse the setup pair back to a single ledcAttach() and
+// switch ledcWrite() to take the pin again.
 #define PWM_FREQ 5000 // Hz
 #define pwm_resolution_bits 10
+#define PWM_CHANNEL 0 // core-2.x LEDC channel; no other LEDC users in this firmware
 #define IO_PWM_PIN 38
 
 int n = 0;
@@ -142,8 +147,11 @@ void setup()
 
   pinMode(IO_PWM_PIN, OUTPUT);
   pinMode(BUTTON, INPUT_PULLUP);
-  // arduino-esp32 3.x: single-call PWM setup (was ledcSetup + ledcAttachPin in 2.x).
-  ledcAttach(IO_PWM_PIN, PWM_FREQ, pwm_resolution_bits);
+  // arduino-esp32 2.x: two-call PWM setup (configure channel, then bind it to
+  // the pin). Collapses to a single ledcAttach() on core 3.x — see comment
+  // above the PWM defines for the deferred-migration note.
+  ledcSetup(PWM_CHANNEL, PWM_FREQ, pwm_resolution_bits);
+  ledcAttachPin(IO_PWM_PIN, PWM_CHANNEL);
 
   rtc.setTime(0, 47, 13, 10, 23, 2023, 0);
 
@@ -218,8 +226,8 @@ void loop()
   ota::tickWatchdog();
 
   // Apply display brightness setting (0-100% → 10-bit PWM 0-1023).
-  // arduino-esp32 3.x: ledcWrite takes the pin, not a channel number.
-  ledcWrite(IO_PWM_PIN, (state.getDisplayBrightness() * 1023) / 100);
+  // arduino-esp32 2.x: ledcWrite takes the channel (pin form arrives in core 3.x).
+  ledcWrite(PWM_CHANNEL, (state.getDisplayBrightness() * 1023) / 100);
 
   state.getCurrentScreen()->display(&sprite, gfx);
   gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)sprite.getPointer(), 540, 540);
