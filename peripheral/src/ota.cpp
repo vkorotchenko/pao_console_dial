@@ -95,11 +95,19 @@ bool readOtaPendingFlag() {
     return v;
 }
 
-// Best-effort task-watchdog feed. If TWDT isn't configured for the current
-// task this returns an error which we ignore — we only care about the case
-// where it IS configured and the long flash write would otherwise time out.
+// Best-effort task-watchdog feed. Gated on TWDT subscription state because
+// on arduino-esp32 2.x (see Decision #59 for the framework-pin context),
+// esp_task_wdt_reset() called from a task that is NOT subscribed to TWDT
+// logs `task_wdt: esp_task_wdt_reset(N): task not found` to Serial on every
+// invocation. writeChunk() runs on the NimBLE callback task — which is not
+// TWDT-subscribed — so feeding it twice per chunk floods the UART and ends
+// with a TG1WDT system reset mid-OTA. Gate the reset so unsubscribed tasks
+// are a true no-op. On arduino-esp32 3.x the bare reset returns
+// ESP_ERR_NOT_FOUND silently, so this guard is harmless there.
 inline void feedWatchdog() {
-    esp_task_wdt_reset();
+    if (esp_task_wdt_status(NULL) == ESP_OK) {
+        esp_task_wdt_reset();
+    }
 }
 
 }  // namespace
