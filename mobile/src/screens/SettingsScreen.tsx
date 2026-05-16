@@ -517,9 +517,15 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   //   2. cancel during transfer → abort the controller; orchestrator catches
   //      it and lands in 'idle' / 'error'.
 
+  // Re-entry guard: aborting an in-flight controller while transferFirmware is
+  // awaiting causes the old coroutine's catch block to send OTA_ABORT
+  // concurrently with the new attempt. Use the cancel button for in-flight
+  // abort.
   const onUpdateRequest = () => {
-    // Reset any prior abort controller defensively.
-    flashAbortRef.current?.abort();
+    if (flashAbortRef.current) {
+      // Transfer already in progress — ignore the tap.
+      return;
+    }
     flashAbortRef.current = new AbortController();
     // Keep the screen awake for the whole OTA — download, verify, transfer,
     // reboot, reconnect, finalize can take several minutes. Released by the
@@ -597,6 +603,8 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     // pipeline isn't going to make further progress without another user tap.
     if (otaState === 'idle' || otaState === 'error') {
       deactivateKeepAwake();
+      // Null the ref so the next button press can launch a fresh attempt.
+      flashAbortRef.current = null;
     }
     return undefined;
   }, [otaState]);
@@ -622,8 +630,15 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     // install affordance. 'up-to-date' → silent.
   };
 
+  // Re-entry guard: aborting an in-flight controller while transferFirmware is
+  // awaiting causes the old coroutine's catch block to send OTA_ABORT
+  // concurrently with the new attempt. Use the cancel button for in-flight
+  // abort.
   const onDialUpdateRequest = () => {
-    dialFlashAbortRef.current?.abort();
+    if (dialFlashAbortRef.current) {
+      // Transfer already in progress — ignore the tap.
+      return;
+    }
     dialFlashAbortRef.current = new AbortController();
     activateKeepAwake();
     prepareOtaPayload('dial');
@@ -670,6 +685,8 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     }
     if (dialOtaState === 'idle' || dialOtaState === 'error') {
       deactivateKeepAwake();
+      // Null the ref so the next button press can launch a fresh attempt.
+      dialFlashAbortRef.current = null;
     }
     return undefined;
   }, [dialOtaState]);
@@ -718,8 +735,15 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     }
   };
 
+  // Re-entry guard: aborting an in-flight controller while transferFirmware is
+  // awaiting causes the old coroutine's catch block to send OTA_ABORT
+  // concurrently with the new attempt. Use the cancel button for in-flight
+  // abort.
   const onControllerUpdateRequest = () => {
-    controllerFlashAbortRef.current?.abort();
+    if (controllerFlashAbortRef.current) {
+      // Transfer already in progress — ignore the tap.
+      return;
+    }
     controllerFlashAbortRef.current = new AbortController();
     activateKeepAwake();
     prepareOtaPayload('controller');
@@ -766,6 +790,8 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
     }
     if (controllerOtaState === 'idle' || controllerOtaState === 'error') {
       deactivateKeepAwake();
+      // Null the ref so the next button press can launch a fresh attempt.
+      controllerFlashAbortRef.current = null;
     }
     return undefined;
   }, [controllerOtaState]);

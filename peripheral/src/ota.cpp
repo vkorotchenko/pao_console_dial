@@ -199,11 +199,27 @@ void writeChunk(const uint8_t* data, size_t len) {
     // (Arduino-ESP32 Update lazily-erases ahead of writes). The main loop is
     // already paused via isInFlight() but the IDLE task watchdog can still
     // fire if the OTA work hogs the BLE callback task.
+#ifdef OTA_DEBUG_TIMING
+    uint32_t t0 = millis();
+#endif
+
     feedWatchdog();
 
     size_t written = Update.write(const_cast<uint8_t*>(data), len);
 
     feedWatchdog();
+
+    // Yield to the NimBLE host task so it can service link-layer events
+    // between flash writes. Without this, 16 back-to-back writes on the
+    // ESP32-S3's OPI flash bus block the host task ~1.6s/window and Android's
+    // 5s BLE supervision timeout fires. Costs ~16ms per window — negligible.
+    vTaskDelay(1);
+
+#ifdef OTA_DEBUG_TIMING
+    Serial.printf("OTA write: offset=%u len=%u dur=%ums\n",
+                  (unsigned)(g_bytes_received), (unsigned)len,
+                  (unsigned)(millis() - t0));
+#endif
 
     if (written != len) {
         Serial.printf("OTA: Update.write short (%u of %u, err=%d) at offset=%u\n",
@@ -225,9 +241,16 @@ void writeChunk(const uint8_t* data, size_t len) {
 
     if (window_full || transfer_complete) {
         g_chunk_count_in_window = 0;
+#ifdef OTA_DEBUG_TIMING
+        Serial.printf("OTA: ACK at %u / %u%s (window_end_ms=%u)\n",
+                      (unsigned)g_bytes_received, (unsigned)g_total_size,
+                      transfer_complete ? " (final)" : "",
+                      (unsigned)millis());
+#else
         Serial.printf("OTA: ACK at %u / %u%s\n",
                       (unsigned)g_bytes_received, (unsigned)g_total_size,
                       transfer_complete ? " (final)" : "");
+#endif
         notify(STATUS_ACK, g_bytes_received);
     }
 }
