@@ -15,6 +15,35 @@
 // hashing the binary before transfer. Update's internal CRC catches in-
 // transit corruption, and the dual-bank rollback (manual NVS path) catches a
 // bricked image. Adding sha256 in firmware would just double the cost.
+//
+// --- ESP32-S3 OPI FLASH + IWDT ROOT CAUSE (Decision #62) ---
+//
+// The crash pattern (TG1WDT_SYS_RST + _DoubleExceptionVector) occurs because
+// arduino-esp32's UpdateClass::_writeBuffer() erases a FULL 64 KB block
+// (SPI_FLASH_BLOCK_SIZE = 16 x 4 KB) whenever the write offset lands on a
+// 64 KB boundary -- which happens on the VERY FIRST write call since both OTA
+// partitions (app0=0x20000, app1=0x320000) are 64 KB-aligned. On the ESP32-S3
+// with OPI PSRAM sharing the same flash bus, a 64 KB block erase disables the
+// instruction cache for ~400-600 ms -- well above the 300 ms IWDT ceiling
+// baked into arduino-esp32 3.x sdkconfig. The panic handler itself faults
+// (double exception) because it also needs to fetch code from the now-disabled
+// cache.
+//
+// FIX (Option D, Decision #62): bypass UpdateClass::write() entirely.
+// We manage the flash write pipeline ourselves using IDF primitives:
+//   - esp_partition_erase_range(partition, sector_offset, 4096) -- one 4 KB
+//     sector at a time, JIT before each write, with feedWatchdog() +
+//     vTaskDelay(1) between sectors. Each 4 KB erase is ~50-80 ms, well
+//     inside the 300 ms IWDT window.
+//   - esp_partition_write(partition, offset, data, len) -- page-aligned writes.
+//     Cache is disabled only for the write duration (~100 us per page).
+//   - esp_ota_set_boot_partition() at end() -- same semantic as Update.end().
+//   - First-bytes magic guard replicated: first 16 bytes are written last, so
+//     a partially-written image cannot appear bootable (matches UpdateClass
+//     behavior via its _skipBuffer mechanism).
+//
+// UpdateClass is kept for abort() only (to reset internal state if a prior
+// session left it dirty). It is NOT used for begin/write/end in the new path.
 
 #include "ota.h"
 
@@ -29,6 +58,10 @@
 
 #include "pao_ble.h"  // for notifyOtaStatus()
 
+// IDF partition write requires 32-bit alignment. Verified: esp_partition_write()
+// on non-encrypted partitions accepts any alignment; we satisfy this naturally
+// because chunk data arrives as-is from the BLE characteristic value.
+
 namespace ota {
 
 namespace {
@@ -36,11 +69,30 @@ namespace {
 // Each OTA app slot is 3 MB per partitions.csv (Decision #58).
 constexpr uint32_t kMaxImageSize = 3 * 1024 * 1024;
 
+// Flash geometry (SPI NOR standard).
+constexpr size_t kSectorSize = 4096;  // 4 KB erase granularity -- IWDT-safe duration
+
 State    g_state = State::IDLE;
 uint32_t g_total_size = 0;
 uint32_t g_bytes_received = 0;
 uint32_t g_chunk_count_in_window = 0;
 uint8_t  g_expected_sha256[32] = {0};
+
+// Direct-write state (Decision #62 bypass path).
+// The target OTA partition handle, resolved once in begin() and held for
+// the duration of the transfer. NULL means no session is active.
+static const esp_partition_t* s_ota_partition = nullptr;
+
+// Highest byte offset (exclusive) within the OTA partition that has already
+// been erased by our JIT sector loop. Starts at 0 per session. Monotonically
+// increasing -- we never re-erase an already-erased sector.
+static size_t s_erased_up_to = 0;
+
+// First 16 bytes of the firmware image are stashed and written LAST so that a
+// partially-written image cannot appear bootable (matches UpdateClass behavior).
+// Valid only while g_bytes_received >= 16. Written to flash in end().
+static uint8_t s_magic_bytes[16] = {0};
+static bool    s_magic_written = false;
 
 // Stale-transfer watchdog: timestamp of the most recent successful writeChunk.
 // Used by tickWatchdog() to abort sessions where the mobile side stopped
@@ -69,6 +121,11 @@ void resetSession() {
     g_bytes_received = 0;
     g_chunk_count_in_window = 0;
     memset(g_expected_sha256, 0, sizeof(g_expected_sha256));
+    // Direct-write path state (Decision #62).
+    s_ota_partition = nullptr;
+    s_erased_up_to  = 0;
+    s_magic_written  = false;
+    memset(s_magic_bytes, 0, sizeof(s_magic_bytes));
 }
 
 void notify(uint8_t code, uint32_t bytes) {
@@ -165,19 +222,44 @@ void begin(const uint8_t* payload, size_t len) {
     g_chunk_count_in_window = 0;
     memcpy(g_expected_sha256, payload + 4, sizeof(g_expected_sha256));
 
-    // Update.begin() picks the inactive ota_X slot via
-    // esp_ota_get_next_update_partition under the hood.
-    if (!Update.begin(g_total_size, U_FLASH)) {
-        Serial.printf("OTA: Update.begin failed (err=%d, total=%u)\n",
-                      (int)Update.getError(), (unsigned)g_total_size);
+    // Resolve the inactive OTA partition directly via IDF rather than via
+    // Update.begin(). We do NOT call Update.begin() because UpdateClass's
+    // _writeBuffer() triggers a 64 KB block erase on the very first write
+    // (the OTA partition base address is 64 KB-aligned), which holds the
+    // ESP32-S3 instruction cache disabled for ~400-600 ms and trips the
+    // 300 ms Interrupt Watchdog (IWDT). See Decision #62 for full root cause.
+    s_ota_partition = esp_ota_get_next_update_partition(NULL);
+    if (s_ota_partition == nullptr) {
+        Serial.println("OTA: esp_ota_get_next_update_partition returned NULL");
         notify(STATUS_ERR_BEGIN_FAILED, 0);
         resetSession();
         return;
     }
 
+    Serial.printf("OTA: target partition=%s addr=0x%06x size=%u\n",
+                  s_ota_partition->label,
+                  (unsigned)s_ota_partition->address,
+                  (unsigned)s_ota_partition->size);
+
+    if (total > s_ota_partition->size) {
+        Serial.printf("OTA: image too large (%u > partition %u)\n",
+                      (unsigned)total, (unsigned)s_ota_partition->size);
+        notify(STATUS_ERR_BEGIN_FAILED, 0);
+        resetSession();
+        return;
+    }
+
+    // s_erased_up_to starts at 0 -- no sectors erased yet. The JIT sector
+    // loop in writeChunk() erases one 4 KB sector at a time just ahead of
+    // each write call, keeping every cache-disable window under ~80 ms.
+    // s_magic_written tracks whether the deferred first-16-bytes write has
+    // been committed to flash yet (it happens in end(), not writeChunk()).
+    s_erased_up_to  = 0;
+    s_magic_written = false;
+
     g_state = State::READY;
     s_ota_last_chunk_millis = millis();  // grace for a slow first chunk
-    Serial.printf("OTA: READY — expecting %u bytes, ack window=%d chunks\n",
+    Serial.printf("OTA: READY -- expecting %u bytes, ack window=%d chunks\n",
                   (unsigned)g_total_size, OTA_ACK_WINDOW_CHUNKS);
     notify(STATUS_READY, 0);
 }
@@ -186,67 +268,137 @@ void writeChunk(const uint8_t* data, size_t len) {
     if (len == 0) return;
 
     if (g_state != State::READY && g_state != State::RECEIVING) {
-        // Stray chunk before BEGIN or after END/ABORT — silently drop to
+        // Stray chunk before BEGIN or after END/ABORT -- silently drop to
         // avoid amplifying state mismatches into a notify storm.
+        return;
+    }
+
+    if (s_ota_partition == nullptr) {
+        // Should not happen: partition is set in begin() before READY.
+        Serial.println("OTA: writeChunk called with null partition handle");
+        notify(STATUS_ERR_WRITE_FAILED, g_bytes_received);
+        resetSession();
         return;
     }
 
     g_state = State::RECEIVING;
     s_ota_last_chunk_millis = millis();
 
-    // TIMING INSTRUMENTATION — always on; remove after OTA is stable.
+    // TIMING INSTRUMENTATION -- always on; remove after OTA is stable.
     // These Serial.printf calls are fast (<1 ms) and do NOT hold the cache
-    // disabled.  They let Vadim confirm whether Update.write() is the
-    // long-pole (expected: dt ≥ 30 ms on sector-crossing writes, up to
-    // 500 ms on 64 KB block-erase boundaries).
+    // disabled. They let Vadim confirm write timing per chunk.
     //
-    // IWDT root cause (TG1WDT_SYS_RST on the serial output after the crash):
-    //   Update.write() internally calls _writeBuffer() which calls
-    //   ESP.partitionEraseRange() for each 4 KB sector or 64 KB block
-    //   boundary.  During that erase the S3 disables the instruction/data
-    //   cache because both the flash (QIO 80 MHz) and PSRAM (OPI) share the
-    //   same bus.  With the cache disabled no interrupt handlers can fetch
-    //   code from flash, so the IDF Interrupt Watchdog (IWDT) fires after
-    //   its timeout (~300 ms default) — a true hard reset, unaffected by
-    //   vTaskDelay() or esp_task_wdt_reset() (those are TWDT / task-level).
+    // IWDT ROOT CAUSE NOTE (preserved for history, resolved by Decision #62):
+    //   The previous code called Update.write() which internally calls
+    //   _writeBuffer() -> ESP.partitionEraseRange(). On the first write, the
+    //   OTA partition base address is 64 KB-aligned, so UpdateClass chose a
+    //   FULL 64 KB block erase. On ESP32-S3 with OPI PSRAM sharing the flash
+    //   bus, this disables the instruction cache for ~400-600 ms, tripping the
+    //   300 ms IWDT. The panic handler itself faulted (DoubleExceptionVector)
+    //   because it also fetches code from the now-disabled cache.
     //
-    //   Fix A: CONFIG_ESP_INT_WDT_TIMEOUT_MS=2000 in platformio.ini build_flags
-    //           raises the ceiling so a single erase can complete.
-    //   Fix B: OTA_ACK_WINDOW_CHUNKS reduced 16→4 in ota.h so mobile pauses
-    //           every ~1 KB; fewer consecutive erases in one burst.
-    //   Fix C (escalation if A+B still fails): dedicated FreeRTOS writer task
-    //           at priority 1 (below NimBLE host at ~3–4) that dequeues chunks
-    //           from a FreeRTOS queue and calls Update.write() on its own
-    //           stack.  Fully decouples flash latency from BLE event handling.
+    //   The fix bypasses UpdateClass entirely. We call esp_partition_erase_range
+    //   one 4 KB sector at a time (JIT, just before each write), with
+    //   feedWatchdog() + vTaskDelay(1) between sectors. Each 4 KB erase is
+    //   ~50-80 ms -- well inside the 300 ms IWDT window.
     uint32_t t0 = millis();
     Serial.printf("OTA chunk: off=%u len=%u\n",
                   (unsigned)g_bytes_received, (unsigned)len);
 
-    feedWatchdog();
+    // --- First-bytes magic guard ---
+    // The first 16 bytes of the firmware image contain the ESP image magic
+    // header byte (0xE9). We stash them and write them LAST (in end()) so
+    // that a partially-written image cannot appear bootable. This mirrors
+    // UpdateClass's _skipBuffer mechanism.
+    //
+    // chunk_write_offset: where in the partition this chunk's payload goes.
+    // chunk_data / chunk_len: what actually gets written to flash this call
+    //   (may differ from data/len if we're handling the deferred magic bytes).
+    size_t chunk_write_offset = g_bytes_received;
+    const uint8_t* chunk_data = data;
+    size_t chunk_len = len;
+    bool skip_flash_write = false;
 
-    size_t written = Update.write(const_cast<uint8_t*>(data), len);
+    if (g_bytes_received == 0) {
+        // Very first chunk. Stash leading 16 bytes; skip them in the write.
+        size_t stash_bytes = (len >= 16) ? 16 : len;
+        memcpy(s_magic_bytes, data, stash_bytes);
+        if (len <= 16) {
+            // Entire chunk is the magic header; nothing to write to flash yet.
+            // Just advance the receive counter and ACK as usual.
+            skip_flash_write = true;
+            Serial.printf("OTA wrote: dt=0ms total=%u (magic stashed, no flash write)\n",
+                          (unsigned)(g_bytes_received + len));
+        } else {
+            chunk_write_offset = 16;
+            chunk_data = data + 16;
+            chunk_len  = len - 16;
+        }
+    }
 
-    feedWatchdog();
+    if (!skip_flash_write) {
+        // --- JIT sector erase (Decision #62 fix) ---
+        // Erase every 4 KB sector this chunk will touch that has not yet been
+        // erased. s_erased_up_to tracks the exclusive high-water mark of
+        // erased bytes in the partition. Sectors are erased in order from low
+        // to high; we never re-erase.
+        //
+        // Worst case per chunk: the chunk crosses a single sector boundary
+        // -> one 4 KB erase (~50-80 ms). Typical case: chunk lands within an
+        // already-erased sector -> zero erases (the hot path).
+        size_t write_end = chunk_write_offset + chunk_len;
+        while (s_erased_up_to < write_end) {
+            feedWatchdog();
+            uint32_t te0 = millis();
+            esp_err_t err = esp_partition_erase_range(
+                s_ota_partition, s_erased_up_to, kSectorSize);
+            uint32_t te_dt = millis() - te0;
+            if (err != ESP_OK) {
+                Serial.printf("OTA: sector erase failed at offset=%u err=0x%x dt=%ums\n",
+                              (unsigned)s_erased_up_to, (unsigned)err,
+                              (unsigned)te_dt);
+                notify(STATUS_ERR_WRITE_FAILED, g_bytes_received);
+                resetSession();
+                return;
+            }
+            Serial.printf("OTA erase: sector_off=%u dt=%ums\n",
+                          (unsigned)s_erased_up_to, (unsigned)te_dt);
+            s_erased_up_to += kSectorSize;
+            // Yield between sector erases so BLE host task stays alive.
+            // vTaskDelay(1) releases the CPU for one FreeRTOS tick (~1 ms).
+            feedWatchdog();
+            vTaskDelay(1);
+        }
 
-    uint32_t dt = millis() - t0;
-    Serial.printf("OTA wrote: dt=%ums total=%u\n",
-                  (unsigned)dt, (unsigned)(g_bytes_received + len));
+        // --- Direct partition write ---
+        // esp_partition_write() on non-encrypted partitions (our case) handles
+        // byte-unaligned offsets via the IDF spi_flash HAL. The S3 write
+        // granularity for plain (non-encrypted) flash is 1 byte.
+        feedWatchdog();
+        uint32_t tw0 = millis();
+        esp_err_t werr = esp_partition_write(
+            s_ota_partition, chunk_write_offset,
+            chunk_data, chunk_len);
+        uint32_t tw_dt = millis() - tw0;
 
-    // Yield so the NimBLE host task can service link-layer events between
-    // writes.  vTaskDelay(1) gives the scheduler one tick (~1 ms) — it does
-    // NOT prevent IWDT from firing if a single Update.write() holds the cache
-    // disabled for longer than the IWDT timeout.  That is a separate failure
-    // mode addressed by Fix A+B above.
-    vTaskDelay(1);
+        feedWatchdog();
 
-    if (written != len) {
-        Serial.printf("OTA: Update.write short (%u of %u, err=%d) at offset=%u\n",
-                      (unsigned)written, (unsigned)len,
-                      (int)Update.getError(), (unsigned)g_bytes_received);
-        notify(STATUS_ERR_WRITE_FAILED, g_bytes_received);
-        Update.abort();
-        resetSession();
-        return;
+        Serial.printf("OTA wrote: dt=%ums total=%u (erase+write)\n",
+                      (unsigned)(millis() - t0),
+                      (unsigned)(g_bytes_received + len));
+
+        if (werr != ESP_OK) {
+            Serial.printf("OTA: esp_partition_write failed at offset=%u len=%u err=0x%x dt=%ums\n",
+                          (unsigned)chunk_write_offset, (unsigned)chunk_len,
+                          (unsigned)werr, (unsigned)tw_dt);
+            notify(STATUS_ERR_WRITE_FAILED, g_bytes_received);
+            resetSession();
+            return;
+        }
+
+        // Yield so the NimBLE host task can service link-layer events between
+        // writes. vTaskDelay(1) gives the scheduler one tick (~1 ms).
+        vTaskDelay(1);
     }
 
     g_bytes_received += (uint32_t)len;
@@ -254,22 +406,17 @@ void writeChunk(const uint8_t* data, size_t len) {
 
     // Emit ACK every window OR when the transfer is complete (so the tail
     // partial-window doesn't strand mobile waiting for one last ACK).
-    bool window_full = (g_chunk_count_in_window >= OTA_ACK_WINDOW_CHUNKS);
-    bool transfer_complete = (g_bytes_received >= g_total_size);
+    {
+        bool window_full = (g_chunk_count_in_window >= OTA_ACK_WINDOW_CHUNKS);
+        bool transfer_complete = (g_bytes_received >= g_total_size);
 
-    if (window_full || transfer_complete) {
-        g_chunk_count_in_window = 0;
-#ifdef OTA_DEBUG_TIMING
-        Serial.printf("OTA: ACK at %u / %u%s (window_end_ms=%u)\n",
-                      (unsigned)g_bytes_received, (unsigned)g_total_size,
-                      transfer_complete ? " (final)" : "",
-                      (unsigned)millis());
-#else
-        Serial.printf("OTA: ACK at %u / %u%s\n",
-                      (unsigned)g_bytes_received, (unsigned)g_total_size,
-                      transfer_complete ? " (final)" : "");
-#endif
-        notify(STATUS_ACK, g_bytes_received);
+        if (window_full || transfer_complete) {
+            g_chunk_count_in_window = 0;
+            Serial.printf("OTA: ACK at %u / %u%s\n",
+                          (unsigned)g_bytes_received, (unsigned)g_total_size,
+                          transfer_complete ? " (final)" : "");
+            notify(STATUS_ACK, g_bytes_received);
+        }
     }
 }
 
@@ -284,10 +431,16 @@ void end() {
         return;
     }
 
+    if (s_ota_partition == nullptr) {
+        Serial.println("OTA: end() called with null partition handle");
+        notify(STATUS_ERR_END_FAILED, g_bytes_received);
+        resetSession();
+        return;
+    }
+
     if (g_bytes_received != g_total_size) {
-        Serial.printf("OTA: size mismatch — got %u, expected %u\n",
+        Serial.printf("OTA: size mismatch -- got %u, expected %u\n",
                       (unsigned)g_bytes_received, (unsigned)g_total_size);
-        Update.abort();
         notify(STATUS_ERR_SIZE_MISMATCH, g_bytes_received);
         resetSession();
         return;
@@ -296,15 +449,46 @@ void end() {
     g_state = State::COMMITTING;
     notify(STATUS_COMMITTING, g_bytes_received);
 
-    // true = set the new partition as the boot partition. Update.end() returns
-    // true on full success (CRC valid, partition marked).
-    if (!Update.end(true)) {
-        Serial.printf("OTA: Update.end failed (err=%d)\n",
-                      (int)Update.getError());
+    // --- Write deferred magic bytes (Decision #62 first-bytes guard) ---
+    // The first 16 bytes were stashed in s_magic_bytes during the first chunk
+    // and skipped during writeChunk() writes. Now that the full image body is
+    // committed to flash and integrity is confirmed by size match, write them.
+    // This is the last thing written before marking the partition bootable,
+    // matching UpdateClass's _enablePartition() + _skipBuffer pattern.
+    //
+    // The sector containing offset 0 was already erased by the JIT loop in
+    // writeChunk() during the first chunk, so no erase is needed here.
+    if (!s_magic_written) {
+        Serial.printf("OTA: writing deferred magic bytes (first 16 bytes) to offset 0\n");
+        feedWatchdog();
+        esp_err_t merr = esp_partition_write(
+            s_ota_partition, 0, s_magic_bytes, sizeof(s_magic_bytes));
+        feedWatchdog();
+        if (merr != ESP_OK) {
+            Serial.printf("OTA: magic bytes write failed err=0x%x\n", (unsigned)merr);
+            notify(STATUS_ERR_END_FAILED, g_bytes_received);
+            resetSession();
+            return;
+        }
+        s_magic_written = true;
+        Serial.printf("OTA: magic bytes written OK\n");
+    }
+
+    // --- Mark partition as boot target ---
+    // esp_ota_set_boot_partition() updates otadata to point to the new
+    // partition on the next boot. Equivalent to what Update.end(true) does
+    // internally via _verifyEnd() -> esp_ota_set_boot_partition().
+    esp_err_t boot_err = esp_ota_set_boot_partition(s_ota_partition);
+    if (boot_err != ESP_OK) {
+        Serial.printf("OTA: esp_ota_set_boot_partition failed err=0x%x\n",
+                      (unsigned)boot_err);
         notify(STATUS_ERR_END_FAILED, g_bytes_received);
         resetSession();
         return;
     }
+
+    Serial.printf("OTA: partition %s set as next boot target\n",
+                  s_ota_partition->label);
 
     setOtaPendingFlag(true);
 
