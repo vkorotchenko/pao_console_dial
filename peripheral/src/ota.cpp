@@ -188,11 +188,20 @@ bool isInFlight() {
 }
 
 void begin(const uint8_t* payload, size_t len) {
+    // ENTRY BREADCRUMB — must appear first, before any code that could crash.
+    // If even this line is missing from serial output, the BLE callback path
+    // is not reaching ota::begin() at all (stack overflow, fault in caller, etc.)
+    Serial.println("OTA: begin() ENTERED");
+    Serial.flush();
+    delay(2);  // give UART hardware time to physically drain the TX FIFO
+
     Serial.printf("OTA BEGIN: payload_len=%u state=%d\n",
                   (unsigned)len, (int)g_state);
+    Serial.flush();
 
     if (payload == nullptr || len != 36) {
         Serial.printf("OTA: bad payload length %u (want 36)\n", (unsigned)len);
+        Serial.flush();
         notify(STATUS_ERR_BAD_PAYLOAD, 0);
         return;
     }
@@ -200,6 +209,7 @@ void begin(const uint8_t* payload, size_t len) {
     // Abandon any prior session.
     if (g_state == State::RECEIVING || g_state == State::READY) {
         Serial.println("OTA: dropping previous session before new BEGIN");
+        Serial.flush();
         Update.abort();
         resetSession();
     }
@@ -210,9 +220,13 @@ void begin(const uint8_t* payload, size_t len) {
                    | ((uint32_t)payload[2] << 16)
                    | ((uint32_t)payload[3] << 24);
 
+    Serial.printf("OTA: parsed total_size=%u\n", (unsigned)total);
+    Serial.flush();
+
     if (total == 0 || total > kMaxImageSize) {
         Serial.printf("OTA: rejected total_size=%u (max=%u)\n",
                       (unsigned)total, (unsigned)kMaxImageSize);
+        Serial.flush();
         notify(STATUS_ERR_BEGIN_FAILED, 0);
         return;
     }
@@ -228,9 +242,12 @@ void begin(const uint8_t* payload, size_t len) {
     // (the OTA partition base address is 64 KB-aligned), which holds the
     // ESP32-S3 instruction cache disabled for ~400-600 ms and trips the
     // 300 ms Interrupt Watchdog (IWDT). See Decision #62 for full root cause.
+    Serial.println("OTA: calling esp_ota_get_next_update_partition...");
+    Serial.flush();
     s_ota_partition = esp_ota_get_next_update_partition(NULL);
     if (s_ota_partition == nullptr) {
         Serial.println("OTA: esp_ota_get_next_update_partition returned NULL");
+        Serial.flush();
         notify(STATUS_ERR_BEGIN_FAILED, 0);
         resetSession();
         return;
@@ -240,10 +257,12 @@ void begin(const uint8_t* payload, size_t len) {
                   s_ota_partition->label,
                   (unsigned)s_ota_partition->address,
                   (unsigned)s_ota_partition->size);
+    Serial.flush();
 
     if (total > s_ota_partition->size) {
         Serial.printf("OTA: image too large (%u > partition %u)\n",
                       (unsigned)total, (unsigned)s_ota_partition->size);
+        Serial.flush();
         notify(STATUS_ERR_BEGIN_FAILED, 0);
         resetSession();
         return;
@@ -261,10 +280,19 @@ void begin(const uint8_t* payload, size_t len) {
     s_ota_last_chunk_millis = millis();  // grace for a slow first chunk
     Serial.printf("OTA: READY -- expecting %u bytes, ack window=%d chunks\n",
                   (unsigned)g_total_size, OTA_ACK_WINDOW_CHUNKS);
+    Serial.flush();
     notify(STATUS_READY, 0);
 }
 
 void writeChunk(const uint8_t* data, size_t len) {
+    // ENTRY BREADCRUMB — first chunk receipt confirms BLE data path is alive.
+    // If begin() ENTERED appeared but this never does, STATUS_READY notify was
+    // lost or mobile never started sending chunks.
+    if (g_bytes_received == 0) {
+        Serial.println("OTA: writeChunk() ENTERED (first chunk)");
+        Serial.flush();
+    }
+
     if (len == 0) return;
 
     if (g_state != State::READY && g_state != State::RECEIVING) {
@@ -276,6 +304,7 @@ void writeChunk(const uint8_t* data, size_t len) {
     if (s_ota_partition == nullptr) {
         // Should not happen: partition is set in begin() before READY.
         Serial.println("OTA: writeChunk called with null partition handle");
+        Serial.flush();
         notify(STATUS_ERR_WRITE_FAILED, g_bytes_received);
         resetSession();
         return;
@@ -421,18 +450,25 @@ void writeChunk(const uint8_t* data, size_t len) {
 }
 
 void end() {
+    // ENTRY BREADCRUMB — confirms mobile sent the END command and callback fired.
+    Serial.println("OTA: end() ENTERED");
+    Serial.flush();
+
     Serial.printf("OTA END: state=%d bytes=%u total=%u\n",
                   (int)g_state, (unsigned)g_bytes_received,
                   (unsigned)g_total_size);
+    Serial.flush();
 
     if (g_state != State::RECEIVING && g_state != State::READY) {
         Serial.printf("OTA: END in unexpected state %d\n", (int)g_state);
+        Serial.flush();
         notify(STATUS_ERR_END_FAILED, g_bytes_received);
         return;
     }
 
     if (s_ota_partition == nullptr) {
         Serial.println("OTA: end() called with null partition handle");
+        Serial.flush();
         notify(STATUS_ERR_END_FAILED, g_bytes_received);
         resetSession();
         return;
@@ -441,6 +477,7 @@ void end() {
     if (g_bytes_received != g_total_size) {
         Serial.printf("OTA: size mismatch -- got %u, expected %u\n",
                       (unsigned)g_bytes_received, (unsigned)g_total_size);
+        Serial.flush();
         notify(STATUS_ERR_SIZE_MISMATCH, g_bytes_received);
         resetSession();
         return;

@@ -217,6 +217,7 @@ void PaoBleService::OtaDispatchCallbacks::onWrite(NimBLECharacteristic* pCharact
     const uint8_t* payload = (value.size() > 1) ? (const uint8_t*)(value.data() + 1) : nullptr;
     size_t payload_len = (value.size() > 1) ? (value.size() - 1) : 0;
     Serial.printf("PAO BLE: OTA cmd=%d (len=%d)\n", (int)cmd, (int)value.size());
+    Serial.flush();
     switch (cmd) {
         case 10:
             ota::begin(payload, payload_len);
