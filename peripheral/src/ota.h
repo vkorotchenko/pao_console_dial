@@ -66,10 +66,30 @@ enum class State {
     REBOOTING,
 };
 
-// One ACK every N chunks. 16 matches the charger so the mobile transfer logic
-// (window size, ACK accounting) can be cloned without retuning.
+// One ACK every N chunks.  Reduced from 16 → 4 (IWDT fix, Option B):
+// the ESP32-S3's OPI flash at 80 MHz can hold the cache disabled for
+// 30–200 ms per sector erase inside Update.write().  With 16 chunks per
+// window mobile saturates the BLE TX queue and the device accumulates up
+// to ~640 ms of flash-write latency before the NimBLE host task can
+// service link-layer events.  Android's 5 s BLE supervision timeout fires
+// during that burst, and the IWDT (interrupt-level, unaffected by
+// vTaskDelay) resets the device on any individual write that crosses a
+// 64 KB block boundary (block erase ≈ 100–500 ms on OPI).
+//
+// Reducing to 4 forces mobile to pause and wait for an ACK every ~1 KB
+// (4 × ~244 B MTU chunks).  Each Update.write() still carries the same
+// IWDT risk individually, but there are far fewer consecutive writes
+// before the BLE host task gets a scheduling turn, so the device can
+// maintain the link.
+//
+// If OTA still crashes after this change escalate to Option C: move
+// Update.write() to a dedicated FreeRTOS writer task (priority 1, below
+// the NimBLE host task) so flash latency is fully decoupled from BLE.
+//
+// The charger (ESP32 Feather V2, non-S3, non-OPI) is unaffected and keeps
+// OTA_ACK_WINDOW_CHUNKS=16.
 #ifndef OTA_ACK_WINDOW_CHUNKS
-#define OTA_ACK_WINDOW_CHUNKS 16
+#define OTA_ACK_WINDOW_CHUNKS 4
 #endif
 
 // Called from cmd dispatcher (cmd=10). Validates the 38-byte payload (cmd

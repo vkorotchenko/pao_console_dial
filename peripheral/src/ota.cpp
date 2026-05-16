@@ -194,14 +194,33 @@ void writeChunk(const uint8_t* data, size_t len) {
     g_state = State::RECEIVING;
     s_ota_last_chunk_millis = millis();
 
-    // Feed the watchdog around the flash write. ESP32-S3 NOR flash erase can
-    // stall for hundreds of ms on the first write to a freshly-erased sector
-    // (Arduino-ESP32 Update lazily-erases ahead of writes). The main loop is
-    // already paused via isInFlight() but the IDLE task watchdog can still
-    // fire if the OTA work hogs the BLE callback task.
-#ifdef OTA_DEBUG_TIMING
+    // TIMING INSTRUMENTATION — always on; remove after OTA is stable.
+    // These Serial.printf calls are fast (<1 ms) and do NOT hold the cache
+    // disabled.  They let Vadim confirm whether Update.write() is the
+    // long-pole (expected: dt ≥ 30 ms on sector-crossing writes, up to
+    // 500 ms on 64 KB block-erase boundaries).
+    //
+    // IWDT root cause (TG1WDT_SYS_RST on the serial output after the crash):
+    //   Update.write() internally calls _writeBuffer() which calls
+    //   ESP.partitionEraseRange() for each 4 KB sector or 64 KB block
+    //   boundary.  During that erase the S3 disables the instruction/data
+    //   cache because both the flash (QIO 80 MHz) and PSRAM (OPI) share the
+    //   same bus.  With the cache disabled no interrupt handlers can fetch
+    //   code from flash, so the IDF Interrupt Watchdog (IWDT) fires after
+    //   its timeout (~300 ms default) — a true hard reset, unaffected by
+    //   vTaskDelay() or esp_task_wdt_reset() (those are TWDT / task-level).
+    //
+    //   Fix A: CONFIG_ESP_INT_WDT_TIMEOUT_MS=2000 in platformio.ini build_flags
+    //           raises the ceiling so a single erase can complete.
+    //   Fix B: OTA_ACK_WINDOW_CHUNKS reduced 16→4 in ota.h so mobile pauses
+    //           every ~1 KB; fewer consecutive erases in one burst.
+    //   Fix C (escalation if A+B still fails): dedicated FreeRTOS writer task
+    //           at priority 1 (below NimBLE host at ~3–4) that dequeues chunks
+    //           from a FreeRTOS queue and calls Update.write() on its own
+    //           stack.  Fully decouples flash latency from BLE event handling.
     uint32_t t0 = millis();
-#endif
+    Serial.printf("OTA chunk: off=%u len=%u\n",
+                  (unsigned)g_bytes_received, (unsigned)len);
 
     feedWatchdog();
 
@@ -209,17 +228,16 @@ void writeChunk(const uint8_t* data, size_t len) {
 
     feedWatchdog();
 
-    // Yield to the NimBLE host task so it can service link-layer events
-    // between flash writes. Without this, 16 back-to-back writes on the
-    // ESP32-S3's OPI flash bus block the host task ~1.6s/window and Android's
-    // 5s BLE supervision timeout fires. Costs ~16ms per window — negligible.
-    vTaskDelay(1);
+    uint32_t dt = millis() - t0;
+    Serial.printf("OTA wrote: dt=%ums total=%u\n",
+                  (unsigned)dt, (unsigned)(g_bytes_received + len));
 
-#ifdef OTA_DEBUG_TIMING
-    Serial.printf("OTA write: offset=%u len=%u dur=%ums\n",
-                  (unsigned)(g_bytes_received), (unsigned)len,
-                  (unsigned)(millis() - t0));
-#endif
+    // Yield so the NimBLE host task can service link-layer events between
+    // writes.  vTaskDelay(1) gives the scheduler one tick (~1 ms) — it does
+    // NOT prevent IWDT from firing if a single Update.write() holds the cache
+    // disabled for longer than the IWDT timeout.  That is a separate failure
+    // mode addressed by Fix A+B above.
+    vTaskDelay(1);
 
     if (written != len) {
         Serial.printf("OTA: Update.write short (%u of %u, err=%d) at offset=%u\n",
