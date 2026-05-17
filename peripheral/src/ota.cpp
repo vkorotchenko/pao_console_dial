@@ -55,6 +55,7 @@
 #include <esp_log.h>
 #include <Update.h>
 #include <Preferences.h>
+#include <esp_flash.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_task_wdt.h>
@@ -64,6 +65,38 @@
 #include <soc/timer_group_reg.h>
 #include <soc/wdt_periph.h>
 #include <soc/rtc_cntl_reg.h>
+
+// PSRAM writeback before flash ops — forces any pending PSRAM cache writes to
+// drain, freeing the OPI bus for the flash erase/write that immediately follows.
+//
+// Preferred API: esp_psram_extram_writeback_cache() (IDF 5.x).
+// Problem: the symbol is only compiled into the prebuilt libs when PSRAM support
+// is enabled in the SDK's sdkconfig blob. The pioarduino 53.03.13 qio_opi variant
+// does NOT export it in libpsram.a, so the linker rejects any direct call.
+//
+// Fallback: manual page-walk of our own PSRAM buffer. Reading every 4 KB page
+// forces the L1 cache controller to resolve all pending write-back lines for
+// that address range before returning. Heavy (O(image_size/4KB) loads) but
+// reliable — every byte read guarantees the cache line is coherent. We only
+// do this three times (once per erase sector at the start, once per write page,
+// once for the magic bytes), so the total extra cost is well inside the install
+// timeout budget.
+//
+// The macro is guarded by CONFIG_SPIRAM so it compiles away completely on any
+// future non-PSRAM target.
+#ifdef CONFIG_SPIRAM
+static inline void flushPsramCache(const volatile uint8_t* buf, size_t len) {
+    // Touch one byte per page. The volatile qualifier prevents the compiler
+    // from eliding the reads as dead code. 'buf' must be in PSRAM; on DRAM
+    // this is a no-op (cache is unified/write-through for internal RAM).
+    for (size_t i = 0; i < len; i += 4096) {
+        (void)buf[i];
+    }
+}
+#define FLUSH_PSRAM_CACHE()  flushPsramCache((volatile uint8_t*)s_image_buf, g_total_size)
+#else
+#define FLUSH_PSRAM_CACHE()  do {} while (0)
+#endif
 
 #include "pao_ble.h"  // for notifyOtaStatus()
 
@@ -590,42 +623,61 @@ void end() {
             (unsigned)(sectors_total * kSectorSize / 1024),
             s_ota_partition->label);
 
+    // Log the partition base address once so the first absolute flash address
+    // printed below can be cross-checked against the partition table.
+    OTA_LOG("OTA install: partition base addr=0x%06x", (unsigned)s_ota_partition->address);
+
     for (size_t off = 0; off < total; off += kSectorSize) {
         // Install-phase timeout guard (erase loop).
         if (millis() - install_start_ms > kInstallTimeoutMs) {
-            OTA_LOG("OTA install: TIMEOUT (erase) after %ums — forcing reboot into old image\n",
+            OTA_LOG("OTA install: TIMEOUT (erase) after %ums — forcing reboot into old image",
                     (unsigned)(millis() - install_start_ms));
             delay(50);
             ESP.restart();
             // unreachable
         }
 
-        size_t erase_size = ((total - off) < kSectorSize) ? (total - off) : kSectorSize;
-        // Round up to sector boundary as required by esp_partition_erase_range.
-        erase_size = (erase_size + kSectorSize - 1) & ~(kSectorSize - 1);
+        // Change 1: flush PSRAM cache before every flash op.
+        // Forces any pending OPI PSRAM writes to drain, releasing the shared bus
+        // so the flash erase can proceed. Without this, PSRAM cache lines sitting
+        // in the write queue can block the cache-disable preamble of the flash op
+        // indefinitely — which is why esp_partition_erase_range hung at off=0.
+        FLUSH_PSRAM_CACHE();
 
         feedWatchdog();
-        // Breadcrumb before the very first erase call so we know whether the
-        // crash is inside esp_partition_erase_range or somewhere else entirely
-        // (e.g. a context switch triggered before we even reach it).
+
+        // Change 2: use esp_flash_erase_region (lower-level) instead of
+        // esp_partition_erase_range. The partition wrapper has additional safety
+        // checks and a different critical-section path that has been observed to
+        // hang on S3 OPI. The low-level call takes the ABSOLUTE flash address
+        // (partition base + partition-relative offset).
+        const uint32_t abs_addr = s_ota_partition->address + (uint32_t)off;
+
         if (off == 0) {
-            OTA_LOG("OTA install: about to call esp_partition_erase_range(off=0, size=%u)\n",
-                    (unsigned)erase_size);
+            // First-erase breadcrumb: confirms we reached the call site and
+            // shows the absolute flash address being targeted.
+            OTA_LOG("OTA install: erasing absolute flash addr=0x%06x size=%u",
+                    (unsigned)abs_addr, (unsigned)kSectorSize);
+        } else if (off < kSectorSize * 4) {
+            OTA_LOG("OTA install: about to call esp_flash_erase_region(off=%u, size=%u)",
+                    (unsigned)off, (unsigned)kSectorSize);
         }
-        // Fix 2: time every sector erase so we know if any individual call
-        // exceeds the 300 ms IWDT ceiling. If we crash mid-loop the last
-        // printed sector + duration narrows down the offending call.
+
         uint32_t t0 = millis();
-        esp_err_t err = esp_partition_erase_range(s_ota_partition, off, erase_size);
+        esp_err_t err = esp_flash_erase_region(esp_flash_default_chip, abs_addr, kSectorSize);
         uint32_t dt = millis() - t0;
-        OTA_LOG("OTA erase sector %u: dt=%ums err=%d\n",
-                (unsigned)(off / kSectorSize), (unsigned)dt, (int)err);
+
         if (err != ESP_OK) {
-            OTA_LOG("OTA: erase failed at offset=%u err=0x%x\n",
-                    (unsigned)off, (unsigned)err);
+            OTA_LOG("OTA erase failed at off=%u abs_addr=0x%06x err=%d dt=%ums",
+                    (unsigned)off, (unsigned)abs_addr, (int)err, (unsigned)dt);
             notify(STATUS_ERR_END_FAILED, g_bytes_received);
             resetSession();
             return;
+        }
+
+        // Log first 4 sectors individually, then every 16 sectors (64 KB).
+        if (off < kSectorSize * 4 || (off % (kSectorSize * 16)) == 0) {
+            OTA_LOG("OTA erase sector @ off=%u: dt=%ums", (unsigned)off, (unsigned)dt);
         }
         feedWatchdog();
 
@@ -646,7 +698,7 @@ void end() {
     for (size_t off = magic_len; off < total; off += kSectorSize) {
         // Install-phase timeout guard (write loop).
         if (millis() - install_start_ms > kInstallTimeoutMs) {
-            OTA_LOG("OTA install: TIMEOUT (write) after %ums — forcing reboot into old image\n",
+            OTA_LOG("OTA install: TIMEOUT (write) after %ums — forcing reboot into old image",
                     (unsigned)(millis() - install_start_ms));
             delay(50);
             ESP.restart();
@@ -655,12 +707,17 @@ void end() {
 
         size_t chunk = ((total - off) < kSectorSize) ? (total - off) : kSectorSize;
 
+        // Flush PSRAM cache before each flash write for the same reason as in
+        // the erase loop above — bus contention on OPI PSRAM + flash.
+        FLUSH_PSRAM_CACHE();
+
         feedWatchdog();
-        esp_err_t err = esp_partition_write(
-            s_ota_partition, off, s_image_buf + off, chunk);
+        const uint32_t abs_addr = s_ota_partition->address + (uint32_t)off;
+        esp_err_t err = esp_flash_write(
+            esp_flash_default_chip, s_image_buf + off, abs_addr, chunk);
         if (err != ESP_OK) {
-            OTA_LOG("OTA: write failed at offset=%u len=%u err=0x%x\n",
-                    (unsigned)off, (unsigned)chunk, (unsigned)err);
+            OTA_LOG("OTA: write failed at off=%u abs_addr=0x%06x len=%u err=0x%x",
+                    (unsigned)off, (unsigned)abs_addr, (unsigned)chunk, (unsigned)err);
             notify(STATUS_ERR_END_FAILED, g_bytes_received);
             resetSession();
             return;
@@ -673,14 +730,15 @@ void end() {
     }
 
     // --- Write magic bytes last (first-bytes guard) ---
-    OTA_LOG("OTA install: writing magic bytes (first %u bytes) to offset 0\n",
+    OTA_LOG("OTA install: writing magic bytes (first %u bytes) to offset 0",
             (unsigned)magic_len);
+    FLUSH_PSRAM_CACHE();
     feedWatchdog();
-    esp_err_t merr = esp_partition_write(
-        s_ota_partition, 0, s_magic_bytes, magic_len);
+    esp_err_t merr = esp_flash_write(
+        esp_flash_default_chip, s_magic_bytes, s_ota_partition->address, magic_len);
     feedWatchdog();
     if (merr != ESP_OK) {
-        OTA_LOG("OTA: magic bytes write failed err=0x%x\n", (unsigned)merr);
+        OTA_LOG("OTA: magic bytes write failed err=0x%x", (unsigned)merr);
         notify(STATUS_ERR_END_FAILED, g_bytes_received);
         resetSession();
         return;
