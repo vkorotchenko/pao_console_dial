@@ -60,6 +60,8 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <soc/timer_group_reg.h>
+#include <soc/wdt_periph.h>
 
 #include "pao_ble.h"  // for notifyOtaStatus()
 
@@ -487,6 +489,33 @@ void end() {
         // unreachable
     }
     Serial.println("OTA install: pre-erase phase OK, entering erase loop");
+    Serial.flush();
+
+    // ── Disable IWDT for the install phase ─────────────────────────────────
+    // Flash erase on the S3 OPI configuration disables the instruction cache
+    // for 300ms+ per 4KB sector. This exceeds the IDF default 300ms IWDT
+    // timeout baked into the pioarduino sdkconfig blob, causing TG1WDT_SYS_RST
+    // before the first sector erase completes. esp_int_wdt_pause() /
+    // esp_int_wdt_resume() are IDF symbols not exposed in the pioarduino blob,
+    // so we disable the TIMG1 watchdog directly via memory-mapped register
+    // writes. We do NOT re-enable it — the install path ends in ESP.restart()
+    // which resets all watchdogs to their boot-time defaults. The 120s
+    // esp_timer remains as the catch-all if install itself hangs.
+    //
+    // Register addresses (ESP32-S3, TIMG1 base = 0x60020000):
+    //   TIMG_WDTWPROTECT_REG(1) = base + 0x64 = 0x60020064  (write-protect)
+    //   TIMG_WDTCONFIG0_REG(1)  = base + 0x48 = 0x60020048  (config0 / enable)
+    //   TIMG_WDT_WKEY_VALUE     = 0x50D83AA1               (unlock magic)
+    // Verified against:
+    //   framework-arduinoespressif32-libs/esp32s3/include/soc/esp32s3/include/soc/
+    //   timer_group_reg.h (offsets), soc.h (REG_TIMG_BASE), reg_base.h (base addr),
+    //   soc/include/soc/wdt_periph.h (TIMG_WDT_WKEY_VALUE).
+    // Note: the WPROTECT offset on S3 is 0x64, NOT 0x5C (which is the ESP32
+    // classic offset). Always use the macro — it resolves per-SoC correctly.
+    WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(1), TIMG_WDT_WKEY_VALUE);  // unlock
+    WRITE_PERI_REG(TIMG_WDTCONFIG0_REG(1), 0);                      // disable WDT
+    WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(1), 0);                     // re-lock
+    Serial.println("OTA install: IWDT disabled (TIMG1 register write, offset 0x64)");
     Serial.flush();
 
     // --- Install-phase safety timeout ---
