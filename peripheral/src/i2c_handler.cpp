@@ -1,6 +1,13 @@
 #include "i2c_handler.h"
+#include "ota.h"
 
 extern GlobalState &state;
+
+// Rate-limit I2C error logs: only print every Nth error outside OTA, and
+// suppress entirely during OTA (those errors flood HWCDC TX and fragment
+// OTA diagnostic output captured over serial).
+static uint32_t s_i2c_err_count = 0;
+constexpr uint32_t kI2cErrLogEvery = 100;
 
 void I2CHandler::setup(int sdaPin, int sclPin)
 {
@@ -199,8 +206,20 @@ void I2CHandler::updateI2CData()
     uint8_t error = Wire.endTransmission();
 
     if (error != 0) {
-        Serial.print("I2C: Transmission error: ");
-        Serial.println(error);
+        // During OTA the HWCDC TX buffer is needed for flash diagnostic output.
+        // Suppress I2C noise entirely while a transfer is in flight.
+        // Outside OTA, rate-limit to one log every kI2cErrLogEvery errors so a
+        // persistent controller absence doesn't flood the serial port.
+        if (!ota::isInFlight()) {
+            ++s_i2c_err_count;
+            if (s_i2c_err_count % kI2cErrLogEvery == 1) {
+                // Print on 1st, 101st, 201st, … error.  The modulo-1 trick means
+                // the very first error is always visible, then subsequent bursts
+                // are sampled at 1% rate.
+                Serial.printf("I2C: Transmission error: %d (count=%u)\n",
+                              (int)error, (unsigned)s_i2c_err_count);
+            }
+        }
         return;
     }
 

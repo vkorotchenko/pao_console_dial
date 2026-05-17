@@ -401,10 +401,29 @@ void end() {
         return;
     }
 
-    g_state = State::COMMITTING;
-    notify(STATUS_COMMITTING, g_bytes_received);
+    // Record wall-clock entry time BEFORE any BLE calls so the pre-erase
+    // watchdog can catch hangs in the notify/deinit sequence itself.
+    const uint32_t end_entered_ms = millis();
+    constexpr uint32_t kPreEraseTimeoutMs = 30 * 1000;  // 30 s backstop
 
-    // --- Fix 1: Deinit NimBLE before flash operations ---
+    g_state = State::COMMITTING;
+
+    // --- Attempt STATUS_COMMITTING notify (best-effort) ---
+    // By the time mobile sends cmd=11, the link may already be half-dead
+    // (we've seen GATT_ERROR 133 arrive 178 ms after OTA_END, far faster than
+    // the 5 s LSTO, meaning the connection state was trashed before end() ran).
+    // Per Decision #64, mobile treats any post-cmd=11 disconnect as expected
+    // and falls through to reconnect + verify — it does NOT require this notify.
+    //
+    // We still try, but we bracket it so we can see exactly where we are in
+    // serial output if the call hangs.
+    Serial.println("OTA install: about to notify STATUS_COMMITTING");
+    Serial.flush();
+    notify(STATUS_COMMITTING, g_bytes_received);
+    Serial.println("OTA install: STATUS_COMMITTING notify returned");
+    Serial.flush();
+
+    // --- Deinit NimBLE before flash operations ---
     // The BLE host task runs at ~priority 3-4 on its own FreeRTOS task. While it
     // is alive it can attempt SPI flash reads (NVS, attribute lookups, TX queue
     // flushes) that compete for the flash bus during our erase loop. On S3 OPI
@@ -422,12 +441,35 @@ void end() {
     //
     // delay(50) before deinit gives the BLE TX queue time to push STATUS_COMMITTING
     // out on the air before the host task is killed.
-    Serial.println("OTA install: deiniting NimBLE before flash work");
+    //
+    // deinit(false) vs deinit(true): we use false (skip memory release) because
+    // deinit(true) attempts a graceful stack teardown — walking active connection
+    // state, flushing TX queues — which can hang for seconds on a half-dead link.
+    // deinit(false) is a hard kill of the host task. The small RAM leak is
+    // irrelevant because we reboot in seconds.
+    Serial.println("OTA install: about to deinit NimBLE (hard kill, no memory release)");
     Serial.flush();
     delay(50);
-    NimBLEDevice::deinit(true);  // true = release memory
+    NimBLEDevice::deinit(false);  // false = hard kill; don't release memory (avoids hang on dead link)
     delay(50);
-    Serial.println("OTA install: NimBLE deinited OK");
+    Serial.println("OTA install: NimBLE deinit returned");
+    Serial.flush();
+
+    // --- Pre-erase phase watchdog ---
+    // If the notify or deinit calls above blocked for an absurd amount of time
+    // (e.g. notify hung waiting for TX confirmation on a dead link), the install
+    // timeout in the erase/write loops would never fire because we'd never reach
+    // them. This backstop catches that case and forces a clean reboot into the
+    // old image.
+    if (millis() - end_entered_ms > kPreEraseTimeoutMs) {
+        Serial.printf("OTA end: pre-erase phase exceeded %us — restarting\n",
+                      (unsigned)(kPreEraseTimeoutMs / 1000));
+        Serial.flush();
+        delay(50);
+        ESP.restart();
+        // unreachable
+    }
+    Serial.println("OTA install: pre-erase phase OK, entering erase loop");
     Serial.flush();
 
     // --- Install-phase safety timeout ---
