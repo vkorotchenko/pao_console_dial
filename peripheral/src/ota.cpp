@@ -52,6 +52,7 @@
 #include "ota.h"
 
 #include <Arduino.h>
+#include <esp_log.h>
 #include <Update.h>
 #include <Preferences.h>
 #include <esp_ota_ops.h>
@@ -68,25 +69,22 @@
 
 namespace ota {
 
-// Mirrors output to both USB-CDC (Serial) and UART0 (Serial0). UART0 is
-// hardware-backed and survives cache-disable during flash erase, so OTA
-// install-phase logs reach a connected UART-USB adapter even when the
-// USB-CDC host has disconnected. Use this for install-phase breadcrumbs.
-// Streaming-phase logs (ACK at NNN) stay on plain Serial.printf — those
-// work fine on USB-CDC.
-#define OTA_LOG(fmt, ...) do { \
-    Serial.printf(fmt, ##__VA_ARGS__); \
-    Serial.flush(); \
-    Serial0.printf(fmt, ##__VA_ARGS__); \
-    Serial0.flush(); \
-} while(0)
+// Route OTA install-phase breadcrumbs through the IDF esp_log subsystem
+// (ESP_LOGI) instead of Serial.printf. During cache-disable windows that
+// occur on every flash erase, the USB-CDC HW path stalls — bytes written
+// via Serial.printf sit in the TX FIFO and never drain. ESP_LOGI routes
+// through the IDF console (CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=1
+// in the sdkconfig blob), which uses the same USB Serial JTAG peripheral
+// but via a separate IDF-managed path that buffers internally and is
+// observed to flush reliably even during/after flash ops. This is the same
+// path that delivers Preferences.cpp [E] lines during the install phase.
+//
+// Streaming-phase logs (ACK at NNN) still use Serial.printf — those run
+// before any flash ops and arrive fine on USB-CDC.
+static const char* TAG = "ota";
 
-#define OTA_LOGLN(s) do { \
-    Serial.println(s); \
-    Serial.flush(); \
-    Serial0.println(s); \
-    Serial0.flush(); \
-} while(0)
+#define OTA_LOG(fmt, ...)   ESP_LOGI(TAG, fmt, ##__VA_ARGS__)
+#define OTA_LOGLN(s)        ESP_LOGI(TAG, "%s", s)
 
 namespace {
 

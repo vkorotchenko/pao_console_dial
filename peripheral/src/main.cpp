@@ -2,6 +2,7 @@
 #include <RotaryEncoder.h>
 #include <ESP32Time.h>
 #include <Arduino.h>
+#include <esp_log.h>
 #include "touch.h"
 #include "midleFont.h"
 #include "smallFont.h"
@@ -138,6 +139,12 @@ void setup()
   // code paths run. checkBootRecovery() is idempotent and a no-op when there's
   // no pending OTA. Mirrors charger Decision #52.
   Serial.begin(115200);
+  // Ensure OTA install-phase breadcrumbs (ESP_LOGI via "ota" tag) are not
+  // filtered out by the IDF log level. CORE_DEBUG_LEVEL=3 in platformio.ini
+  // compiles ESP_LOGI in; this call sets the runtime filter to INFO so the
+  // IDF console actually emits them. Called before checkBootRecovery() so
+  // any log_i output from that function is also captured.
+  esp_log_level_set("ota", ESP_LOG_INFO);
   // UART0 hardware serial (TX0=GPIO43, RX0=GPIO44). Hardware-backed and survives
   // cache-disable windows during OTA flash erase, so OTA install-phase logs reach
   // a connected USB-to-Serial adapter even when USB-CDC host has disconnected.
