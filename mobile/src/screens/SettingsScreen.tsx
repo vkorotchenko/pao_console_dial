@@ -110,6 +110,21 @@ function formatRelative(now: number, then: number | null): string {
   return `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
+// Format an ISO 8601 publish date as "YYYY-MM-DD" for display next to the
+// version string. Returns null when the field is absent (legacy persisted
+// state from before this feature landed) so callers can skip the suffix.
+function formatPublishedDate(publishedAt: string | null | undefined): string | null {
+  if (!publishedAt) {
+    return null;
+  }
+  // ISO 8601 always starts with "YYYY-MM-DD" — slice is cheaper than Date
+  // parsing and avoids any timezone/locale surprises. Fall back to null if the
+  // string is somehow too short (shouldn't happen with GitHub's API, but
+  // defensive is cheap here).
+  const datePart = publishedAt.slice(0, 10);
+  return datePart.length === 10 ? datePart : null;
+}
+
 // Settings is now a 4-tab screen. Tap-only top tab bar (no swipe / no
 // PagerView) — keeping the UX dead simple and avoiding a new dependency.
 // Each tab mounts its own ScrollView so long tabs (Charging in particular,
@@ -178,6 +193,9 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   const latestReleaseVersion = useAppStore(
     state => state.ota.charger.latestRelease.version,
   );
+  const latestReleasePublishedAt = useAppStore(
+    state => state.ota.charger.latestRelease.publishedAt,
+  );
   // ── Dial OTA selectors (Phase 5 mobile — Stream 2) ─────────────────────
   // Mirrors the charger selectors above. `dialFirmwareVersion` is the
   // currently-running version (top-level, persisted via partialize like
@@ -198,6 +216,9 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   );
   const dialLatestReleaseVersion = useAppStore(
     state => state.ota.dial.latestRelease.version,
+  );
+  const dialLatestReleasePublishedAt = useAppStore(
+    state => state.ota.dial.latestRelease.publishedAt,
   );
   // ── Controller OTA selectors (Stream 3 mobile) ───────────────────────────
   // Mirrors the dial selectors above. Controller is OTA-only (no telemetry
@@ -225,6 +246,9 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
   );
   const controllerLatestReleaseVersion = useAppStore(
     state => state.ota.controller.latestRelease.version,
+  );
+  const controllerLatestReleasePublishedAt = useAppStore(
+    state => state.ota.controller.latestRelease.publishedAt,
   );
   // App self-update — running app versionName plus detection fields
   // (latestAppReleaseVersion, etc) so the App row mirrors the Firmware row's
@@ -1771,7 +1795,11 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
             </TouchableOpacity>
             {latestReleaseVersion ? (
               <Text style={styles.fwHint}>
-                Latest available: {formatVersion(latestReleaseVersion)}
+                {'Latest available: '}
+                {formatVersion(latestReleaseVersion)}
+                {formatPublishedDate(latestReleasePublishedAt)
+                  ? ` · ${formatPublishedDate(latestReleasePublishedAt)}`
+                  : ''}
               </Text>
             ) : null}
           </View>
@@ -1902,7 +1930,11 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
             <Text style={styles.fwRowTitle}>Dial</Text>
             {dialLatestReleaseVersion ? (
               <Text style={styles.fwHint}>
-                Latest available: {formatVersion(dialLatestReleaseVersion)}
+                {'Latest available: '}
+                {formatVersion(dialLatestReleaseVersion)}
+                {formatPublishedDate(dialLatestReleasePublishedAt)
+                  ? ` · ${formatPublishedDate(dialLatestReleasePublishedAt)}`
+                  : ''}
               </Text>
             ) : null}
           </View>
@@ -2048,7 +2080,11 @@ export default function SettingsScreen({onOpenFirmwareInfo, onOpenAppInfo, initi
             </View>
             {controllerLatestReleaseVersion ? (
               <Text style={styles.fwHint}>
-                Latest available: {formatVersion(controllerLatestReleaseVersion)}
+                {'Latest available: '}
+                {formatVersion(controllerLatestReleaseVersion)}
+                {formatPublishedDate(controllerLatestReleasePublishedAt)
+                  ? ` · ${formatPublishedDate(controllerLatestReleasePublishedAt)}`
+                  : ''}
               </Text>
             ) : null}
           </View>

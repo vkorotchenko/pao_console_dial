@@ -89,6 +89,7 @@ export async function checkForUpdate(
           binAssetSize: release.binAssetSize,
           sha256AssetUrl: release.sha256AssetUrl,
           releaseNotes: release.releaseNotes,
+          publishedAt: release.publishedAt ?? null,
           etag: release.etag,
         },
         checkedAt,

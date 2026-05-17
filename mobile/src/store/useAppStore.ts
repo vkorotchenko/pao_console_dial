@@ -59,6 +59,7 @@ export interface LatestRelease {
   binAssetSize: number | null; // bytes
   sha256AssetUrl: string | null; // browser_download_url for .sha256 sidecar
   releaseNotes: string | null; // markdown body, may be empty
+  publishedAt: string | null; // ISO 8601 publish date from GitHub; null in legacy persisted state
   etag: string | null;       // last ETag for conditional GET
 }
 
@@ -95,6 +96,7 @@ const EMPTY_RELEASE: LatestRelease = {
   binAssetSize: null,
   sha256AssetUrl: null,
   releaseNotes: null,
+  publishedAt: null,
   etag: null,
 };
 
@@ -300,6 +302,7 @@ interface AppState {
       binAssetSize: number;
       sha256AssetUrl: string;
       releaseNotes: string;
+      publishedAt: string | null;
       etag: string | null;
     } | null,
     checkedAt: number,
@@ -514,6 +517,7 @@ export const useAppStore = create<AppState>()(
                   binAssetSize: info.binAssetSize,
                   sha256AssetUrl: info.sha256AssetUrl,
                   releaseNotes: info.releaseNotes,
+                  publishedAt: info.publishedAt ?? null,
                   etag: info.etag,
                 }
               : {...EMPTY_RELEASE},
