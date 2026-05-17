@@ -62,6 +62,7 @@
 #include <freertos/task.h>
 #include <soc/timer_group_reg.h>
 #include <soc/wdt_periph.h>
+#include <soc/rtc_cntl_reg.h>
 
 #include "pao_ble.h"  // for notifyOtaStatus()
 
@@ -516,6 +517,30 @@ void end() {
     WRITE_PERI_REG(TIMG_WDTCONFIG0_REG(1), 0);                      // disable WDT
     WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(1), 0);                     // re-lock
     Serial.println("OTA install: IWDT disabled (TIMG1 register write, offset 0x64)");
+    Serial.flush();
+
+    // Disable TIMG0 watchdog (MWDT0 / task watchdog). Same register layout as
+    // TIMG1 above — TIMG_WDTWPROTECT_REG(0) and TIMG_WDTCONFIG0_REG(0) resolve
+    // to the TIMG0 base + the same offsets. The task watchdog supervisor on
+    // MWDT0 fires (rst:0x7, TG0WDT_SYS_RST) when the long flash erase blocks
+    // the task watchdog feed mechanism. We do NOT re-enable after install — the
+    // ESP.restart() at the end of this function resets all watchdogs to their
+    // boot-time defaults. The 120 s esp_timer remains the catch-all backstop.
+    WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(0), TIMG_WDT_WKEY_VALUE);  // unlock
+    WRITE_PERI_REG(TIMG_WDTCONFIG0_REG(0), 0);                      // disable WDT
+    WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(0), 0);                     // re-lock
+    Serial.println("OTA install: TIMG0 watchdog disabled (MWDT0)");
+    Serial.flush();
+
+    // Disable RTC watchdog (RWDT). Third independent watchdog on the S3. Defensive
+    // write — if the RTC WDT is not armed by the bootloader / IDF at this point
+    // the writes are no-ops. Unlock key 0x50D83AA1 matches RWDT_LL_WDT_WKEY_VALUE
+    // in hal/esp32s3/include/hal/rwdt_ll.h. We use the literal here to avoid
+    // pulling in the IDF HAL header chain.
+    WRITE_PERI_REG(RTC_CNTL_WDTWPROTECT_REG, 0x50D83AA1U);         // unlock
+    WRITE_PERI_REG(RTC_CNTL_WDTCONFIG0_REG, 0);                     // disable WDT
+    WRITE_PERI_REG(RTC_CNTL_WDTWPROTECT_REG, 0);                    // re-lock
+    Serial.println("OTA install: RTC watchdog disabled");
     Serial.flush();
 
     // --- Install-phase safety timeout ---
