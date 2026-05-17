@@ -72,10 +72,11 @@ constexpr uint32_t kMaxImageSize = 3 * 1024 * 1024;
 // Flash geometry (SPI NOR standard).
 constexpr size_t kSectorSize = 4096;  // 4 KB erase granularity -- IWDT-safe duration
 
-// During install (end()), yield every N bytes to keep BLE alive and feed the
-// watchdog. 256 KB gives ~50-80 ms of continuous flash work per interval at
-// 80 MHz OPI, which is safely inside the 300 ms IWDT window.
-constexpr size_t kInstallYieldInterval = 256 * 1024;
+// During install (end()), yield every N bytes to keep FreeRTOS scheduler alive
+// and reduce cache-disable burst windows. 16 KB = 4 sectors between each
+// vTaskDelay(1). Even if BLE is deinited before the erase loop, the IDLE task
+// still needs ticks to service the S3's per-core IWDT counters.
+constexpr size_t kInstallYieldInterval = 16 * 1024;
 
 State    g_state = State::IDLE;
 uint32_t g_total_size = 0;
@@ -403,8 +404,34 @@ void end() {
     g_state = State::COMMITTING;
     notify(STATUS_COMMITTING, g_bytes_received);
 
+    // --- Fix 1: Deinit NimBLE before flash operations ---
+    // The BLE host task runs at ~priority 3-4 on its own FreeRTOS task. While it
+    // is alive it can attempt SPI flash reads (NVS, attribute lookups, TX queue
+    // flushes) that compete for the flash bus during our erase loop. On S3 OPI
+    // flash, the cache-disable window for a 4KB sector erase is 50-80 ms; if BLE
+    // triggers a second concurrent cache-disable the combined window can exceed
+    // the hard-coded 300 ms IWDT ceiling in the pioarduino 53.03.13 sdkconfig
+    // blob and trip TG1WDT_SYS_RST before we reach esp_ota_set_boot_partition().
+    //
+    // Deiniting NimBLE here stops the host task and releases its bus claims.
+    // Mobile loses the connection (LSTO disconnect) which it already handles via
+    // Decision #64: falls through to scan+reconnect on disconnect, sees new
+    // version on boot, sends VERIFY. STATUS_REBOOTING notify is NOT sent — that
+    // is acceptable because mobile's orchestrator treats any disconnect after
+    // STATUS_COMMITTING as an expected post-reboot disconnect.
+    //
+    // delay(50) before deinit gives the BLE TX queue time to push STATUS_COMMITTING
+    // out on the air before the host task is killed.
+    Serial.println("OTA install: deiniting NimBLE before flash work");
+    Serial.flush();
+    delay(50);
+    NimBLEDevice::deinit(true);  // true = release memory
+    delay(50);
+    Serial.println("OTA install: NimBLE deinited OK");
+    Serial.flush();
+
     // --- INSTALL PHASE (Option C) ---
-    // BLE streaming is done. No more chunks are coming. The main loop is paused
+    // BLE streaming is done. NimBLE is now stopped. The main loop is paused
     // (isInFlight() == true). All flash ops happen here, serially. If IWDT does
     // fire during install and the device resets, the manual NVS rollback path
     // in checkBootRecovery() will catch it on the next boot.
@@ -437,7 +464,15 @@ void end() {
         erase_size = (erase_size + kSectorSize - 1) & ~(kSectorSize - 1);
 
         feedWatchdog();
+        // Fix 2: time every sector erase so we know if any individual call
+        // exceeds the 300 ms IWDT ceiling. If we crash mid-loop the last
+        // printed sector + duration narrows down the offending call.
+        uint32_t t0 = millis();
         esp_err_t err = esp_partition_erase_range(s_ota_partition, off, erase_size);
+        uint32_t dt = millis() - t0;
+        Serial.printf("OTA erase sector %u: dt=%ums err=%d\n",
+                      (unsigned)(off / kSectorSize), (unsigned)dt, (int)err);
+        Serial.flush();
         if (err != ESP_OK) {
             Serial.printf("OTA: erase failed at offset=%u err=0x%x\n",
                           (unsigned)off, (unsigned)err);
@@ -448,14 +483,11 @@ void end() {
         }
         feedWatchdog();
 
-        // Yield every kInstallYieldInterval bytes so BLE host task can service
-        // link-layer events (keep-alive) and so we avoid sustained cache-disable
-        // bursts that could approach the IWDT window.
+        // Yield every kInstallYieldInterval bytes to give the IDLE task ticks
+        // (feeds per-core IWDT counters) and prevent sustained cache-disable
+        // bursts. 16 KB interval = yield every 4 sectors.
         if ((off & (kInstallYieldInterval - 1)) == 0 && off > 0) {
             vTaskDelay(1);
-            Serial.printf("OTA install (erase): %u / %u bytes\n",
-                          (unsigned)off, (unsigned)total);
-            Serial.flush();
         }
     }
     Serial.println("OTA install: erase complete");
@@ -485,9 +517,6 @@ void end() {
 
         if ((off & (kInstallYieldInterval - 1)) == 0 && off > magic_len) {
             vTaskDelay(1);
-            Serial.printf("OTA install (write): %u / %u bytes\n",
-                          (unsigned)off, (unsigned)total);
-            Serial.flush();
         }
     }
 
@@ -558,14 +587,14 @@ void end() {
         }
     }
 
-    Serial.println("OTA: image committed, rebooting in 100 ms");
+    Serial.println("OTA: image committed, rebooting now");
     Serial.flush();
-    notify(STATUS_REBOOTING, g_bytes_received);
-
+    // NimBLE was deinited at the start of install (Fix 1), so STATUS_REBOOTING
+    // has no transport — the notify call is a no-op here. Mobile handles the
+    // connection loss as an expected post-reboot disconnect per Decision #64.
+    // g_state = REBOOTING is recorded for completeness; the restart follows
+    // immediately so isInFlight() will never be polled again this boot.
     g_state = State::REBOOTING;
-
-    // Give NimBLE a moment to push REBOOTING before we vanish.
-    delay(100);
     ESP.restart();
 }
 

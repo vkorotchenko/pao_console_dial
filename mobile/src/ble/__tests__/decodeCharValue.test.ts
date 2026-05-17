@@ -5,18 +5,7 @@ import {decodeCharValue} from '../decodeCharValue';
 // Encoding helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Simulate the charger firmware encoding:
- *   Arduino println(val, HEX) → uppercase hex ASCII digits
- *   → sent via AT+GATTCHAR → nRF51822 stores those ASCII bytes as the characteristic value
- *   → mobile receives the same ASCII bytes → base64 for transport
- */
-function chargerEncode(val: number): string {
-  const hex = val.toString(16).toUpperCase();
-  return Buffer.from(hex, 'ascii').toString('base64');
-}
-
-/** Simulate raw binary big-endian encoding (fallback path). */
+/** Simulate raw binary big-endian encoding (NimBLE firmware path). */
 function binaryEncode(val: number, byteCount = 1): string {
   const buf = Buffer.alloc(byteCount);
   for (let i = byteCount - 1; i >= 0; i--) {
@@ -56,9 +45,9 @@ const targetV     = Math.round(absMinV + targetPct * (absMaxV - absMinV));      
 const allValues: [number][] = Array.from({length: 5001}, (_, i) => [i]);
 
 test.each(allValues)(
-  'chargerEncode(%i) round-trips to %i',
+  'binaryEncode(%i) round-trips to %i',
   val => {
-    expect(decodeCharValue(chargerEncode(val))).toBe(val);
+    expect(decodeCharValue(binaryEncode(val, val > 255 ? 2 : 1))).toBe(val);
   },
 );
 
@@ -66,13 +55,10 @@ test.each(allValues)(
 // Per-characteristic tests using actual firmware default values
 //
 // Columns:
-//   charName   — BLE characteristic name (UUID in ble.cpp)
-//   firmwareInt — the C++ integer value sent via ble.println(val, HEX)
-//   divisor    — mobile divides decoded by this to get human-readable units
-//   expected   — expected human-readable value
-//
-// firmwareInt mirrors the exact C++ expression from ble.cpp, including
-// any uint8_t / uint16_t cast that Arduino applies before HEX printing.
+//   charName    — BLE characteristic name (UUID in ble.cpp)
+//   firmwareInt — the C++ integer value sent as raw binary big-endian
+//   divisor     — mobile divides decoded by this to get human-readable units
+//   expected    — expected human-readable value
 // ---------------------------------------------------------------------------
 type CharCase = [charName: string, firmwareInt: number, divisor: number, expected: number];
 
@@ -114,26 +100,25 @@ const characteristicCases: CharCase[] = [
 test.each(characteristicCases)(
   '%s: firmware sends %i → decoded÷%i = %f',
   (_, firmwareInt, divisor, expected) => {
-    const decoded = decodeCharValue(chargerEncode(firmwareInt));
+    const decoded = decodeCharValue(binaryEncode(firmwareInt, 2));
     expect(decoded / divisor).toBeCloseTo(expected, 5);
   },
 );
 
 // ---------------------------------------------------------------------------
-// Regression: raw binary bytes 0x61–0x66 must NOT be treated as lowercase hex
-// Old bug: 0x64 → parseInt("d", 16) = 13 instead of 100
+// Binary bytes in the 'a'-'f' ASCII range decode correctly (no hex mis-decode)
 // ---------------------------------------------------------------------------
-const binaryRegressionCases: [number, number][] = [
+const binaryByteCases: [number, number][] = [
   [0x61, 97],   // 'a'
   [0x62, 98],   // 'b'
   [0x63, 99],   // 'c'
-  [0x64, 100],  // 'd' — critical: MAX_AMPS=100 stored as binary 0x64
+  [0x64, 100],  // 'd' — MAX_AMPS=100 as raw byte
   [0x65, 101],  // 'e'
   [0x66, 102],  // 'f'
 ];
 
-test.each(binaryRegressionCases)(
-  'raw binary byte 0x%s is NOT mis-decoded as lowercase hex (expected %i)',
+test.each(binaryByteCases)(
+  'raw binary byte 0x%s decodes to %i',
   (byte, expected) => {
     expect(decodeCharValue(binaryEncode(byte))).toBe(expected);
   },

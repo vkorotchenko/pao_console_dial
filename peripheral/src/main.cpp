@@ -3,7 +3,6 @@
 #include <ESP32Time.h>
 #include <Arduino.h>
 #include "touch.h"
-#include "bigFont.h"
 #include "midleFont.h"
 #include "smallFont.h"
 #include "valueFont.h"
@@ -180,7 +179,7 @@ void loop()
   static bool s_ota_screen_drawn = false;
   if (ota::isInFlight()) {
     if (!s_ota_screen_drawn) {
-      drawOtaUpdateScreen(&sprite, gfx, bigFont, midleFont);
+      drawOtaUpdateScreen(&sprite, gfx);
       s_ota_screen_drawn = true;
     }
     ota::tickWatchdog();
