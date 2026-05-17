@@ -423,36 +423,38 @@ void end() {
     Serial.println("OTA install: STATUS_COMMITTING notify returned");
     Serial.flush();
 
-    // --- Deinit NimBLE before flash operations ---
-    // The BLE host task runs at ~priority 3-4 on its own FreeRTOS task. While it
-    // is alive it can attempt SPI flash reads (NVS, attribute lookups, TX queue
-    // flushes) that compete for the flash bus during our erase loop. On S3 OPI
-    // flash, the cache-disable window for a 4KB sector erase is 50-80 ms; if BLE
-    // triggers a second concurrent cache-disable the combined window can exceed
-    // the hard-coded 300 ms IWDT ceiling in the pioarduino 53.03.13 sdkconfig
-    // blob and trip TG1WDT_SYS_RST before we reach esp_ota_set_boot_partition().
-    //
-    // Deiniting NimBLE here stops the host task and releases its bus claims.
-    // Mobile loses the connection (LSTO disconnect) which it already handles via
-    // Decision #64: falls through to scan+reconnect on disconnect, sees new
-    // version on boot, sends VERIFY. STATUS_REBOOTING notify is NOT sent — that
-    // is acceptable because mobile's orchestrator treats any disconnect after
-    // STATUS_COMMITTING as an expected post-reboot disconnect.
-    //
-    // delay(50) before deinit gives the BLE TX queue time to push STATUS_COMMITTING
-    // out on the air before the host task is killed.
-    //
-    // deinit(false) vs deinit(true): we use false (skip memory release) because
-    // deinit(true) attempts a graceful stack teardown — walking active connection
-    // state, flushing TX queues — which can hang for seconds on a half-dead link.
-    // deinit(false) is a hard kill of the host task. The small RAM leak is
-    // irrelevant because we reboot in seconds.
-    Serial.println("OTA install: about to deinit NimBLE (hard kill, no memory release)");
-    Serial.flush();
-    delay(50);
-    NimBLEDevice::deinit(false);  // false = hard kill; don't release memory (avoids hang on dead link)
-    delay(50);
-    Serial.println("OTA install: NimBLE deinit returned");
+    // We intentionally do NOT call NimBLEDevice::deinit() here. After the 3+
+    // minute streaming phase, the NimBLE host task has accumulated TX queue
+    // state that prevents clean shutdown — deinit() blocks waiting for the host
+    // task to exit and never returns (confirmed hang: serial output stops at
+    // "about to deinit", never reaches "deinit returned"). We let the host task
+    // keep running; the eventual ESP.restart() at the end of install() kills it
+    // cleanly. The flash erase and write operations naturally serialize against
+    // BLE activity via the cache-disable window — BLE traffic during install
+    // will be jittery but not fatal. See Decision #65 (moe-dial-ota-skip-deinit-safety-task).
+
+    // --- Hardware-rooted safety task (core 1) ---
+    // Spawn a FreeRTOS task on core 1 (NimBLE host task runs on core 0 by
+    // default in NimBLE-Arduino; no explicit pinning found in pao_ble.cpp, so
+    // the IDF default of core 0 applies). If anything in the install phase
+    // hangs for >120s, this task fires and forces a reboot into the old image.
+    // The install success path calls ESP.restart() within ~90s, before the
+    // safety task fires. Priority is set to configMAX_PRIORITIES-1 so no task
+    // can starve it. The handle is intentionally NOT canceled — we want it to
+    // fire regardless of what happens downstream.
+    TaskHandle_t safety_task_handle = nullptr;
+    auto safety_task = [](void* arg) {
+        vTaskDelay(pdMS_TO_TICKS(120000));
+        Serial.println("OTA safety task: 120s elapsed — forcing reboot into old image");
+        Serial.flush();
+        vTaskDelay(pdMS_TO_TICKS(50));  // let serial drain
+        ESP.restart();
+        // unreachable
+        vTaskDelete(NULL);
+    };
+    xTaskCreatePinnedToCore(safety_task, "ota_safety", 4096, nullptr,
+                            configMAX_PRIORITIES - 1, &safety_task_handle, 1);
+    Serial.println("OTA install: safety task armed (120s)");
     Serial.flush();
 
     // --- Pre-erase phase watchdog ---
@@ -662,9 +664,12 @@ void end() {
 
     Serial.println("OTA: image committed, rebooting now");
     Serial.flush();
-    // NimBLE was deinited at the start of install (Fix 1), so STATUS_REBOOTING
-    // has no transport — the notify call is a no-op here. Mobile handles the
+    // NimBLE is still running at this point (deinit was skipped — see Decision
+    // #65). STATUS_REBOOTING could technically be notified, but the connection
+    // state may be degraded after the long install phase. Mobile handles the
     // connection loss as an expected post-reboot disconnect per Decision #64.
+    // The safety task (armed above) will also fire at 120s if ESP.restart()
+    // somehow stalls, but that is not expected — restart() is synchronous.
     // g_state = REBOOTING is recorded for completeness; the restart follows
     // immediately so isInFlight() will never be polled again this boot.
     g_state = State::REBOOTING;
