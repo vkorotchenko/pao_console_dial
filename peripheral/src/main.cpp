@@ -138,6 +138,11 @@ void setup()
   // code paths run. checkBootRecovery() is idempotent and a no-op when there's
   // no pending OTA. Mirrors charger Decision #52.
   Serial.begin(115200);
+  // UART0 hardware serial (TX0=GPIO43, RX0=GPIO44). Hardware-backed and survives
+  // cache-disable windows during OTA flash erase, so OTA install-phase logs reach
+  // a connected USB-to-Serial adapter even when USB-CDC host has disconnected.
+  // GPIO43/44 are confirmed free on this board (not used by display, I²C, or BLE).
+  Serial0.begin(115200);
   ota::checkBootRecovery();
 
   pinMode(IO_PWM_PIN, OUTPUT);

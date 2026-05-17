@@ -68,6 +68,26 @@
 
 namespace ota {
 
+// Mirrors output to both USB-CDC (Serial) and UART0 (Serial0). UART0 is
+// hardware-backed and survives cache-disable during flash erase, so OTA
+// install-phase logs reach a connected UART-USB adapter even when the
+// USB-CDC host has disconnected. Use this for install-phase breadcrumbs.
+// Streaming-phase logs (ACK at NNN) stay on plain Serial.printf — those
+// work fine on USB-CDC.
+#define OTA_LOG(fmt, ...) do { \
+    Serial.printf(fmt, ##__VA_ARGS__); \
+    Serial.flush(); \
+    Serial0.printf(fmt, ##__VA_ARGS__); \
+    Serial0.flush(); \
+} while(0)
+
+#define OTA_LOGLN(s) do { \
+    Serial.println(s); \
+    Serial.flush(); \
+    Serial0.println(s); \
+    Serial0.flush(); \
+} while(0)
+
 namespace {
 
 // Each OTA app slot is 3 MB per partitions.csv (Decision #58).
@@ -421,11 +441,9 @@ void end() {
     //
     // We still try, but we bracket it so we can see exactly where we are in
     // serial output if the call hangs.
-    Serial.println("OTA install: about to notify STATUS_COMMITTING");
-    Serial.flush();
+    OTA_LOGLN("OTA install: about to notify STATUS_COMMITTING");
     notify(STATUS_COMMITTING, g_bytes_received);
-    Serial.println("OTA install: STATUS_COMMITTING notify returned");
-    Serial.flush();
+    OTA_LOGLN("OTA install: STATUS_COMMITTING notify returned");
 
     // We intentionally do NOT call NimBLEDevice::deinit() here. After the 3+
     // minute streaming phase, the NimBLE host task has accumulated TX queue
@@ -456,8 +474,7 @@ void end() {
     esp_timer_handle_t safety_timer = nullptr;
     const esp_timer_create_args_t safety_args = {
         .callback = [](void*) {
-            Serial.println("OTA safety timer: 120s elapsed — forcing reboot into old image");
-            Serial.flush();
+            OTA_LOGLN("OTA safety timer: 120s elapsed — forcing reboot into old image");
             vTaskDelay(pdMS_TO_TICKS(50));
             ESP.restart();
         },
@@ -469,11 +486,10 @@ void end() {
     esp_err_t timer_err = esp_timer_create(&safety_args, &safety_timer);
     if (timer_err == ESP_OK) {
         esp_timer_start_once(safety_timer, 120ULL * 1000 * 1000);  // microseconds
-        Serial.println("OTA install: safety timer armed (120s, esp_timer)");
+        OTA_LOGLN("OTA install: safety timer armed (120s, esp_timer)");
     } else {
-        Serial.printf("OTA install: WARN safety timer create failed (err=%d)\n", (int)timer_err);
+        OTA_LOG("OTA install: WARN safety timer create failed (err=%d)\n", (int)timer_err);
     }
-    Serial.flush();
 
     // --- Pre-erase phase watchdog ---
     // If the notify or deinit calls above blocked for an absurd amount of time
@@ -482,15 +498,13 @@ void end() {
     // them. This backstop catches that case and forces a clean reboot into the
     // old image.
     if (millis() - end_entered_ms > kPreEraseTimeoutMs) {
-        Serial.printf("OTA end: pre-erase phase exceeded %us — restarting\n",
-                      (unsigned)(kPreEraseTimeoutMs / 1000));
-        Serial.flush();
+        OTA_LOG("OTA end: pre-erase phase exceeded %us — restarting\n",
+                (unsigned)(kPreEraseTimeoutMs / 1000));
         delay(50);
         ESP.restart();
         // unreachable
     }
-    Serial.println("OTA install: pre-erase phase OK, entering erase loop");
-    Serial.flush();
+    OTA_LOGLN("OTA install: pre-erase phase OK, entering erase loop");
 
     // ── Disable IWDT for the install phase ─────────────────────────────────
     // Flash erase on the S3 OPI configuration disables the instruction cache
@@ -516,8 +530,7 @@ void end() {
     WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(1), TIMG_WDT_WKEY_VALUE);  // unlock
     WRITE_PERI_REG(TIMG_WDTCONFIG0_REG(1), 0);                      // disable WDT
     WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(1), 0);                     // re-lock
-    Serial.println("OTA install: IWDT disabled (TIMG1 register write, offset 0x64)");
-    Serial.flush();
+    OTA_LOGLN("OTA install: IWDT disabled (TIMG1 register write, offset 0x64)");
 
     // Disable TIMG0 watchdog (MWDT0 / task watchdog). Same register layout as
     // TIMG1 above — TIMG_WDTWPROTECT_REG(0) and TIMG_WDTCONFIG0_REG(0) resolve
@@ -529,8 +542,7 @@ void end() {
     WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(0), TIMG_WDT_WKEY_VALUE);  // unlock
     WRITE_PERI_REG(TIMG_WDTCONFIG0_REG(0), 0);                      // disable WDT
     WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(0), 0);                     // re-lock
-    Serial.println("OTA install: TIMG0 watchdog disabled (MWDT0)");
-    Serial.flush();
+    OTA_LOGLN("OTA install: TIMG0 watchdog disabled (MWDT0)");
 
     // Disable RTC watchdog (RWDT). Third independent watchdog on the S3. Defensive
     // write — if the RTC WDT is not armed by the bootloader / IDF at this point
@@ -540,8 +552,7 @@ void end() {
     WRITE_PERI_REG(RTC_CNTL_WDTWPROTECT_REG, 0x50D83AA1U);         // unlock
     WRITE_PERI_REG(RTC_CNTL_WDTCONFIG0_REG, 0);                     // disable WDT
     WRITE_PERI_REG(RTC_CNTL_WDTWPROTECT_REG, 0);                    // re-lock
-    Serial.println("OTA install: RTC watchdog disabled");
-    Serial.flush();
+    OTA_LOGLN("OTA install: RTC watchdog disabled");
 
     // --- Install-phase safety timeout ---
     // NimBLE is gone so mobile cannot send cmd=12 (ABORT). If the erase or write
@@ -576,18 +587,16 @@ void end() {
 
     // --- Sector erase: full partition, one 4 KB sector at a time ---
     size_t sectors_total = (total + kSectorSize - 1) / kSectorSize;
-    Serial.printf("OTA install: erasing %u sectors (%u KB) in partition %s\n",
-                  (unsigned)sectors_total,
-                  (unsigned)(sectors_total * kSectorSize / 1024),
-                  s_ota_partition->label);
-    Serial.flush();
+    OTA_LOG("OTA install: erasing %u sectors (%u KB) in partition %s\n",
+            (unsigned)sectors_total,
+            (unsigned)(sectors_total * kSectorSize / 1024),
+            s_ota_partition->label);
 
     for (size_t off = 0; off < total; off += kSectorSize) {
         // Install-phase timeout guard (erase loop).
         if (millis() - install_start_ms > kInstallTimeoutMs) {
-            Serial.printf("OTA install: TIMEOUT (erase) after %ums — forcing reboot into old image\n",
-                          (unsigned)(millis() - install_start_ms));
-            Serial.flush();
+            OTA_LOG("OTA install: TIMEOUT (erase) after %ums — forcing reboot into old image\n",
+                    (unsigned)(millis() - install_start_ms));
             delay(50);
             ESP.restart();
             // unreachable
@@ -602,9 +611,8 @@ void end() {
         // crash is inside esp_partition_erase_range or somewhere else entirely
         // (e.g. a context switch triggered before we even reach it).
         if (off == 0) {
-            Serial.printf("OTA install: about to call esp_partition_erase_range(off=0, size=%u)\n",
-                          (unsigned)erase_size);
-            Serial.flush();
+            OTA_LOG("OTA install: about to call esp_partition_erase_range(off=0, size=%u)\n",
+                    (unsigned)erase_size);
         }
         // Fix 2: time every sector erase so we know if any individual call
         // exceeds the 300 ms IWDT ceiling. If we crash mid-loop the last
@@ -612,13 +620,11 @@ void end() {
         uint32_t t0 = millis();
         esp_err_t err = esp_partition_erase_range(s_ota_partition, off, erase_size);
         uint32_t dt = millis() - t0;
-        Serial.printf("OTA erase sector %u: dt=%ums err=%d\n",
-                      (unsigned)(off / kSectorSize), (unsigned)dt, (int)err);
-        Serial.flush();
+        OTA_LOG("OTA erase sector %u: dt=%ums err=%d\n",
+                (unsigned)(off / kSectorSize), (unsigned)dt, (int)err);
         if (err != ESP_OK) {
-            Serial.printf("OTA: erase failed at offset=%u err=0x%x\n",
-                          (unsigned)off, (unsigned)err);
-            Serial.flush();
+            OTA_LOG("OTA: erase failed at offset=%u err=0x%x\n",
+                    (unsigned)off, (unsigned)err);
             notify(STATUS_ERR_END_FAILED, g_bytes_received);
             resetSession();
             return;
@@ -632,21 +638,18 @@ void end() {
             vTaskDelay(1);
         }
     }
-    Serial.println("OTA install: erase complete");
-    Serial.flush();
+    OTA_LOGLN("OTA install: erase complete");
 
     // --- Page write: image body (bytes 16..end) from PSRAM ---
     // Skip the first 16 bytes (magic). We write them last.
-    Serial.printf("OTA install: writing image body (%u bytes from offset 16)\n",
-                  (unsigned)(total - magic_len));
-    Serial.flush();
+    OTA_LOG("OTA install: writing image body (%u bytes from offset 16)\n",
+            (unsigned)(total - magic_len));
 
     for (size_t off = magic_len; off < total; off += kSectorSize) {
         // Install-phase timeout guard (write loop).
         if (millis() - install_start_ms > kInstallTimeoutMs) {
-            Serial.printf("OTA install: TIMEOUT (write) after %ums — forcing reboot into old image\n",
-                          (unsigned)(millis() - install_start_ms));
-            Serial.flush();
+            OTA_LOG("OTA install: TIMEOUT (write) after %ums — forcing reboot into old image\n",
+                    (unsigned)(millis() - install_start_ms));
             delay(50);
             ESP.restart();
             // unreachable
@@ -658,9 +661,8 @@ void end() {
         esp_err_t err = esp_partition_write(
             s_ota_partition, off, s_image_buf + off, chunk);
         if (err != ESP_OK) {
-            Serial.printf("OTA: write failed at offset=%u len=%u err=0x%x\n",
-                          (unsigned)off, (unsigned)chunk, (unsigned)err);
-            Serial.flush();
+            OTA_LOG("OTA: write failed at offset=%u len=%u err=0x%x\n",
+                    (unsigned)off, (unsigned)chunk, (unsigned)err);
             notify(STATUS_ERR_END_FAILED, g_bytes_received);
             resetSession();
             return;
@@ -673,22 +675,19 @@ void end() {
     }
 
     // --- Write magic bytes last (first-bytes guard) ---
-    Serial.printf("OTA install: writing magic bytes (first %u bytes) to offset 0\n",
-                  (unsigned)magic_len);
-    Serial.flush();
+    OTA_LOG("OTA install: writing magic bytes (first %u bytes) to offset 0\n",
+            (unsigned)magic_len);
     feedWatchdog();
     esp_err_t merr = esp_partition_write(
         s_ota_partition, 0, s_magic_bytes, magic_len);
     feedWatchdog();
     if (merr != ESP_OK) {
-        Serial.printf("OTA: magic bytes write failed err=0x%x\n", (unsigned)merr);
-        Serial.flush();
+        OTA_LOG("OTA: magic bytes write failed err=0x%x\n", (unsigned)merr);
         notify(STATUS_ERR_END_FAILED, g_bytes_received);
         resetSession();
         return;
     }
-    Serial.println("OTA install: image write complete");
-    Serial.flush();
+    OTA_LOGLN("OTA install: image write complete");
 
     // PSRAM buffer is no longer needed. Free before marking partition bootable.
     free(s_image_buf);
@@ -699,9 +698,8 @@ void end() {
     // on the next boot. Equivalent to what Update.end(true) does internally.
     esp_err_t boot_err = esp_ota_set_boot_partition(s_ota_partition);
     if (boot_err != ESP_OK) {
-        Serial.printf("OTA: esp_ota_set_boot_partition failed err=0x%x\n",
-                      (unsigned)boot_err);
-        Serial.flush();
+        OTA_LOG("OTA: esp_ota_set_boot_partition failed err=0x%x\n",
+                (unsigned)boot_err);
         notify(STATUS_ERR_END_FAILED, g_bytes_received);
         // s_ota_partition is still valid here but image was written; reset cleanly.
         s_ota_partition = nullptr;
@@ -709,9 +707,8 @@ void end() {
         return;
     }
 
-    Serial.printf("OTA: partition %s set as next boot target\n",
-                  s_ota_partition->label);
-    Serial.flush();
+    OTA_LOG("OTA: partition %s set as next boot target\n",
+            s_ota_partition->label);
 
     setOtaPendingFlag(true);
 
@@ -728,19 +725,16 @@ void end() {
             nvs.putUInt(kRecoveryKeyAttempts, 0);
             nvs.putUChar(kRecoveryKeyPrevPart, prev_subtype);
             nvs.end();
-            Serial.printf("OTA: armed manual rollback (prev_part subtype=0x%02x)\n",
-                          prev_subtype);
-            Serial.flush();
+            OTA_LOG("OTA: armed manual rollback (prev_part subtype=0x%02x)\n",
+                    prev_subtype);
         } else {
             // New image is still bootable but auto-rollback safety net is
             // disabled. USB reflash remains the recovery of last resort.
-            Serial.println("OTA: failed to arm manual rollback (NVS begin rw failed)");
-            Serial.flush();
+            OTA_LOGLN("OTA: failed to arm manual rollback (NVS begin rw failed)");
         }
     }
 
-    Serial.println("OTA: image committed, rebooting now");
-    Serial.flush();
+    OTA_LOGLN("OTA: image committed, rebooting now");
     // NimBLE is still running at this point (deinit was skipped — see Decision
     // #65). STATUS_REBOOTING could technically be notified, but the connection
     // state may be degraded after the long install phase. Mobile handles the
