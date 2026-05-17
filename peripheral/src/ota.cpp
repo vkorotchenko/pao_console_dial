@@ -57,6 +57,7 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_task_wdt.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -433,28 +434,42 @@ void end() {
     // BLE activity via the cache-disable window — BLE traffic during install
     // will be jittery but not fatal. See Decision #65 (moe-dial-ota-skip-deinit-safety-task).
 
-    // --- Hardware-rooted safety task (core 1) ---
-    // Spawn a FreeRTOS task on core 1 (NimBLE host task runs on core 0 by
-    // default in NimBLE-Arduino; no explicit pinning found in pao_ble.cpp, so
-    // the IDF default of core 0 applies). If anything in the install phase
-    // hangs for >120s, this task fires and forces a reboot into the old image.
-    // The install success path calls ESP.restart() within ~90s, before the
-    // safety task fires. Priority is set to configMAX_PRIORITIES-1 so no task
-    // can starve it. The handle is intentionally NOT canceled — we want it to
-    // fire regardless of what happens downstream.
-    TaskHandle_t safety_task_handle = nullptr;
-    auto safety_task = [](void* arg) {
-        vTaskDelay(pdMS_TO_TICKS(120000));
-        Serial.println("OTA safety task: 120s elapsed — forcing reboot into old image");
-        Serial.flush();
-        vTaskDelay(pdMS_TO_TICKS(50));  // let serial drain
-        ESP.restart();
-        // unreachable
-        vTaskDelete(NULL);
+    // --- esp_timer safety watchdog ---
+    // Replaces the earlier xTaskCreatePinnedToCore approach (Decision #65).
+    // The FreeRTOS max-priority task on core 1 triggered a coprocessor (FPU)
+    // exception: the context switch to that task attempted FPU state save/restore
+    // while cache was disabled mid-flash-op on core 0, and _xt_coproc_exc could
+    // not complete (cache still disabled) → IWDT fired → TG1WDT_SYS_RST.
+    //
+    // esp_timer uses a single shared IDF dispatcher thread that is already running.
+    // No new task is created, no cross-core FPU state dance, no max-priority
+    // preemption. The callback fires after 120 s of wall-clock time and forces a
+    // clean reboot into the old image. The install success path calls ESP.restart()
+    // well within 90 s, so the timer is effectively never reached on a healthy run.
+    // The handle is intentionally NOT canceled — we want the timer to fire
+    // regardless of what happens downstream.
+    //
+    // Lambda captures nothing → converts to function pointer cleanly.
+    esp_timer_handle_t safety_timer = nullptr;
+    const esp_timer_create_args_t safety_args = {
+        .callback = [](void*) {
+            Serial.println("OTA safety timer: 120s elapsed — forcing reboot into old image");
+            Serial.flush();
+            vTaskDelay(pdMS_TO_TICKS(50));
+            ESP.restart();
+        },
+        .arg = nullptr,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "ota_safety",
+        .skip_unhandled_events = false,
     };
-    xTaskCreatePinnedToCore(safety_task, "ota_safety", 4096, nullptr,
-                            configMAX_PRIORITIES - 1, &safety_task_handle, 1);
-    Serial.println("OTA install: safety task armed (120s)");
+    esp_err_t timer_err = esp_timer_create(&safety_args, &safety_timer);
+    if (timer_err == ESP_OK) {
+        esp_timer_start_once(safety_timer, 120ULL * 1000 * 1000);  // microseconds
+        Serial.println("OTA install: safety timer armed (120s, esp_timer)");
+    } else {
+        Serial.printf("OTA install: WARN safety timer create failed (err=%d)\n", (int)timer_err);
+    }
     Serial.flush();
 
     // --- Pre-erase phase watchdog ---
@@ -529,6 +544,14 @@ void end() {
         erase_size = (erase_size + kSectorSize - 1) & ~(kSectorSize - 1);
 
         feedWatchdog();
+        // Breadcrumb before the very first erase call so we know whether the
+        // crash is inside esp_partition_erase_range or somewhere else entirely
+        // (e.g. a context switch triggered before we even reach it).
+        if (off == 0) {
+            Serial.printf("OTA install: about to call esp_partition_erase_range(off=0, size=%u)\n",
+                          (unsigned)erase_size);
+            Serial.flush();
+        }
         // Fix 2: time every sector erase so we know if any individual call
         // exceeds the 300 ms IWDT ceiling. If we crash mid-loop the last
         // printed sector + duration narrows down the offending call.
@@ -668,7 +691,7 @@ void end() {
     // #65). STATUS_REBOOTING could technically be notified, but the connection
     // state may be degraded after the long install phase. Mobile handles the
     // connection loss as an expected post-reboot disconnect per Decision #64.
-    // The safety task (armed above) will also fire at 120s if ESP.restart()
+    // The safety timer (armed above) will also fire at 120s if ESP.restart()
     // somehow stalls, but that is not expected — restart() is synchronous.
     // g_state = REBOOTING is recorded for completeness; the restart follows
     // immediately so isInFlight() will never be polled again this boot.
