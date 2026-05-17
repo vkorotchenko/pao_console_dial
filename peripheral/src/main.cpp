@@ -12,6 +12,7 @@
 #include "i2c_handler.h"
 #include "pao_ble.h"
 #include "ota.h"
+#include "ota_update_screen.h"
 
 GlobalState &state = GlobalState::getInstance();
 I2CHandler i2cHandler;
@@ -172,11 +173,21 @@ void loop()
   // OTA duration (~30–60 s); mobile renders progress. Watchdog feed inside
   // ota::writeChunk() handles the BLE-callback-task side. ota::tickWatchdog()
   // still runs so a stalled OTA session can abort itself.
+  //
+  // Decision follow-up (#63): draw the "Updating" screen once on first entry
+  // so the display shows a clear indicator rather than freezing on whatever
+  // screen was last active. The static frame persists until reboot.
+  static bool s_ota_screen_drawn = false;
   if (ota::isInFlight()) {
+    if (!s_ota_screen_drawn) {
+      drawOtaUpdateScreen(&sprite, gfx, bigFont, midleFont);
+      s_ota_screen_drawn = true;
+    }
     ota::tickWatchdog();
     delay(10);  // yield to BLE / IDLE so the OTA stack actually runs
     return;
   }
+  s_ota_screen_drawn = false;  // reset for any future OTA in the same boot
 
   readEncoder();
 
