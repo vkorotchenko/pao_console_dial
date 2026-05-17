@@ -430,6 +430,17 @@ void end() {
     Serial.println("OTA install: NimBLE deinited OK");
     Serial.flush();
 
+    // --- Install-phase safety timeout ---
+    // NimBLE is gone so mobile cannot send cmd=12 (ABORT). If the erase or write
+    // loops hang for any reason (flash bus lock, sdkconfig regression, bad sector),
+    // the only escape without this guard is a power cycle. 90 s is comfortably
+    // above the worst-case healthy install (~60 s for a 3 MB image on OPI flash
+    // with per-sector yields). On timeout we reboot into the OLD image — we do
+    // NOT set the NVS pending flag, so checkBootRecovery() sees nothing to do and
+    // the device comes back clean. See Decision #63 (moe-dial-ota-install-timeout).
+    const uint32_t install_start_ms = millis();
+    constexpr uint32_t kInstallTimeoutMs = 90 * 1000;  // 90 s ceiling
+
     // --- INSTALL PHASE (Option C) ---
     // BLE streaming is done. NimBLE is now stopped. The main loop is paused
     // (isInFlight() == true). All flash ops happen here, serially. If IWDT does
@@ -459,6 +470,16 @@ void end() {
     Serial.flush();
 
     for (size_t off = 0; off < total; off += kSectorSize) {
+        // Install-phase timeout guard (erase loop).
+        if (millis() - install_start_ms > kInstallTimeoutMs) {
+            Serial.printf("OTA install: TIMEOUT (erase) after %ums — forcing reboot into old image\n",
+                          (unsigned)(millis() - install_start_ms));
+            Serial.flush();
+            delay(50);
+            ESP.restart();
+            // unreachable
+        }
+
         size_t erase_size = ((total - off) < kSectorSize) ? (total - off) : kSectorSize;
         // Round up to sector boundary as required by esp_partition_erase_range.
         erase_size = (erase_size + kSectorSize - 1) & ~(kSectorSize - 1);
@@ -500,6 +521,16 @@ void end() {
     Serial.flush();
 
     for (size_t off = magic_len; off < total; off += kSectorSize) {
+        // Install-phase timeout guard (write loop).
+        if (millis() - install_start_ms > kInstallTimeoutMs) {
+            Serial.printf("OTA install: TIMEOUT (write) after %ums — forcing reboot into old image\n",
+                          (unsigned)(millis() - install_start_ms));
+            Serial.flush();
+            delay(50);
+            ESP.restart();
+            // unreachable
+        }
+
         size_t chunk = ((total - off) < kSectorSize) ? (total - off) : kSectorSize;
 
         feedWatchdog();
