@@ -261,20 +261,27 @@ export async function flashFirmware(
       profile.setFirmwareVersion(newVersion);
     }
 
-    // Compare bare semvers. If mismatch, surface a soft warning but proceed
-    // to verify — the bootloader / NVS-rollback will catch a bad image on
-    // its own time.
+    // Compare bare semvers. A positive mismatch (newVersion is non-null AND
+    // doesn't match expectedVersion) means the device rebooted back to the old
+    // image — OTA_END fired before all bytes were received (Bug 1), the image
+    // was incomplete, the bootloader rolled back. This is a hard failure: do
+    // NOT proceed to VERIFY, which would stamp the old image as "done".
+    // If newVersion is null (read failed), we cannot confirm failure — leave
+    // the VERIFY to catch any protocol inconsistency rather than a false abort.
     if (
       newVersion &&
       expectedVersion &&
       stripBuildSuffix(newVersion) !== stripBuildSuffix(expectedVersion)
     ) {
-      console.warn(
-        `[OTA:${target}] post-reconnect version mismatch: read=${newVersion} expected=${expectedVersion}`,
+      throw new Error(
+        `Update did not take effect. Device is still running ${newVersion} (expected ${expectedVersion}). The device may need a USB reflash or another attempt.`,
       );
     }
 
     // 6. Verify ────────────────────────────────────────────────────────────
+    // Only reached when version matches (or could not be read). cmd=13 is the
+    // firmware's final integrity check — intentionally gated behind the version
+    // comparison above so a rollback doesn't get a spurious VERIFIED signal.
     onPhase?.('verifying');
     setState('finalizing');
 

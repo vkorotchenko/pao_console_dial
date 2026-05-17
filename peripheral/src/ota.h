@@ -89,7 +89,7 @@ enum class State {
 // The charger (ESP32 Feather V2, non-S3, non-OPI) is unaffected and keeps
 // OTA_ACK_WINDOW_CHUNKS=16.
 #ifndef OTA_ACK_WINDOW_CHUNKS
-#define OTA_ACK_WINDOW_CHUNKS 4
+#define OTA_ACK_WINDOW_CHUNKS 16
 #endif
 
 // Called from cmd dispatcher (cmd=10). Validates the 38-byte payload (cmd

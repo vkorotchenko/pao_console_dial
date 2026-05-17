@@ -84,7 +84,12 @@ export const OTA_STATUS = {
   NOT_PENDING: 0x17,
 } as const;
 
-const WINDOW_SIZE = 16; // chunks per ACK cycle
+// WINDOW_SIZE must match firmware OTA_ACK_WINDOW_CHUNKS (peripheral/src/ota.h).
+// Option C's PSRAM-buffered writer task decouples flash latency from BLE, which
+// makes it safe to run at 16 chunks per ACK cycle. Moe bumped the firmware
+// constant (OTA_ACK_WINDOW_CHUNKS = 16) in the same change set, so both sides
+// are now aligned at 16. Do not change one without the other.
+const WINDOW_SIZE = 16; // chunks per ACK cycle — must match firmware OTA_ACK_WINDOW_CHUNKS
 const WINDOW_TIMEOUT_MS = 30_000; // generous — ESP32 may be busy with NimBLE notify queue + CAN bus traffic
 const READY_TIMEOUT_MS = 10_000; // OTA_BEGIN → READY
 const REBOOT_TIMEOUT_MS = 10_000; // OTA_END → REBOOTING
@@ -554,6 +559,30 @@ export async function transferFirmware(
         // required but smooths out throughput on constrained phones.
         await new Promise<void>(r => setTimeout(() => r(), 0));
       }
+    }
+
+    // ── Bug-1 guard: wait for firmware to confirm all bytes before END ───────
+    // Mobile tracks `offset` (bytes dispatched into the Android BLE write
+    // queue), NOT bytes that the firmware has actually written to flash. On a
+    // degraded link (NAKs, supervision-timeout pressure) the Android stack
+    // buffers WRITE_NR operations and returns immediately, so `offset` can
+    // reach `total` while the firmware is still processing earlier chunks.
+    // Sending cmd=11 (OTA_END) before `bytes_received == total` causes the
+    // firmware's size-mismatch check to reject the commit and leave the device
+    // un-flashed — exactly the false-completion scenario in the logcat.
+    //
+    // Strategy: keep consuming ACKs until `pipe.lastBytesReceived >= total`.
+    // If the final window's ACK already confirmed all bytes (the common happy
+    // path) `lastBytesReceived` is already ≥ total and we skip the loop.
+    // Each iteration waits up to WINDOW_TIMEOUT_MS for the next ACK.
+    while (pipe.lastBytesReceived < total) {
+      checkAbort();
+      console.log(
+        `[OTA] waiting for firmware to catch up: confirmed=${pipe.lastBytesReceived}/${total}`,
+      );
+      const ev = await expectStatus(pipe, OTA_STATUS.ACK, WINDOW_TIMEOUT_MS);
+      const reported = Math.min(ev.bytesReceived, total);
+      onProgress?.(reported, total);
     }
 
     checkAbort();
