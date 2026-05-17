@@ -80,6 +80,13 @@ export default function AppNavigator() {
   const otaState = useAppStore(state => state.ota.charger.state);
   // Pause controller auto-reconnect during controller OTA orchestration.
   const controllerOtaState = useAppStore(state => state.ota.controller.state);
+  // Fix 1 (dial OTA reconnect): pause auto-reconnect during dial OTA
+  // orchestration. Without this guard, the BLE disconnect that fires when the
+  // dial reboots flips bleStatus to 'disconnected', re-triggers the unified
+  // scan effect, and starts a competing scan against the same sharedBleManager
+  // the orchestrator is using — exhausting MAX_RETRIES and leaving the app
+  // stuck until restart.
+  const dialOtaState = useAppStore(state => state.ota.dial.state);
   // scanTrigger lives in the store so Settings screen "Connect" buttons can
   // increment it without starting their own independent scans.
   const scanTrigger = useAppStore(state => state.scanTrigger);
@@ -411,9 +418,15 @@ export default function AppNavigator() {
       otaState === 'finalizing' ||
       controllerOtaState === 'rebooting' ||
       controllerOtaState === 'reconnecting' ||
-      controllerOtaState === 'finalizing'
+      controllerOtaState === 'finalizing' ||
+      // Fix 1: pause during dial OTA orchestration. Mirrors the charger and
+      // controller guard above — without this the dial's reboot disconnect
+      // races the orchestrator's own reconnect, exhausting MAX_RETRIES.
+      dialOtaState === 'rebooting' ||
+      dialOtaState === 'reconnecting' ||
+      dialOtaState === 'finalizing'
     ) {
-      console.log(`[AppNavigator] auto-reconnect tick: paused (otaState=${otaState} controllerOtaState=${controllerOtaState})`);
+      console.log(`[AppNavigator] auto-reconnect tick: paused (otaState=${otaState} controllerOtaState=${controllerOtaState} dialOtaState=${dialOtaState})`);
       return;
     }
 
@@ -677,7 +690,7 @@ export default function AppNavigator() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bleStatus, chargerBleStatus, controllerBleStatus, permissionsGranted, scanTrigger, otaState, controllerOtaState, chargerEnabled]);
+  }, [bleStatus, chargerBleStatus, controllerBleStatus, permissionsGranted, scanTrigger, otaState, controllerOtaState, dialOtaState, chargerEnabled]);
 
   const navigate = (screen: string) => {
     if (screen === 'hud') {

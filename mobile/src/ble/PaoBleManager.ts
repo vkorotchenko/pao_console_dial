@@ -64,6 +64,15 @@ export class PaoBleManager {
   // unsubscribeAll on disconnect.
   private fwVersionSubscription: Subscription | null = null;
 
+  // Fix 2 (dial OTA post-reconnect): store the telemetry + media callbacks
+  // as instance fields so wirePostConnectSubscriptions() can re-wire them
+  // after an OTA reconnect without needing AppNavigator's closure. Set by
+  // subscribeToTelemetry() and subscribeToMediaCommands() on first connect;
+  // cleared by unsubscribeAll() so a stale reconnect path cannot accidentally
+  // invoke callbacks from a previous session.
+  private _telemetryCallback: ((data: any) => void) | null = null;
+  private _mediaCmdCallback: ((cmd: number) => void) | null = null;
+
   /**
    * Scan for PAO Console devices
    * @param onDeviceFound - Callback when device is found
@@ -188,6 +197,10 @@ export class PaoBleManager {
       return;
     }
 
+    // Fix 2: persist callback so wirePostConnectSubscriptions() can re-wire
+    // it after an OTA reconnect without AppNavigator's closure.
+    this._telemetryCallback = callback;
+
     console.log('Subscribing to telemetry notifications...');
     this.telemetrySubscription = this.connectedDevice.monitorCharacteristicForService(
       PAO_SERVICE_UUID,
@@ -297,6 +310,9 @@ export class PaoBleManager {
    */
   subscribeToMediaCommands(callback: (cmd: number) => void): void {
     if (!this.connectedDevice) return;
+    // Fix 2: persist callback so wirePostConnectSubscriptions() can re-wire
+    // it after an OTA reconnect without AppNavigator's closure.
+    this._mediaCmdCallback = callback;
     this.mediaCmdSubscription = this.connectedDevice.monitorCharacteristicForService(
       PAO_SERVICE_UUID,
       MEDIA_CMD_CHAR_UUID,
@@ -631,21 +647,44 @@ export class PaoBleManager {
   /**
    * Wire up post-connect subscriptions used by the OTA orchestrator after a
    * post-OTA reconnect. Mirrors `ChargerBleManager.wirePostConnectSubscriptions()`.
-   * For the dial we don't have the same broad telemetry-seed pattern (the
-   * existing `connect()` path drives speed unit + firmware version directly),
-   * so this is just re-establishing the firmware-version notify subscription.
-   * Idempotent — `subscribeToDialFirmwareVersion()` removes any prior sub
-   * before re-monitoring.
+   *
+   * Fix 2 (dial OTA post-reconnect): also re-wires telemetry + media command
+   * callbacks that were stored when AppNavigator called subscribeToTelemetry()
+   * and subscribeToMediaCommands() at initial connect. Without this, the
+   * connection looks healthy post-OTA but the store receives no telemetry and
+   * media buttons are silent.
+   *
+   * Idempotent: unsubscribeAll() is called by the disconnect handler before any
+   * reconnect, so there are no stale subscriptions to double-fire. Calling
+   * wirePostConnectSubscriptions() after a non-OTA AppNavigator reconnect is
+   * also safe — the callbacks are set, and unsubscribeAll already cleared prior
+   * subs.
    */
   wirePostConnectSubscriptions(): void {
     if (!this.connectedDevice) {
       console.warn('[PaoBle] wirePostConnectSubscriptions: no device');
       return;
     }
+
+    // Re-wire firmware-version notify (always).
     this.subscribeToDialFirmwareVersion();
     // Re-seed firmware version with an explicit read in case the device
     // wasn't ready to notify yet at reconnect moment.
     this.readDialFirmwareVersion().catch(() => {});
+
+    // Fix 2: Re-wire telemetry if a callback was previously registered.
+    if (this._telemetryCallback) {
+      console.log('[PaoBle] wirePostConnectSubscriptions: re-wiring telemetry');
+      this.subscribeToTelemetry(this._telemetryCallback);
+    } else {
+      console.warn('[PaoBle] wirePostConnectSubscriptions: no telemetry callback stored — subscribe first');
+    }
+
+    // Fix 2: Re-wire media commands if a callback was previously registered.
+    if (this._mediaCmdCallback) {
+      console.log('[PaoBle] wirePostConnectSubscriptions: re-wiring media commands');
+      this.subscribeToMediaCommands(this._mediaCmdCallback);
+    }
   }
 
   /**
@@ -659,6 +698,13 @@ export class PaoBleManager {
       await this.manager.cancelDeviceConnection(this.connectedDevice.id);
       this.connectedDevice = null;
     }
+
+    // Fix 2: explicit disconnect() is a full session teardown — clear stored
+    // callbacks so they cannot leak into a future app-restart session. In
+    // contrast, unsubscribeAll() preserves them so the OTA post-reboot
+    // reconnect can re-wire without AppNavigator's closure.
+    this._telemetryCallback = null;
+    this._mediaCmdCallback = null;
 
     useAppStore.getState().setBleStatus('disconnected');
     useAppStore.getState().setDeviceId(null);
@@ -730,6 +776,14 @@ export class PaoBleManager {
 
     this.disconnectSubscription?.remove();
     this.disconnectSubscription = null;
+
+    // NOTE: _telemetryCallback and _mediaCmdCallback are intentionally NOT
+    // cleared here. unsubscribeAll() is called on every BLE disconnect —
+    // including the mid-OTA reboot disconnect — and we need the stored
+    // callbacks to survive so wirePostConnectSubscriptions() can re-wire them
+    // after the post-OTA reconnect. They are cleared in disconnect() (explicit
+    // user-initiated teardown) and in connect() (fresh session replaces them
+    // via subscribeToTelemetry / subscribeToMediaCommands).
   }
 }
 
