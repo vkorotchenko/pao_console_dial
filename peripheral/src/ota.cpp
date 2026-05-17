@@ -29,22 +29,23 @@
 //   Phase 1 (streaming): chunk callbacks copy bytes into a PSRAM buffer.
 //     ZERO flash operations. Cache-disable windows: none. IWDT risk: zero.
 //     This phase can run for 10-30 s without any watchdog concern.
-//   Phase 2 (install, in end()): BLE streaming is done. All flash ops happen
-//     here: erase all sectors one at a time with vTaskDelay() between, then
-//     write the image from PSRAM page by page. Since BLE isn't streaming during
-//     install, IWDT triggers can't kill us mid-stream. And if IWDT DOES fire
-//     during install, the manual NVS rollback path in checkBootRecovery() catches
-//     it on the next boot.
+//   Phase 2 (install, in end()): BLE streaming is done. All flash ops go
+//     through the official IDF OTA API: esp_ota_begin (pre-erases partition),
+//     esp_ota_write in 64 KB chunks (handles CRC, magic-bytes-last ordering),
+//     esp_ota_end (validates CRC), esp_ota_set_boot_partition (commits).
+//     Earlier approaches (esp_partition_erase_range, esp_flash_erase_region)
+//     hung on the first erase regardless of PSRAM cache flush pre-ambles or
+//     IWDT state. The high-level IDF OTA API uses a different cache-management
+//     path and is the final untried code route.
 //   Tradeoffs:
 //     - PSRAM footprint: up to 3 MB allocated for the duration of a session.
 //       PSRAM is 8 MB on the dial, so this is fine (Decision #XX).
-//     - Brief "frozen display" window during install (~5-15 s depending on image
-//       size) -- existing behavior since isInFlight() already pauses the main loop.
+//     - Brief "frozen display" window during install -- existing behavior since
+//       isInFlight() already pauses the main loop.
 //       TODO: drive LVGL progress bar via a separate low-priority task during install.
-//     - Partial-write risk (power loss) is now ONLY during the install phase
-//       (~5-15 s), not during the stream phase (~10-30 s). Much smaller window.
-//       The magic-bytes guard (first 16 bytes written last) limits the blast
-//       radius of a partial write.
+//     - Partial-write risk (power loss) is now ONLY during the install phase,
+//       not during the stream phase. Much smaller window. esp_ota_write's
+//       internal magic-bytes guard limits the blast radius of a partial write.
 //
 // UpdateClass is kept for abort() only (to reset internal state if a prior
 // session left it dirty). It is NOT used for begin/write/end in the new path.
@@ -55,7 +56,6 @@
 #include <esp_log.h>
 #include <Update.h>
 #include <Preferences.h>
-#include <esp_flash.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_task_wdt.h>
@@ -124,15 +124,6 @@ namespace {
 // Each OTA app slot is 3 MB per partitions.csv (Decision #58).
 constexpr uint32_t kMaxImageSize = 3 * 1024 * 1024;
 
-// Flash geometry (SPI NOR standard).
-constexpr size_t kSectorSize = 4096;  // 4 KB erase granularity -- IWDT-safe duration
-
-// During install (end()), yield every N bytes to keep FreeRTOS scheduler alive
-// and reduce cache-disable burst windows. 16 KB = 4 sectors between each
-// vTaskDelay(1). Even if BLE is deinited before the erase loop, the IDLE task
-// still needs ticks to service the S3's per-core IWDT counters.
-constexpr size_t kInstallYieldInterval = 16 * 1024;
-
 State    g_state = State::IDLE;
 uint32_t g_total_size = 0;
 uint32_t g_bytes_received = 0;
@@ -146,12 +137,6 @@ static const esp_partition_t* s_ota_partition = nullptr;
 // PSRAM image buffer (Option C). Allocated in begin(), freed in end() or
 // resetSession(). All chunk data is memcpy'd here; no flash ops during streaming.
 static uint8_t* s_image_buf = nullptr;
-
-// First 16 bytes of the firmware image are stashed and written LAST so that a
-// partially-written image cannot appear bootable (matches UpdateClass behavior
-// via its _skipBuffer mechanism). Valid once g_bytes_received >= 16.
-// Written to flash in end(), not writeChunk().
-static uint8_t s_magic_bytes[16] = {0};
 
 // Stale-transfer watchdog: timestamp of the most recent successful writeChunk.
 // Used by tickWatchdog() to abort sessions where the mobile side stopped
@@ -187,7 +172,6 @@ void resetSession() {
         free(s_image_buf);
         s_image_buf = nullptr;
     }
-    memset(s_magic_bytes, 0, sizeof(s_magic_bytes));
 }
 
 void notify(uint8_t code, uint32_t bytes) {
@@ -585,165 +569,97 @@ void end() {
     WRITE_PERI_REG(RTC_CNTL_WDTWPROTECT_REG, 0);                    // re-lock
     OTA_LOGLN("OTA install: RTC watchdog disabled");
 
-    // --- Install-phase safety timeout ---
-    // NimBLE is gone so mobile cannot send cmd=12 (ABORT). If the erase or write
-    // loops hang for any reason (flash bus lock, sdkconfig regression, bad sector),
-    // the only escape without this guard is a power cycle. 90 s is comfortably
-    // above the worst-case healthy install (~60 s for a 3 MB image on OPI flash
-    // with per-sector yields). On timeout we reboot into the OLD image — we do
-    // NOT set the NVS pending flag, so checkBootRecovery() sees nothing to do and
-    // the device comes back clean. See Decision #63 (moe-dial-ota-install-timeout).
-    const uint32_t install_start_ms = millis();
-    constexpr uint32_t kInstallTimeoutMs = 90 * 1000;  // 90 s ceiling
-
-    // --- INSTALL PHASE (Option C) ---
-    // BLE streaming is done. NimBLE is now stopped. The main loop is paused
-    // (isInFlight() == true). All flash ops happen here, serially. If IWDT does
-    // fire during install and the device resets, the manual NVS rollback path
-    // in checkBootRecovery() will catch it on the next boot.
+    // --- INSTALL PHASE (IDF OTA API path) ---
+    // BLE streaming is done. The PSRAM buffer holds the complete image.
+    // All flash ops happen here via the official esp_ota_begin / esp_ota_write /
+    // esp_ota_end pipeline. This replaces the earlier sector-by-sector
+    // esp_flash_erase_region + esp_flash_write approach (Decisions #62/#63/#65)
+    // which hung on the first erase call on S3 OPI flash regardless of PSRAM
+    // cache flush pre-ambles, raw vs partition-API selection, or IWDT state.
     //
-    // The PSRAM buffer contains the complete, validated image. We erase the OTA
-    // partition one sector at a time (yielding between sectors) then write the
-    // image page-by-page from PSRAM. Each individual flash op is well inside the
-    // 300 ms IWDT window since we yield between them.
+    // esp_ota_begin pre-erases the partition internally using its own sector
+    // strategy and cache management, which differs from our direct
+    // esp_flash_erase_region calls. esp_ota_write handles CRC, magic-bytes-last
+    // ordering, and internal chunking. esp_ota_end validates the image CRC.
     //
-    // First-bytes magic guard: stash the first 16 bytes (ESP image magic header)
-    // and write them LAST, matching UpdateClass's _skipBuffer behavior. A partial
-    // write cannot produce a bootable-looking image because the magic byte is absent.
-    // With PSRAM buffering, a partial write can only happen during this install
-    // phase (~5-15 s), not during the stream phase (~10-30 s) -- much smaller risk.
-    size_t total = (size_t)g_total_size;
-    size_t magic_len = (total >= 16) ? 16 : total;
-    memcpy(s_magic_bytes, s_image_buf, magic_len);
+    // We call esp_ota_write in 64 KB chunks so serial output gives visibility
+    // if a hang occurs partway through the write phase. If install hangs entirely
+    // the 120 s esp_timer safety timer fires and reboots into the old image.
+    //
+    // Note: s_image_buf is in PSRAM (heap_caps_malloc MALLOC_CAP_SPIRAM). IDF
+    // reads from this buffer during esp_ota_write; the PSRAM bus must remain
+    // active throughout. This is the same PSRAM contention we suspect caused the
+    // earlier hangs — but esp_ota_write may have different cache-disable semantics
+    // than the raw spi_flash path. If esp_ota_write also hangs on the S3 OPI
+    // configuration, PSRAM bus contention is confirmed and the image must be
+    // copied to internal RAM before flash operations.
 
-    // --- Sector erase: full partition, one 4 KB sector at a time ---
-    size_t sectors_total = (total + kSectorSize - 1) / kSectorSize;
-    OTA_LOG("OTA install: erasing %u sectors (%u KB) in partition %s\n",
-            (unsigned)sectors_total,
-            (unsigned)(sectors_total * kSectorSize / 1024),
+    OTA_LOG("OTA install: calling esp_ota_begin (pre-erases partition %s)",
             s_ota_partition->label);
+    esp_ota_handle_t ota_handle = 0;
+    uint32_t t_begin = millis();
+    esp_err_t err = esp_ota_begin(s_ota_partition, g_total_size, &ota_handle);
+    uint32_t dt_begin = millis() - t_begin;
 
-    // Log the partition base address once so the first absolute flash address
-    // printed below can be cross-checked against the partition table.
-    OTA_LOG("OTA install: partition base addr=0x%06x", (unsigned)s_ota_partition->address);
+    if (err != ESP_OK) {
+        OTA_LOG("OTA: esp_ota_begin failed err=0x%x dt=%ums", (unsigned)err, (unsigned)dt_begin);
+        free(s_image_buf);
+        s_image_buf = nullptr;
+        notify(STATUS_ERR_BEGIN_FAILED, g_bytes_received);
+        resetSession();
+        return;
+    }
+    OTA_LOG("OTA: esp_ota_begin OK dt=%ums (partition pre-erased)", (unsigned)dt_begin);
 
-    for (size_t off = 0; off < total; off += kSectorSize) {
-        // Install-phase timeout guard (erase loop).
-        if (millis() - install_start_ms > kInstallTimeoutMs) {
-            OTA_LOG("OTA install: TIMEOUT (erase) after %ums — forcing reboot into old image",
-                    (unsigned)(millis() - install_start_ms));
-            delay(50);
-            ESP.restart();
-            // unreachable
+    // Write the image in 64 KB chunks for serial visibility.
+    // esp_ota_write handles internal CRC accumulation, magic-bytes-last guard,
+    // and any required alignment padding.
+    constexpr size_t kWriteChunkSize = 64 * 1024;
+    OTA_LOG("OTA install: writing %u bytes in %u-KB chunks via esp_ota_write",
+            (unsigned)g_total_size, (unsigned)(kWriteChunkSize / 1024));
+
+    feedWatchdog();
+    for (size_t off = 0; off < (size_t)g_total_size; off += kWriteChunkSize) {
+        size_t this_chunk = kWriteChunkSize;
+        if (this_chunk > (size_t)(g_total_size - off)) {
+            this_chunk = (size_t)(g_total_size - off);
         }
 
-        // Change 1: flush PSRAM cache before every flash op.
-        // Forces any pending OPI PSRAM writes to drain, releasing the shared bus
-        // so the flash erase can proceed. Without this, PSRAM cache lines sitting
-        // in the write queue can block the cache-disable preamble of the flash op
-        // indefinitely — which is why esp_partition_erase_range hung at off=0.
-        FLUSH_PSRAM_CACHE();
-
-        feedWatchdog();
-
-        // Change 2: use esp_flash_erase_region (lower-level) instead of
-        // esp_partition_erase_range. The partition wrapper has additional safety
-        // checks and a different critical-section path that has been observed to
-        // hang on S3 OPI. The low-level call takes the ABSOLUTE flash address
-        // (partition base + partition-relative offset).
-        const uint32_t abs_addr = s_ota_partition->address + (uint32_t)off;
-
-        if (off == 0) {
-            // First-erase breadcrumb: confirms we reached the call site and
-            // shows the absolute flash address being targeted.
-            OTA_LOG("OTA install: erasing absolute flash addr=0x%06x size=%u",
-                    (unsigned)abs_addr, (unsigned)kSectorSize);
-        } else if (off < kSectorSize * 4) {
-            OTA_LOG("OTA install: about to call esp_flash_erase_region(off=%u, size=%u)",
-                    (unsigned)off, (unsigned)kSectorSize);
-        }
-
-        uint32_t t0 = millis();
-        esp_err_t err = esp_flash_erase_region(esp_flash_default_chip, abs_addr, kSectorSize);
-        uint32_t dt = millis() - t0;
+        uint32_t t_chunk = millis();
+        err = esp_ota_write(ota_handle, s_image_buf + off, this_chunk);
+        uint32_t dt_chunk = millis() - t_chunk;
 
         if (err != ESP_OK) {
-            OTA_LOG("OTA erase failed at off=%u abs_addr=0x%06x err=%d dt=%ums",
-                    (unsigned)off, (unsigned)abs_addr, (int)err, (unsigned)dt);
-            notify(STATUS_ERR_END_FAILED, g_bytes_received);
+            OTA_LOG("OTA: esp_ota_write failed at off=%u size=%u err=0x%x dt=%ums",
+                    (unsigned)off, (unsigned)this_chunk, (unsigned)err, (unsigned)dt_chunk);
+            esp_ota_abort(ota_handle);
+            free(s_image_buf);
+            s_image_buf = nullptr;
+            notify(STATUS_ERR_WRITE_FAILED, g_bytes_received);
             resetSession();
             return;
         }
-
-        // Log first 4 sectors individually, then every 16 sectors (64 KB).
-        if (off < kSectorSize * 4 || (off % (kSectorSize * 16)) == 0) {
-            OTA_LOG("OTA erase sector @ off=%u: dt=%ums", (unsigned)off, (unsigned)dt);
-        }
+        OTA_LOG("OTA: esp_ota_write chunk off=%u size=%u OK dt=%ums",
+                (unsigned)off, (unsigned)this_chunk, (unsigned)dt_chunk);
         feedWatchdog();
-
-        // Yield every kInstallYieldInterval bytes to give the IDLE task ticks
-        // (feeds per-core IWDT counters) and prevent sustained cache-disable
-        // bursts. 16 KB interval = yield every 4 sectors.
-        if ((off & (kInstallYieldInterval - 1)) == 0 && off > 0) {
-            vTaskDelay(1);
-        }
     }
-    OTA_LOGLN("OTA install: erase complete");
+    OTA_LOGLN("OTA install: esp_ota_write complete");
 
-    // --- Page write: image body (bytes 16..end) from PSRAM ---
-    // Skip the first 16 bytes (magic). We write them last.
-    OTA_LOG("OTA install: writing image body (%u bytes from offset 16)\n",
-            (unsigned)(total - magic_len));
+    // Finalize — validates accumulated CRC and marks image ready in otadata.
+    OTA_LOGLN("OTA install: calling esp_ota_end");
+    uint32_t t_end_api = millis();
+    err = esp_ota_end(ota_handle);
+    uint32_t dt_end_api = millis() - t_end_api;
 
-    for (size_t off = magic_len; off < total; off += kSectorSize) {
-        // Install-phase timeout guard (write loop).
-        if (millis() - install_start_ms > kInstallTimeoutMs) {
-            OTA_LOG("OTA install: TIMEOUT (write) after %ums — forcing reboot into old image",
-                    (unsigned)(millis() - install_start_ms));
-            delay(50);
-            ESP.restart();
-            // unreachable
-        }
-
-        size_t chunk = ((total - off) < kSectorSize) ? (total - off) : kSectorSize;
-
-        // Flush PSRAM cache before each flash write for the same reason as in
-        // the erase loop above — bus contention on OPI PSRAM + flash.
-        FLUSH_PSRAM_CACHE();
-
-        feedWatchdog();
-        const uint32_t abs_addr = s_ota_partition->address + (uint32_t)off;
-        esp_err_t err = esp_flash_write(
-            esp_flash_default_chip, s_image_buf + off, abs_addr, chunk);
-        if (err != ESP_OK) {
-            OTA_LOG("OTA: write failed at off=%u abs_addr=0x%06x len=%u err=0x%x",
-                    (unsigned)off, (unsigned)abs_addr, (unsigned)chunk, (unsigned)err);
-            notify(STATUS_ERR_END_FAILED, g_bytes_received);
-            resetSession();
-            return;
-        }
-        feedWatchdog();
-
-        if ((off & (kInstallYieldInterval - 1)) == 0 && off > magic_len) {
-            vTaskDelay(1);
-        }
-    }
-
-    // --- Write magic bytes last (first-bytes guard) ---
-    OTA_LOG("OTA install: writing magic bytes (first %u bytes) to offset 0",
-            (unsigned)magic_len);
-    FLUSH_PSRAM_CACHE();
-    feedWatchdog();
-    esp_err_t merr = esp_flash_write(
-        esp_flash_default_chip, s_magic_bytes, s_ota_partition->address, magic_len);
-    feedWatchdog();
-    if (merr != ESP_OK) {
-        OTA_LOG("OTA: magic bytes write failed err=0x%x", (unsigned)merr);
+    if (err != ESP_OK) {
+        OTA_LOG("OTA: esp_ota_end failed err=0x%x dt=%ums", (unsigned)err, (unsigned)dt_end_api);
+        free(s_image_buf);
+        s_image_buf = nullptr;
         notify(STATUS_ERR_END_FAILED, g_bytes_received);
         resetSession();
         return;
     }
-    OTA_LOGLN("OTA install: image write complete");
+    OTA_LOG("OTA install: esp_ota_end OK dt=%ums — image validated", (unsigned)dt_end_api);
 
     // PSRAM buffer is no longer needed. Free before marking partition bootable.
     free(s_image_buf);
@@ -751,7 +667,8 @@ void end() {
 
     // --- Mark partition as boot target ---
     // esp_ota_set_boot_partition() updates otadata to point to the new partition
-    // on the next boot. Equivalent to what Update.end(true) does internally.
+    // on the next boot. esp_ota_end already validated the image; this commits it.
+    OTA_LOGLN("OTA install: calling esp_ota_set_boot_partition");
     esp_err_t boot_err = esp_ota_set_boot_partition(s_ota_partition);
     if (boot_err != ESP_OK) {
         OTA_LOG("OTA: esp_ota_set_boot_partition failed err=0x%x\n",
