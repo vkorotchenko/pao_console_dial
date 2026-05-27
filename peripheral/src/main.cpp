@@ -134,22 +134,36 @@ void readEncoder()
 
 void setup()
 {
-  // OTA recovery FIRST — before any subsystem (display init, I²C, BLE) so a
-  // bricked pending image triggers a partition swap BEFORE the panic-prone
-  // code paths run. checkBootRecovery() is idempotent and a no-op when there's
-  // no pending OTA. Mirrors charger Decision #52.
+  // ── DEFERRED OTA INSTALL — must be FIRST, before any other subsystem ──────
+  //
+  // If end() set the RTC pending flag on the previous boot (Option D,
+  // Decision #66), runDeferredOtaInstall() reads /ota_stage.bin from SPIFFS
+  // and calls esp_ota_begin/write/end before PSRAM, display, BLE, or I²C
+  // have been initialised. The PSRAM OPI bus is idle at this point, which
+  // is the hypothesis for why esp_ota_begin hangs when called later in the
+  // boot (Option C failure mode confirmed on S3 OPI config).
+  //
+  // Fast path (normal boot, magic != kOtaPendingMagic): returns in ~1 µs,
+  // no SPIFFS mount, no overhead on non-OTA boots.
+  //
+  // Serial is started first so install-phase breadcrumbs are visible. Serial0
+  // (UART0 hardware) is also started because it survives flash cache-disable
+  // windows; USB-CDC may stall during flash ops.
   Serial.begin(115200);
-  // Ensure OTA install-phase breadcrumbs (ESP_LOGI via "ota" tag) are not
-  // filtered out by the IDF log level. CORE_DEBUG_LEVEL=3 in platformio.ini
-  // compiles ESP_LOGI in; this call sets the runtime filter to INFO so the
-  // IDF console actually emits them. Called before checkBootRecovery() so
-  // any log_i output from that function is also captured.
-  esp_log_level_set("ota", ESP_LOG_INFO);
-  // UART0 hardware serial (TX0=GPIO43, RX0=GPIO44). Hardware-backed and survives
-  // cache-disable windows during OTA flash erase, so OTA install-phase logs reach
-  // a connected USB-to-Serial adapter even when USB-CDC host has disconnected.
-  // GPIO43/44 are confirmed free on this board (not used by display, I²C, or BLE).
   Serial0.begin(115200);
+  esp_log_level_set("ota", ESP_LOG_INFO);
+  delay(100);  // give USB-CDC host time to enumerate before first prints
+
+  ota::runDeferredOtaInstall();
+  // If we reach here: either no pending install (magic was invalid) or the
+  // install failed. Either way, proceed with normal boot on the current image.
+  // The attempts counter in RTC memory prevents infinite reboot loops.
+
+  // ── OTA NVS ROLLBACK CHECK ─────────────────────────────────────────────────
+  // checkBootRecovery() is idempotent and a no-op when there's no NVS rollback
+  // pending. Must run before any other subsystem so a bricked new image triggers
+  // a partition swap before the panic-prone code paths run. Mirrors charger
+  // Decision #52.
   ota::checkBootRecovery();
 
   pinMode(IO_PWM_PIN, OUTPUT);

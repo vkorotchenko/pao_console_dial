@@ -6,14 +6,13 @@
 //   1. NO force-disable / chargerEnabled shim. The dial doesn't drive an
 //      Elcon (no high-power output to mute). Instead, `isInFlight()` returns
 //      true while flashing so the main loop can pause LVGL / I²C / GPS work.
-//   2. Task-watchdog feed around flash ops in end() -- streaming phase (chunks)
-//      never touches flash at all under Option C (PSRAM-buffered OTA).
+//   2. Streaming phase writes to SPIFFS, not PSRAM. Flash ops are deferred to
+//      early boot (before any PSRAM-dependent subsystem initialises).
 //   3. Logging goes through Serial.printf (no Logger module on the dial).
 //
 // Why no SHA256 verification on the firmware side: mobile is responsible for
-// hashing the binary before transfer. Update's internal CRC catches in-
-// transit corruption, and the dual-bank rollback (manual NVS path) catches a
-// bricked image. Adding sha256 in firmware would just double the cost.
+// hashing the binary before transfer. The dual-bank rollback (manual NVS path)
+// catches a bricked image. Adding sha256 in firmware would just double the cost.
 //
 // --- ESP32-S3 OPI FLASH + IWDT ROOT CAUSE (Decision #62) ---
 //
@@ -25,27 +24,22 @@
 // disabling the instruction cache, which is well above that ceiling. Even JIT
 // 4 KB sector erases interleaved with BLE traffic proved unreliable.
 //
-// FIX (Option C, Decision #62): PSRAM-buffered OTA.
-//   Phase 1 (streaming): chunk callbacks copy bytes into a PSRAM buffer.
-//     ZERO flash operations. Cache-disable windows: none. IWDT risk: zero.
-//     This phase can run for 10-30 s without any watchdog concern.
-//   Phase 2 (install, in end()): BLE streaming is done. All flash ops go
-//     through the official IDF OTA API: esp_ota_begin (pre-erases partition),
-//     esp_ota_write in 64 KB chunks (handles CRC, magic-bytes-last ordering),
-//     esp_ota_end (validates CRC), esp_ota_set_boot_partition (commits).
-//     Earlier approaches (esp_partition_erase_range, esp_flash_erase_region)
-//     hung on the first erase regardless of PSRAM cache flush pre-ambles or
-//     IWDT state. The high-level IDF OTA API uses a different cache-management
-//     path and is the final untried code route.
-//   Tradeoffs:
-//     - PSRAM footprint: up to 3 MB allocated for the duration of a session.
-//       PSRAM is 8 MB on the dial, so this is fine (Decision #XX).
-//     - Brief "frozen display" window during install -- existing behavior since
-//       isInFlight() already pauses the main loop.
-//       TODO: drive LVGL progress bar via a separate low-priority task during install.
-//     - Partial-write risk (power loss) is now ONLY during the install phase,
-//       not during the stream phase. Much smaller window. esp_ota_write's
-//       internal magic-bytes guard limits the blast radius of a partial write.
+// FIX Option C (PSRAM-buffered, Decision #62) also hung at esp_ota_begin on
+// the S3 OPI config. The PSRAM bus is actively cached by the time install()
+// runs, and the combined flash-bus / OPI-PSRAM-bus contention under
+// cache-disable causes the SPI controller to deadlock.
+//
+// FIX Option D (deferred-install via SPIFFS, Decision #66):
+//   Phase 1 (streaming): chunk callbacks write bytes to /ota_stage.bin on
+//     SPIFFS. ZERO flash erase operations against the OTA partition.
+//     IWDT risk: zero. PSRAM is NOT involved in the streaming path.
+//   Phase 2 (flag + reboot): end() validates the staged file, sets an
+//     RTC_NOINIT_ATTR pending flag, notifies mobile, and calls ESP.restart().
+//   Phase 3 (early-boot install, runDeferredOtaInstall()): called from the
+//     very top of setup() BEFORE display, BLE, or PSRAM-backed subsystems
+//     initialise. PSRAM bus is quiet. Flash erase should proceed cleanly.
+//     Image is read from SPIFFS in 4 KB internal-SRAM chunks, written via
+//     the IDF OTA API (esp_ota_begin / esp_ota_write / esp_ota_end).
 //
 // UpdateClass is kept for abort() only (to reset internal state if a prior
 // session left it dirty). It is NOT used for begin/write/end in the new path.
@@ -56,6 +50,7 @@
 #include <esp_log.h>
 #include <Update.h>
 #include <Preferences.h>
+#include <SPIFFS.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_task_wdt.h>
@@ -65,40 +60,28 @@
 #include <soc/timer_group_reg.h>
 #include <soc/wdt_periph.h>
 #include <soc/rtc_cntl_reg.h>
-
-// PSRAM writeback before flash ops — forces any pending PSRAM cache writes to
-// drain, freeing the OPI bus for the flash erase/write that immediately follows.
-//
-// Preferred API: esp_psram_extram_writeback_cache() (IDF 5.x).
-// Problem: the symbol is only compiled into the prebuilt libs when PSRAM support
-// is enabled in the SDK's sdkconfig blob. The pioarduino 53.03.13 qio_opi variant
-// does NOT export it in libpsram.a, so the linker rejects any direct call.
-//
-// Fallback: manual page-walk of our own PSRAM buffer. Reading every 4 KB page
-// forces the L1 cache controller to resolve all pending write-back lines for
-// that address range before returning. Heavy (O(image_size/4KB) loads) but
-// reliable — every byte read guarantees the cache line is coherent. We only
-// do this three times (once per erase sector at the start, once per write page,
-// once for the magic bytes), so the total extra cost is well inside the install
-// timeout budget.
-//
-// The macro is guarded by CONFIG_SPIRAM so it compiles away completely on any
-// future non-PSRAM target.
-#ifdef CONFIG_SPIRAM
-static inline void flushPsramCache(const volatile uint8_t* buf, size_t len) {
-    // Touch one byte per page. The volatile qualifier prevents the compiler
-    // from eliding the reads as dead code. 'buf' must be in PSRAM; on DRAM
-    // this is a no-op (cache is unified/write-through for internal RAM).
-    for (size_t i = 0; i < len; i += 4096) {
-        (void)buf[i];
-    }
-}
-#define FLUSH_PSRAM_CACHE()  flushPsramCache((volatile uint8_t*)s_image_buf, g_total_size)
-#else
-#define FLUSH_PSRAM_CACHE()  do {} while (0)
-#endif
+#include <algorithm>
 
 #include "pao_ble.h"  // for notifyOtaStatus()
+
+// --- RTC slow memory: deferred-install pending flag (Option D) ---
+//
+// RTC_NOINIT_ATTR: placed in RTC slow memory, which survives a software reset
+// (ESP.restart()) but is cleared on power-on reset and deep-sleep wakeup. The
+// magic sentinel guards against reading garbage after a power-cycle. Attempts
+// is bumped on every early-boot install attempt so an infinite reboot loop is
+// capped at 3 tries before clearing the flag and proceeding to normal boot on
+// the old image.
+//
+// OtaPendingRtc struct and kOtaPendingMagic constant are declared in ota.h so
+// main.cpp can read the magic field directly for the early-boot guard without
+// coupling to ota.cpp internals.
+RTC_NOINIT_ATTR OtaPendingRtc s_ota_pending;
+
+constexpr uint32_t kOtaMaxInstallAttempts = 3;
+
+// SPIFFS staging file path.
+static const char* kOtaStagePath = "/ota_stage.bin";
 
 namespace ota {
 
@@ -134,9 +117,9 @@ uint8_t  g_expected_sha256[32] = {0};
 // duration of the session. NULL means no session is active.
 static const esp_partition_t* s_ota_partition = nullptr;
 
-// PSRAM image buffer (Option C). Allocated in begin(), freed in end() or
-// resetSession(). All chunk data is memcpy'd here; no flash ops during streaming.
-static uint8_t* s_image_buf = nullptr;
+// SPIFFS staging file handle. Opened for write in begin(), written in
+// writeChunk(), closed in end() or resetSession().
+static File s_stage_file;
 
 // Stale-transfer watchdog: timestamp of the most recent successful writeChunk.
 // Used by tickWatchdog() to abort sessions where the mobile side stopped
@@ -166,11 +149,9 @@ void resetSession() {
     g_chunk_count_in_window = 0;
     memset(g_expected_sha256, 0, sizeof(g_expected_sha256));
     s_ota_partition = nullptr;
-    // Free the PSRAM image buffer if it was allocated (Option C). Guard against
-    // double-free: callers may resetSession() from both error paths and end().
-    if (s_image_buf != nullptr) {
-        free(s_image_buf);
-        s_image_buf = nullptr;
+    // Close the SPIFFS staging file if it was opened. Guard against double-close.
+    if (s_stage_file) {
+        s_stage_file.close();
     }
 }
 
@@ -277,9 +258,9 @@ void begin(const uint8_t* payload, size_t len) {
     g_chunk_count_in_window = 0;
     memcpy(g_expected_sha256, payload + 4, sizeof(g_expected_sha256));
 
-    // Resolve the inactive OTA partition via IDF. We do NOT call Update.begin()
-    // because UpdateClass triggers flash ops that can trip the IWDT on S3 OPI.
-    // See Decision #62 for full root cause analysis.
+    // Resolve the inactive OTA partition via IDF so we can bounds-check the
+    // image size early. The actual flash ops are deferred to early-boot
+    // runDeferredOtaInstall() (Option D, Decision #66).
     Serial.println("OTA: calling esp_ota_get_next_update_partition...");
     Serial.flush();
     s_ota_partition = esp_ota_get_next_update_partition(NULL);
@@ -306,33 +287,47 @@ void begin(const uint8_t* payload, size_t len) {
         return;
     }
 
-    // --- PSRAM buffer allocation (Option C) ---
-    // Verify PSRAM is available before allocating. If PSRAM reports 0 size,
-    // BOARD_HAS_PSRAM is set but PSRAM did not initialise (timing, hardware
-    // fault, etc.). Refuse the OTA rather than crashing with a null deref later.
-    size_t psram_size = ESP.getPsramSize();
-    Serial.printf("OTA: PSRAM size reported by ESP.getPsramSize() = %u bytes\n",
-                  (unsigned)psram_size);
-    Serial.flush();
-    if (psram_size == 0) {
-        Serial.println("OTA: PSRAM not available -- refusing OTA (BOARD_HAS_PSRAM set but PSRAM init failed)");
+    // --- SPIFFS staging file (Option D) ---
+    // Mount SPIFFS in read-write mode. formatOnFail=false: if SPIFFS is
+    // unformatted this returns false and we refuse the OTA rather than wiping
+    // user data (unlikely on a factory device but safe).
+    if (!SPIFFS.begin(/*formatOnFail=*/false)) {
+        Serial.println("OTA: SPIFFS mount failed — cannot stage image");
         Serial.flush();
         notify(STATUS_ERR_BEGIN_FAILED, 0);
         resetSession();
         return;
     }
 
-    s_image_buf = (uint8_t*)heap_caps_malloc(total, MALLOC_CAP_SPIRAM);
-    if (s_image_buf == nullptr) {
-        Serial.printf("OTA: PSRAM alloc failed for %u bytes (free PSRAM: %u)\n",
-                      (unsigned)total, (unsigned)ESP.getFreePsram());
-        Serial.flush();
+    // Remove any leftover staging file from a previous failed attempt.
+    if (SPIFFS.exists(kOtaStagePath)) {
+        SPIFFS.remove(kOtaStagePath);
+        Serial.println("OTA: removed stale staging file");
+    }
+
+    // Check available space. SPIFFS partition is 9.81 MB (Decision #62); the
+    // image is at most 3 MB. Should always fit, but defend against corruption.
+    size_t spiffs_free = SPIFFS.totalBytes() - SPIFFS.usedBytes();
+    Serial.printf("OTA: SPIFFS free=%u bytes, image needs=%u bytes\n",
+                  (unsigned)spiffs_free, (unsigned)total);
+    Serial.flush();
+    if (spiffs_free < total) {
+        Serial.println("OTA: insufficient SPIFFS space — cannot stage image");
+        SPIFFS.end();
         notify(STATUS_ERR_BEGIN_FAILED, 0);
         resetSession();
         return;
     }
-    Serial.printf("OTA: allocated %u bytes in PSRAM at %p\n",
-                  (unsigned)total, (void*)s_image_buf);
+
+    s_stage_file = SPIFFS.open(kOtaStagePath, FILE_WRITE);
+    if (!s_stage_file) {
+        Serial.println("OTA: failed to open staging file for write");
+        SPIFFS.end();
+        notify(STATUS_ERR_BEGIN_FAILED, 0);
+        resetSession();
+        return;
+    }
+    Serial.printf("OTA: staging file opened (%s)\n", kOtaStagePath);
     Serial.flush();
 
     g_state = State::READY;
@@ -357,8 +352,8 @@ void writeChunk(const uint8_t* data, size_t len) {
         return;
     }
 
-    if (s_image_buf == nullptr) {
-        Serial.println("OTA: writeChunk called with null PSRAM buffer");
+    if (!s_stage_file) {
+        Serial.println("OTA: writeChunk called with no staging file open");
         Serial.flush();
         notify(STATUS_ERR_WRITE_FAILED, g_bytes_received);
         resetSession();
@@ -378,17 +373,32 @@ void writeChunk(const uint8_t* data, size_t len) {
     g_state = State::RECEIVING;
     s_ota_last_chunk_millis = millis();
 
-    // --- PSRAM copy (Option C streaming phase) ---
-    // No flash operations. No erase. No write. No cache-disable window.
-    // IWDT risk: zero. This is why Option C ends the IWDT loop.
-    memcpy(s_image_buf + g_bytes_received, data, len);
+    // --- SPIFFS write (Option D streaming phase) ---
+    // No flash ops against the OTA partition. No cache-disable window on the
+    // partition bus. SPIFFS writes go to the SPIFFS partition region, not the
+    // OTA app partition, so the OPI contention path is not triggered here.
+    // IWDT risk: zero for the OTA partition erase path.
+    size_t written = s_stage_file.write(data, len);
+    if (written != len) {
+        Serial.printf("OTA: SPIFFS write short at offset %u (wrote %u of %u)\n",
+                      (unsigned)g_bytes_received, (unsigned)written, (unsigned)len);
+        Serial.flush();
+        notify(STATUS_ERR_WRITE_FAILED, g_bytes_received);
+        resetSession();
+        return;
+    }
     g_bytes_received += (uint32_t)len;
     g_chunk_count_in_window++;
 
     bool window_full = (g_chunk_count_in_window >= OTA_ACK_WINDOW_CHUNKS);
     bool transfer_complete = (g_bytes_received >= g_total_size);
 
+    // Flush periodically to avoid large dirty-page accumulation in the SPIFFS
+    // write cache. Every 16 chunks keeps the flush overhead modest (~1 extra
+    // SPIFFS write per 16 × 244 B = ~3.9 KB window). The final flush happens
+    // in end() just before closing the file.
     if (window_full || transfer_complete) {
+        s_stage_file.flush();
         g_chunk_count_in_window = 0;
         Serial.printf("OTA: ACK at %u / %u%s\n",
                       (unsigned)g_bytes_received, (unsigned)g_total_size,
@@ -401,7 +411,7 @@ void end() {
     // ENTRY BREADCRUMB — confirms mobile sent the END command and callback fired.
     Serial.println("OTA: end() ENTERED");
     Serial.flush();
-    delay(2);  // drain UART TX FIFO before flash ops begin
+    delay(2);  // drain UART TX FIFO
 
     Serial.printf("OTA END: state=%d bytes=%u total=%u\n",
                   (int)g_state, (unsigned)g_bytes_received,
@@ -423,8 +433,8 @@ void end() {
         return;
     }
 
-    if (s_image_buf == nullptr) {
-        Serial.println("OTA: end() called with null PSRAM buffer");
+    if (!s_stage_file) {
+        Serial.println("OTA: end() called with no staging file open");
         Serial.flush();
         notify(STATUS_ERR_END_FAILED, g_bytes_received);
         resetSession();
@@ -435,260 +445,269 @@ void end() {
         Serial.printf("OTA: size mismatch -- got %u, expected %u\n",
                       (unsigned)g_bytes_received, (unsigned)g_total_size);
         Serial.flush();
+        s_stage_file.close();
         notify(STATUS_ERR_SIZE_MISMATCH, g_bytes_received);
         resetSession();
         return;
     }
 
-    // Record wall-clock entry time BEFORE any BLE calls so the pre-erase
-    // watchdog can catch hangs in the notify/deinit sequence itself.
-    const uint32_t end_entered_ms = millis();
-    constexpr uint32_t kPreEraseTimeoutMs = 30 * 1000;  // 30 s backstop
+    // Final flush and close the staging file.
+    s_stage_file.flush();
+    s_stage_file.close();
+    Serial.println("OTA: staging file closed");
+    Serial.flush();
+
+    // Verify the file landed on SPIFFS with the right size.
+    File verify_f = SPIFFS.open(kOtaStagePath, FILE_READ);
+    if (!verify_f || (uint32_t)verify_f.size() != g_total_size) {
+        Serial.printf("OTA: staging file verify failed (file=%u expected=%u)\n",
+                      (unsigned)(verify_f ? verify_f.size() : 0),
+                      (unsigned)g_total_size);
+        if (verify_f) verify_f.close();
+        SPIFFS.remove(kOtaStagePath);
+        notify(STATUS_ERR_END_FAILED, g_bytes_received);
+        resetSession();
+        return;
+    }
+    verify_f.close();
+    Serial.printf("OTA: staging file verified (%u bytes)\n", (unsigned)g_total_size);
+    Serial.flush();
 
     g_state = State::COMMITTING;
 
-    // --- Attempt STATUS_COMMITTING notify (best-effort) ---
-    // By the time mobile sends cmd=11, the link may already be half-dead
-    // (we've seen GATT_ERROR 133 arrive 178 ms after OTA_END, far faster than
-    // the 5 s LSTO, meaning the connection state was trashed before end() ran).
-    // Per Decision #64, mobile treats any post-cmd=11 disconnect as expected
-    // and falls through to reconnect + verify — it does NOT require this notify.
-    //
-    // We still try, but we bracket it so we can see exactly where we are in
-    // serial output if the call hangs.
-    OTA_LOGLN("OTA install: about to notify STATUS_COMMITTING");
+    // --- Set RTC deferred-install flag (Option D) ---
+    // RTC slow memory survives ESP.restart(). The early-boot check in
+    // runDeferredOtaInstall() reads this flag before any subsystem initialises.
+    // Storing image_size and sha256 here for cross-check and logging on boot.
+    s_ota_pending.image_size = g_total_size;
+    memcpy(s_ota_pending.sha256, g_expected_sha256, sizeof(s_ota_pending.sha256));
+    s_ota_pending.attempts  = 0;
+    s_ota_pending.magic     = kOtaPendingMagic;  // write magic LAST — atomic intent signal
+    Serial.printf("OTA: RTC pending flag set (magic=0x%08x size=%u)\n",
+                  (unsigned)kOtaPendingMagic, (unsigned)g_total_size);
+    Serial.flush();
+
+    // STATUS_COMMITTING: tells mobile streaming phase is done and a reboot is
+    // imminent. Mobile treats the following disconnect as expected and will
+    // reconnect to verify (Decision #64 contract preserved — same as before,
+    // just the install happens on the NEXT boot instead of this one).
+    OTA_LOGLN("OTA: notifying STATUS_COMMITTING before reboot");
     notify(STATUS_COMMITTING, g_bytes_received);
-    OTA_LOGLN("OTA install: STATUS_COMMITTING notify returned");
+    OTA_LOGLN("OTA: STATUS_COMMITTING sent — rebooting into install mode");
 
-    // We intentionally do NOT call NimBLEDevice::deinit() here. After the 3+
-    // minute streaming phase, the NimBLE host task has accumulated TX queue
-    // state that prevents clean shutdown — deinit() blocks waiting for the host
-    // task to exit and never returns (confirmed hang: serial output stops at
-    // "about to deinit", never reaches "deinit returned"). We let the host task
-    // keep running; the eventual ESP.restart() at the end of install() kills it
-    // cleanly. The flash erase and write operations naturally serialize against
-    // BLE activity via the cache-disable window — BLE traffic during install
-    // will be jittery but not fatal. See Decision #65 (moe-dial-ota-skip-deinit-safety-task).
+    delay(100);  // let notify drain over BLE before we kill the radio
 
-    // --- esp_timer safety watchdog ---
-    // Replaces the earlier xTaskCreatePinnedToCore approach (Decision #65).
-    // The FreeRTOS max-priority task on core 1 triggered a coprocessor (FPU)
-    // exception: the context switch to that task attempted FPU state save/restore
-    // while cache was disabled mid-flash-op on core 0, and _xt_coproc_exc could
-    // not complete (cache still disabled) → IWDT fired → TG1WDT_SYS_RST.
-    //
-    // esp_timer uses a single shared IDF dispatcher thread that is already running.
-    // No new task is created, no cross-core FPU state dance, no max-priority
-    // preemption. The callback fires after 120 s of wall-clock time and forces a
-    // clean reboot into the old image. The install success path calls ESP.restart()
-    // well within 90 s, so the timer is effectively never reached on a healthy run.
-    // The handle is intentionally NOT canceled — we want the timer to fire
-    // regardless of what happens downstream.
-    //
-    // Lambda captures nothing → converts to function pointer cleanly.
-    esp_timer_handle_t safety_timer = nullptr;
-    const esp_timer_create_args_t safety_args = {
-        .callback = [](void*) {
-            OTA_LOGLN("OTA safety timer: 120s elapsed — forcing reboot into old image");
-            vTaskDelay(pdMS_TO_TICKS(50));
-            ESP.restart();
-        },
-        .arg = nullptr,
-        .dispatch_method = ESP_TIMER_TASK,
-        .name = "ota_safety",
-        .skip_unhandled_events = false,
-    };
-    esp_err_t timer_err = esp_timer_create(&safety_args, &safety_timer);
-    if (timer_err == ESP_OK) {
-        esp_timer_start_once(safety_timer, 120ULL * 1000 * 1000);  // microseconds
-        OTA_LOGLN("OTA install: safety timer armed (120s, esp_timer)");
-    } else {
-        OTA_LOG("OTA install: WARN safety timer create failed (err=%d)\n", (int)timer_err);
+    g_state = State::REBOOTING;
+    ESP.restart();
+    // unreachable
+}
+
+// ---------------------------------------------------------------------------
+// runDeferredOtaInstall — early-boot flash installer (Option D, Decision #66)
+//
+// Called from the very top of setup() BEFORE Serial is fully up, BEFORE any
+// PSRAM-backed subsystem (display, BLE, LVGL, I²C) has initialised. At this
+// point the PSRAM bus is idle — the OPI contention that caused esp_ota_begin
+// to hang during Option C (in-session install) should not be present.
+//
+// Flow:
+//   1. Check s_ota_pending.magic. If not kOtaPendingMagic → return immediately
+//      (no-op normal boot path).
+//   2. Bump s_ota_pending.attempts. If >= kOtaMaxInstallAttempts → clear magic
+//      and return (allows normal boot on old image; user can retry OTA).
+//   3. Mount SPIFFS, open /ota_stage.bin, verify size.
+//   4. Disable all watchdogs (same TIMG1/TIMG0/RTC register sequence as the
+//      old end() path).
+//   5. esp_ota_begin → esp_ota_write in 4 KB internal-SRAM chunks →
+//      esp_ota_end → esp_ota_set_boot_partition.
+//   6. Remove staging file, clear RTC magic, set NVS pending flag, arm
+//      manual rollback, reboot into new image.
+//
+// On any failure: log the error, clear magic, return. Normal boot continues
+// on the old image. The staging file is left for post-mortem unless the
+// failure happens after a successful write (then we attempt cleanup).
+//
+// This function NEVER returns on success — it calls ESP.restart().
+// ---------------------------------------------------------------------------
+void runDeferredOtaInstall() {
+    // Guard: magic must be valid and attempt budget must not be exhausted.
+    if (s_ota_pending.magic != kOtaPendingMagic) {
+        return;  // no pending install — fast path, no SPIFFS mount
     }
 
-    // --- Pre-erase phase watchdog ---
-    // If the notify or deinit calls above blocked for an absurd amount of time
-    // (e.g. notify hung waiting for TX confirmation on a dead link), the install
-    // timeout in the erase/write loops would never fire because we'd never reach
-    // them. This backstop catches that case and forces a clean reboot into the
-    // old image.
-    if (millis() - end_entered_ms > kPreEraseTimeoutMs) {
-        OTA_LOG("OTA end: pre-erase phase exceeded %us — restarting\n",
-                (unsigned)(kPreEraseTimeoutMs / 1000));
-        delay(50);
-        ESP.restart();
-        // unreachable
-    }
-    OTA_LOGLN("OTA install: pre-erase phase OK, entering erase loop");
+    s_ota_pending.attempts++;
+    Serial.printf("OTA deferred: attempt %u / %u (size=%u)\n",
+                  (unsigned)s_ota_pending.attempts,
+                  (unsigned)kOtaMaxInstallAttempts,
+                  (unsigned)s_ota_pending.image_size);
+    Serial.flush();
 
-    // ── Disable IWDT for the install phase ─────────────────────────────────
-    // Flash erase on the S3 OPI configuration disables the instruction cache
-    // for 300ms+ per 4KB sector. This exceeds the IDF default 300ms IWDT
-    // timeout baked into the pioarduino sdkconfig blob, causing TG1WDT_SYS_RST
-    // before the first sector erase completes. esp_int_wdt_pause() /
-    // esp_int_wdt_resume() are IDF symbols not exposed in the pioarduino blob,
-    // so we disable the TIMG1 watchdog directly via memory-mapped register
-    // writes. We do NOT re-enable it — the install path ends in ESP.restart()
-    // which resets all watchdogs to their boot-time defaults. The 120s
-    // esp_timer remains as the catch-all if install itself hangs.
-    //
-    // Register addresses (ESP32-S3, TIMG1 base = 0x60020000):
-    //   TIMG_WDTWPROTECT_REG(1) = base + 0x64 = 0x60020064  (write-protect)
-    //   TIMG_WDTCONFIG0_REG(1)  = base + 0x48 = 0x60020048  (config0 / enable)
-    //   TIMG_WDT_WKEY_VALUE     = 0x50D83AA1               (unlock magic)
-    // Verified against:
-    //   framework-arduinoespressif32-libs/esp32s3/include/soc/esp32s3/include/soc/
-    //   timer_group_reg.h (offsets), soc.h (REG_TIMG_BASE), reg_base.h (base addr),
-    //   soc/include/soc/wdt_periph.h (TIMG_WDT_WKEY_VALUE).
-    // Note: the WPROTECT offset on S3 is 0x64, NOT 0x5C (which is the ESP32
-    // classic offset). Always use the macro — it resolves per-SoC correctly.
-    WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(1), TIMG_WDT_WKEY_VALUE);  // unlock
-    WRITE_PERI_REG(TIMG_WDTCONFIG0_REG(1), 0);                      // disable WDT
-    WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(1), 0);                     // re-lock
-    OTA_LOGLN("OTA install: IWDT disabled (TIMG1 register write, offset 0x64)");
-
-    // Disable TIMG0 watchdog (MWDT0 / task watchdog). Same register layout as
-    // TIMG1 above — TIMG_WDTWPROTECT_REG(0) and TIMG_WDTCONFIG0_REG(0) resolve
-    // to the TIMG0 base + the same offsets. The task watchdog supervisor on
-    // MWDT0 fires (rst:0x7, TG0WDT_SYS_RST) when the long flash erase blocks
-    // the task watchdog feed mechanism. We do NOT re-enable after install — the
-    // ESP.restart() at the end of this function resets all watchdogs to their
-    // boot-time defaults. The 120 s esp_timer remains the catch-all backstop.
-    WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(0), TIMG_WDT_WKEY_VALUE);  // unlock
-    WRITE_PERI_REG(TIMG_WDTCONFIG0_REG(0), 0);                      // disable WDT
-    WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(0), 0);                     // re-lock
-    OTA_LOGLN("OTA install: TIMG0 watchdog disabled (MWDT0)");
-
-    // Disable RTC watchdog (RWDT). Third independent watchdog on the S3. Defensive
-    // write — if the RTC WDT is not armed by the bootloader / IDF at this point
-    // the writes are no-ops. Unlock key 0x50D83AA1 matches RWDT_LL_WDT_WKEY_VALUE
-    // in hal/esp32s3/include/hal/rwdt_ll.h. We use the literal here to avoid
-    // pulling in the IDF HAL header chain.
-    WRITE_PERI_REG(RTC_CNTL_WDTWPROTECT_REG, 0x50D83AA1U);         // unlock
-    WRITE_PERI_REG(RTC_CNTL_WDTCONFIG0_REG, 0);                     // disable WDT
-    WRITE_PERI_REG(RTC_CNTL_WDTWPROTECT_REG, 0);                    // re-lock
-    OTA_LOGLN("OTA install: RTC watchdog disabled");
-
-    // --- INSTALL PHASE (IDF OTA API path) ---
-    // BLE streaming is done. The PSRAM buffer holds the complete image.
-    // All flash ops happen here via the official esp_ota_begin / esp_ota_write /
-    // esp_ota_end pipeline. This replaces the earlier sector-by-sector
-    // esp_flash_erase_region + esp_flash_write approach (Decisions #62/#63/#65)
-    // which hung on the first erase call on S3 OPI flash regardless of PSRAM
-    // cache flush pre-ambles, raw vs partition-API selection, or IWDT state.
-    //
-    // esp_ota_begin pre-erases the partition internally using its own sector
-    // strategy and cache management, which differs from our direct
-    // esp_flash_erase_region calls. esp_ota_write handles CRC, magic-bytes-last
-    // ordering, and internal chunking. esp_ota_end validates the image CRC.
-    //
-    // We call esp_ota_write in 64 KB chunks so serial output gives visibility
-    // if a hang occurs partway through the write phase. If install hangs entirely
-    // the 120 s esp_timer safety timer fires and reboots into the old image.
-    //
-    // Note: s_image_buf is in PSRAM (heap_caps_malloc MALLOC_CAP_SPIRAM). IDF
-    // reads from this buffer during esp_ota_write; the PSRAM bus must remain
-    // active throughout. This is the same PSRAM contention we suspect caused the
-    // earlier hangs — but esp_ota_write may have different cache-disable semantics
-    // than the raw spi_flash path. If esp_ota_write also hangs on the S3 OPI
-    // configuration, PSRAM bus contention is confirmed and the image must be
-    // copied to internal RAM before flash operations.
-
-    OTA_LOG("OTA install: calling esp_ota_begin (pre-erases partition %s)",
-            s_ota_partition->label);
-    esp_ota_handle_t ota_handle = 0;
-    uint32_t t_begin = millis();
-    esp_err_t err = esp_ota_begin(s_ota_partition, g_total_size, &ota_handle);
-    uint32_t dt_begin = millis() - t_begin;
-
-    if (err != ESP_OK) {
-        OTA_LOG("OTA: esp_ota_begin failed err=0x%x dt=%ums", (unsigned)err, (unsigned)dt_begin);
-        free(s_image_buf);
-        s_image_buf = nullptr;
-        notify(STATUS_ERR_BEGIN_FAILED, g_bytes_received);
-        resetSession();
+    if (s_ota_pending.attempts > kOtaMaxInstallAttempts) {
+        Serial.println("OTA deferred: attempt budget exhausted — clearing flag, booting old image");
+        Serial.flush();
+        s_ota_pending.magic = 0;
         return;
     }
-    OTA_LOG("OTA: esp_ota_begin OK dt=%ums (partition pre-erased)", (unsigned)dt_begin);
 
-    // Write the image in 64 KB chunks for serial visibility.
-    // esp_ota_write handles internal CRC accumulation, magic-bytes-last guard,
-    // and any required alignment padding.
-    constexpr size_t kWriteChunkSize = 64 * 1024;
-    OTA_LOG("OTA install: writing %u bytes in %u-KB chunks via esp_ota_write",
-            (unsigned)g_total_size, (unsigned)(kWriteChunkSize / 1024));
+    // Mount SPIFFS read-only for install (we only need to read the staged file).
+    if (!SPIFFS.begin(/*formatOnFail=*/false)) {
+        Serial.println("OTA deferred: SPIFFS mount failed");
+        Serial.flush();
+        // Do NOT clear magic — let attempts bump protect us if this is transient.
+        return;
+    }
 
-    feedWatchdog();
-    for (size_t off = 0; off < (size_t)g_total_size; off += kWriteChunkSize) {
-        size_t this_chunk = kWriteChunkSize;
-        if (this_chunk > (size_t)(g_total_size - off)) {
-            this_chunk = (size_t)(g_total_size - off);
-        }
+    File f = SPIFFS.open(kOtaStagePath, FILE_READ);
+    if (!f) {
+        Serial.printf("OTA deferred: staging file not found at %s\n", kOtaStagePath);
+        Serial.flush();
+        SPIFFS.end();
+        s_ota_pending.magic = 0;  // file gone — no point retrying
+        return;
+    }
 
-        uint32_t t_chunk = millis();
-        err = esp_ota_write(ota_handle, s_image_buf + off, this_chunk);
-        uint32_t dt_chunk = millis() - t_chunk;
+    uint32_t file_size = (uint32_t)f.size();
+    if (file_size != s_ota_pending.image_size) {
+        Serial.printf("OTA deferred: size mismatch (file=%u rtc=%u) — aborting\n",
+                      (unsigned)file_size, (unsigned)s_ota_pending.image_size);
+        Serial.flush();
+        f.close();
+        SPIFFS.end();
+        s_ota_pending.magic = 0;
+        return;
+    }
+    Serial.printf("OTA deferred: staging file OK (%u bytes)\n", (unsigned)file_size);
+    Serial.flush();
 
-        if (err != ESP_OK) {
-            OTA_LOG("OTA: esp_ota_write failed at off=%u size=%u err=0x%x dt=%ums",
-                    (unsigned)off, (unsigned)this_chunk, (unsigned)err, (unsigned)dt_chunk);
-            esp_ota_abort(ota_handle);
-            free(s_image_buf);
-            s_image_buf = nullptr;
-            notify(STATUS_ERR_WRITE_FAILED, g_bytes_received);
-            resetSession();
+    const esp_partition_t* part = esp_ota_get_next_update_partition(NULL);
+    if (!part) {
+        Serial.println("OTA deferred: no OTA update partition found");
+        Serial.flush();
+        f.close();
+        SPIFFS.end();
+        return;
+    }
+    Serial.printf("OTA deferred: target partition=%s addr=0x%06x\n",
+                  part->label, (unsigned)part->address);
+    Serial.flush();
+
+    // --- Disable all watchdogs before first flash erase ---
+    // Same register sequence as the old end() path. See comments there for
+    // the full rationale. These writes are safe before FreeRTOS starts because
+    // we're still in single-threaded Arduino setup() context.
+    WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(1), TIMG_WDT_WKEY_VALUE);
+    WRITE_PERI_REG(TIMG_WDTCONFIG0_REG(1), 0);
+    WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(1), 0);
+
+    WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(0), TIMG_WDT_WKEY_VALUE);
+    WRITE_PERI_REG(TIMG_WDTCONFIG0_REG(0), 0);
+    WRITE_PERI_REG(TIMG_WDTWPROTECT_REG(0), 0);
+
+    WRITE_PERI_REG(RTC_CNTL_WDTWPROTECT_REG, 0x50D83AA1U);
+    WRITE_PERI_REG(RTC_CNTL_WDTCONFIG0_REG, 0);
+    WRITE_PERI_REG(RTC_CNTL_WDTWPROTECT_REG, 0);
+
+    Serial.println("OTA deferred: watchdogs disabled");
+    Serial.flush();
+
+    // --- esp_ota_begin ---
+    // Pre-erases the target partition. With PSRAM idle this should not deadlock.
+    esp_ota_handle_t handle = 0;
+    Serial.printf("OTA deferred: calling esp_ota_begin (partition=%s size=%u)\n",
+                  part->label, (unsigned)file_size);
+    Serial.flush();
+
+    uint32_t t0 = millis();
+    esp_err_t err = esp_ota_begin(part, file_size, &handle);
+    Serial.printf("OTA deferred: esp_ota_begin returned err=0x%x dt=%ums\n",
+                  (unsigned)err, (unsigned)(millis() - t0));
+    Serial.flush();
+
+    if (err != ESP_OK) {
+        Serial.printf("OTA deferred: esp_ota_begin FAILED err=0x%x\n", (unsigned)err);
+        f.close();
+        SPIFFS.end();
+        return;  // magic stays set — retry on next boot up to kOtaMaxInstallAttempts
+    }
+    Serial.println("OTA deferred: esp_ota_begin OK — partition erased");
+    Serial.flush();
+
+    // --- Stream from SPIFFS → esp_ota_write in 4 KB internal-SRAM chunks ---
+    // Internal SRAM only — NO heap_caps_malloc(PSRAM). This is the key
+    // difference from Option C: the source buffer lives in internal RAM so the
+    // PSRAM OPI bus is never accessed during the flash write path.
+    uint8_t buf[4096];
+    size_t total_written = 0;
+
+    while (total_written < (size_t)file_size) {
+        size_t want = std::min(sizeof(buf), (size_t)(file_size - total_written));
+        size_t got  = f.read(buf, want);
+        if (got != want) {
+            Serial.printf("OTA deferred: SPIFFS read short at off=%u (got=%u want=%u)\n",
+                          (unsigned)total_written, (unsigned)got, (unsigned)want);
+            Serial.flush();
+            esp_ota_abort(handle);
+            f.close();
+            SPIFFS.end();
             return;
         }
-        OTA_LOG("OTA: esp_ota_write chunk off=%u size=%u OK dt=%ums",
-                (unsigned)off, (unsigned)this_chunk, (unsigned)dt_chunk);
-        feedWatchdog();
+
+        err = esp_ota_write(handle, buf, got);
+        if (err != ESP_OK) {
+            Serial.printf("OTA deferred: esp_ota_write FAILED at off=%u err=0x%x\n",
+                          (unsigned)total_written, (unsigned)err);
+            Serial.flush();
+            esp_ota_abort(handle);
+            f.close();
+            SPIFFS.end();
+            return;
+        }
+
+        total_written += got;
+
+        // Progress log every 64 KB.
+        if ((total_written % (64 * 1024)) == 0 || total_written == (size_t)file_size) {
+            Serial.printf("OTA deferred: wrote %u / %u (%u%%)\n",
+                          (unsigned)total_written, (unsigned)file_size,
+                          (unsigned)((total_written * 100) / file_size));
+            Serial.flush();
+        }
     }
-    OTA_LOGLN("OTA install: esp_ota_write complete");
 
-    // Finalize — validates accumulated CRC and marks image ready in otadata.
-    OTA_LOGLN("OTA install: calling esp_ota_end");
-    uint32_t t_end_api = millis();
-    err = esp_ota_end(ota_handle);
-    uint32_t dt_end_api = millis() - t_end_api;
+    f.close();
+    Serial.println("OTA deferred: esp_ota_write complete");
+    Serial.flush();
 
+    // --- esp_ota_end: validate CRC, seal the image ---
+    err = esp_ota_end(handle);
     if (err != ESP_OK) {
-        OTA_LOG("OTA: esp_ota_end failed err=0x%x dt=%ums", (unsigned)err, (unsigned)dt_end_api);
-        free(s_image_buf);
-        s_image_buf = nullptr;
-        notify(STATUS_ERR_END_FAILED, g_bytes_received);
-        resetSession();
+        Serial.printf("OTA deferred: esp_ota_end FAILED err=0x%x\n", (unsigned)err);
+        Serial.flush();
+        SPIFFS.end();
         return;
     }
-    OTA_LOG("OTA install: esp_ota_end OK dt=%ums — image validated", (unsigned)dt_end_api);
+    Serial.println("OTA deferred: esp_ota_end OK — image validated");
+    Serial.flush();
 
-    // PSRAM buffer is no longer needed. Free before marking partition bootable.
-    free(s_image_buf);
-    s_image_buf = nullptr;
-
-    // --- Mark partition as boot target ---
-    // esp_ota_set_boot_partition() updates otadata to point to the new partition
-    // on the next boot. esp_ota_end already validated the image; this commits it.
-    OTA_LOGLN("OTA install: calling esp_ota_set_boot_partition");
-    esp_err_t boot_err = esp_ota_set_boot_partition(s_ota_partition);
-    if (boot_err != ESP_OK) {
-        OTA_LOG("OTA: esp_ota_set_boot_partition failed err=0x%x\n",
-                (unsigned)boot_err);
-        notify(STATUS_ERR_END_FAILED, g_bytes_received);
-        // s_ota_partition is still valid here but image was written; reset cleanly.
-        s_ota_partition = nullptr;
-        g_state = State::IDLE;
+    // --- Commit: set boot partition ---
+    err = esp_ota_set_boot_partition(part);
+    if (err != ESP_OK) {
+        Serial.printf("OTA deferred: esp_ota_set_boot_partition FAILED err=0x%x\n", (unsigned)err);
+        Serial.flush();
+        SPIFFS.end();
         return;
     }
+    Serial.printf("OTA deferred: boot partition set to %s\n", part->label);
+    Serial.flush();
 
-    OTA_LOG("OTA: partition %s set as next boot target\n",
-            s_ota_partition->label);
+    // Clean up staging file — install succeeded, no longer needed.
+    SPIFFS.remove(kOtaStagePath);
+    SPIFFS.end();
 
+    // Arm NVS pending flag (rollback infrastructure expects this).
     setOtaPendingFlag(true);
 
-    // Arm manual NVS rollback. Records the currently-running partition (the
-    // "safe" image to swap back to) and resets the boot-attempt counter.
-    // checkBootRecovery() will increment attempts on every subsequent boot
-    // and swap back if it hits kRollbackTriggerAttempts.
+    // Arm manual NVS rollback (same as end() used to do before deferral).
     {
         Preferences nvs;
         if (nvs.begin(kRecoveryNvsNamespace, /*readOnly=*/false)) {
@@ -698,26 +717,21 @@ void end() {
             nvs.putUInt(kRecoveryKeyAttempts, 0);
             nvs.putUChar(kRecoveryKeyPrevPart, prev_subtype);
             nvs.end();
-            OTA_LOG("OTA: armed manual rollback (prev_part subtype=0x%02x)\n",
-                    prev_subtype);
+            Serial.printf("OTA deferred: manual rollback armed (prev_part=0x%02x)\n",
+                          prev_subtype);
         } else {
-            // New image is still bootable but auto-rollback safety net is
-            // disabled. USB reflash remains the recovery of last resort.
-            OTA_LOGLN("OTA: failed to arm manual rollback (NVS begin rw failed)");
+            Serial.println("OTA deferred: WARN — could not arm manual rollback (NVS begin rw failed)");
         }
     }
 
-    OTA_LOGLN("OTA: image committed, rebooting now");
-    // NimBLE is still running at this point (deinit was skipped — see Decision
-    // #65). STATUS_REBOOTING could technically be notified, but the connection
-    // state may be degraded after the long install phase. Mobile handles the
-    // connection loss as an expected post-reboot disconnect per Decision #64.
-    // The safety timer (armed above) will also fire at 120s if ESP.restart()
-    // somehow stalls, but that is not expected — restart() is synchronous.
-    // g_state = REBOOTING is recorded for completeness; the restart follows
-    // immediately so isInFlight() will never be polled again this boot.
-    g_state = State::REBOOTING;
+    // Clear RTC pending flag — install succeeded, don't retry on next boot.
+    s_ota_pending.magic = 0;
+
+    Serial.println("OTA deferred: SUCCESS — rebooting into new image");
+    Serial.flush();
+    delay(100);
     ESP.restart();
+    // unreachable on success
 }
 
 void abort(uint8_t reason) {

@@ -37,6 +37,25 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// ---------------------------------------------------------------------------
+// RTC deferred-install pending flag (Option D, Decision #66).
+//
+// Lives in RTC slow memory (survives soft reset). Written by end() when the
+// streaming phase completes; read by runDeferredOtaInstall() at the very top
+// of setup() before any PSRAM-backed subsystem initialises.
+//
+// Declared here so main.cpp can read s_ota_pending.magic directly for the
+// early-boot guard without including ota.cpp internals.
+// ---------------------------------------------------------------------------
+struct OtaPendingRtc {
+    uint32_t magic;       // kOtaPendingMagic sentinel
+    uint32_t image_size;
+    uint8_t  sha256[32];
+    uint32_t attempts;
+};
+extern OtaPendingRtc s_ota_pending;
+constexpr uint32_t kOtaPendingMagic = 0xA0B0C0D0U;
+
 namespace ota {
 
 // Status codes — wire-compatible with charger 0xFF27 (Decision #52). Same
@@ -92,9 +111,17 @@ enum class State {
 #define OTA_ACK_WINDOW_CHUNKS 16
 #endif
 
+// Early-boot deferred installer (Option D, Decision #66).
+// Called from the very top of setup() BEFORE any PSRAM-backed subsystem
+// initialises. Checks s_ota_pending.magic; if set, reads /ota_stage.bin from
+// SPIFFS and installs via the IDF OTA API. Never returns on success —
+// calls ESP.restart(). On failure, clears/decrements the RTC flag and
+// returns so normal boot continues on the old image.
+void runDeferredOtaInstall();
+
 // Called from cmd dispatcher (cmd=10). Validates the 38-byte payload (cmd
 // byte already stripped → 36 bytes here: 4-byte LE total_size + 32-byte
-// sha256). Calls `Update.begin()` and emits STATUS_READY on success.
+// sha256). Opens /ota_stage.bin on SPIFFS and emits STATUS_READY on success.
 void begin(const uint8_t* payload, size_t len);
 
 // Called from the OTA chunk write callback for each WRITE_NR. Forwards to

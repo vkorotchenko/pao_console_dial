@@ -47,7 +47,17 @@ import {
 // caller (UI) after a brief success display.
 // ---------------------------------------------------------------------------
 
+// Default reconnect scan timeout. The dial uses a longer value (see
+// DIAL_RECONNECT_SCAN_TIMEOUT_MS) because Option D deferred-install causes
+// two reboots: one immediately after streaming (to enter install mode) and
+// one after install (into the new image). Total dark time is ~1-2 minutes.
 const RECONNECT_SCAN_TIMEOUT_MS = 30_000;
+// Dial-specific reconnect timeout. The dial reboots twice during OTA under
+// Option D (Decision #66): first reboot triggers the deferred install
+// (SPIFFS → flash); second reboot boots the new image. Both reboots happen
+// before mobile can reconnect, so we scan for up to 120 s instead of 30 s.
+// Charger and controller still use the default 30 s.
+const DIAL_RECONNECT_SCAN_TIMEOUT_MS = 120_000;
 const VERIFY_TIMEOUT_MS = 15_000;
 const POST_REBOOT_GRACE_MS = 2_000; // wait this long after disconnect before scanning
 
@@ -83,6 +93,10 @@ interface OrchestrationProfile {
   readFirmwareVersionFromStore: () => string | null;
   // Per-target store-tracked device id snapshot for reconnect matching.
   readDeviceIdFromStore: () => string | null;
+  // How long to scan for the device after reboot before giving up.
+  // Dial uses DIAL_RECONNECT_SCAN_TIMEOUT_MS (120 s) because Option D
+  // deferred-install causes two reboots; charger/controller use 30 s.
+  reconnectTimeoutMs: number;
 }
 
 function getOrchestrationProfile(target: OtaTarget): OrchestrationProfile {
@@ -100,6 +114,7 @@ function getOrchestrationProfile(target: OtaTarget): OrchestrationProfile {
         readFirmwareVersionFromStore: () =>
           useAppStore.getState().chargerFirmwareVersion,
         readDeviceIdFromStore: () => useAppStore.getState().chargerDeviceId,
+        reconnectTimeoutMs: RECONNECT_SCAN_TIMEOUT_MS,
       };
     case 'dial':
       return {
@@ -114,6 +129,11 @@ function getOrchestrationProfile(target: OtaTarget): OrchestrationProfile {
         readFirmwareVersionFromStore: () =>
           useAppStore.getState().dialFirmwareVersion,
         readDeviceIdFromStore: () => useAppStore.getState().deviceId,
+        // Option D deferred-install causes two reboots: one after streaming
+        // (into install mode) and one after install (into new image).
+        // Total offline window is ~1-2 minutes. 120 s keeps the scan alive
+        // across both reboots without any user intervention.
+        reconnectTimeoutMs: DIAL_RECONNECT_SCAN_TIMEOUT_MS,
       };
     case 'controller':
       return {
@@ -135,6 +155,7 @@ function getOrchestrationProfile(target: OtaTarget): OrchestrationProfile {
           // the connected device if available, else fall back to null so
           // the reconnect scan always starts clean.
           useAppStore.getState().controllerDevice?.id ?? null,
+        reconnectTimeoutMs: RECONNECT_SCAN_TIMEOUT_MS,
       };
     default: {
       const _exhaustive: never = target;
@@ -461,6 +482,8 @@ function scanAndReconnect(
       return reject(new OtaAbortedError());
     }
 
+    const timeoutMs = profile.reconnectTimeoutMs;
+
     // Prefer the id passed in by the caller (snapshotted before transfer);
     // fall back to whatever's currently in the store. The disconnect handler
     // clears the device id synchronously when the reboot disconnect fires,
@@ -541,14 +564,14 @@ function scanAndReconnect(
     );
 
     timer = setTimeout(() => {
-      console.log(`[OTA:${profile.target}] reconnect: scan timed out — handing back to manager`);
+      console.log(`[OTA:${profile.target}] reconnect: scan timed out after ${timeoutMs}ms — handing back to manager`);
       finish({
         ok: false,
         err: new Error(
-          `${humanTargetName(profile.target)} did not come back online within 30 seconds.`,
+          `${humanTargetName(profile.target)} did not come back online within ${timeoutMs / 1000} seconds.`,
         ),
       });
-    }, RECONNECT_SCAN_TIMEOUT_MS);
+    }, timeoutMs);
   });
 }
 
